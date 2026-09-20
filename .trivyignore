@@ -1,0 +1,31 @@
+# MjengoOS — trivy ignore list (.github/workflows/publish.yml gate).
+#
+# POLICY (issue #209):
+#   · The publish gate fails on HIGH/CRITICAL findings that HAVE a fix
+#     available (ignore-unfixed: true — unfixed upstream findings stay
+#     visible in the scan table but don't gate, because no action this
+#     repo can take would clear them; watch them in the table).
+#   · This file is the ONLY place a finding may be permanently silenced.
+#     An entry here is a reviewed, time-boxed decision — never a reflex.
+#
+# ENTRY FORMAT (trivy):
+#   <CVE-or-advisory-id>
+#
+#   ...with a mandatory comment block above every entry:
+#     - WHAT: the finding, the package, the image (app/website)
+#     - WHY IGNORED: not reachable / accepted risk / vendor-declared
+#       non-issue — the reasoning a reviewer needs
+#     - EXPIRY: <YYYY-MM-DD> — the date this exemption must be re-triaged
+#       (a stale expiry is a review finding in itself; quarterly sweep)
+#     - REVIEWER: who accepted it (GitHub handle)
+#
+# EXAMPLE (commented out — nothing is ignored today; keep it that way):
+# CVE-2024-00000
+#   WHAT: example-only entry — libfoo 1.2.3 in the app image
+#   WHY IGNORED: not reachable — the vulnerable codepath needs a feature
+#     this image never executes at runtime
+#   EXPIRY: 2027-01-01
+#   REVIEWER: @Roy-Wanyoike
+#
+# CURRENT CONTENT: empty by design. The first real scan decides whether
+# the Debian slim base's finding set clears the gate as-is.

@@ -9,7 +9,7 @@
 # load-bearing path this protects; the bug class of issue #73), an explicit
 # prisma success-line assertion from the boot log, and a /website probe
 # through the app's WEBSITE_ORIGIN rewrite. No registry push (image
-# publishing is INF-12's scope).
+# publishing is INF-12's scope — see .github/workflows/publish.yml, issue #209).
 name: Docker
 
 on:

@@ -1390,6 +1390,36 @@ CI guarantees the gate before this ever reaches production: lint, strict
 typecheck (build fails on TS errors — `ignoreBuildErrors` is gone), a real
 `next build`, and a real `docker build` on every PR.
 
+### 8.1 The pull-based alternative (GHCR images, once CI unblocks)
+
+The path above rebuilds both images **on the prod box** — simple, but the
+box compiles what it deploys and there is no artifact identity: no digest
+to roll back to, no way to deploy "the exact image CI verified". Issue
+#209 landed the publish side of that story
+(`.github/workflows/publish.yml`): on merge to `main`, both images are
+pushed to `ghcr.io/<owner>/<repo>/{app,website}` (tags `main` +
+`sha-<12>`, full OCI labels) and trivy-scanned under a HIGH/CRITICAL gate
+(ignore policy: `.trivyignore`, reviewed entries with expiries only).
+
+**Honest status:** Actions is billing-locked (#98) — no image has been
+published yet. When it unblocks, the pull-based update becomes:
+
+```bash
+# pin by digest (the rollback target the build-on-host path lacks):
+docker pull ghcr.io/<owner>/<repo>/app@sha256:<digest-from-the-run-summary>
+docker pull ghcr.io/<owner>/<repo>/website@sha256:<same-run-digest-path>
+
+# then run the stack from images instead of builds — a compose override:
+#   docker-compose.override.yml with `image:` + `pull_policy: always`
+#   replacing the `build:` stanzas, or edit docker-compose.yml in place.
+docker compose up -d        # migrations still run on boot (unchanged CMD)
+```
+
+Until then the build-on-host path in §8 is the only one that exists —
+the publish workflow is validated-by-construction plus manual
+`workflow_dispatch` on an Actions-enabled fork (the cheap pre-validation),
+exactly the posture of the #198 smoke job.
+
 ## 9. Object storage (S3 / R2 / MinIO)
 
 Photo evidence (site photos, delivery photos) used to live on the app

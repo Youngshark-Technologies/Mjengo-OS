@@ -1,0 +1,159 @@
+# MjengoOS — Image publishing + CVE scanning (issue #209, audit INF-12).
+#
+# WHAT THIS IS: the design-landed, first-real-run-awaiting publish path.
+# On merge to `main` (or a manual workflow_dispatch), this builds the SAME
+# two production images docker.yml verifies, stamps them with OCI labels,
+# pushes them to GHCR (ghcr.io/<owner>/<repo>/{app,website}), scans them
+# with trivy under a severity gate, and prints the pushed digests — giving
+# self-host updates a pull-by-digest alternative to build-on-host
+# (DEPLOYMENT.md §8.1) and the supply chain an artifact identity.
+#
+# HONEST STATUS (#98): Actions is billing-locked on this account — no run
+# of this workflow has happened yet, by design the same as the smoke job
+# in docker.yml. Every step below is written for unblock day: GITHUB_TOKEN
+# only (no new secrets), bounded steps, explicit digests in the summary.
+# The workflow can also be exercised manually on a fork with Actions
+# enabled (workflow_dispatch) — that is the cheap way to validate it
+# before #98 resolves.
+#
+# WHY A SEPARATE WORKFLOW (not more jobs in docker.yml): docker.yml is
+# build VERIFICATION — it must stay registry-free so a PR from anyone
+# (forks included) can prove the images compile without any packages:
+# write permission in play. Publishing is a main-only, trust-bound act;
+# separating them keeps the permission surfaces disjoint.
+#
+# TRIGGER NOTE: docker.yml's push trigger was `branches: ain]` — a typo
+# from its birth commit that silently disabled push runs (masked by the
+# #98 lock). Fixed in the same PR as this file; both workflows now fire
+# on real `main` pushes when CI unblocks.
+name: Publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false   # a publish run is never safely cancellable mid-push
+
+permissions:
+  contents: read      # checkout only
+  packages: write     # GHCR push — the one elevated scope, GITHUB_TOKEN only
+
+jobs:
+  publish-app:
+    name: build + push + scan (app)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # GHCR requires all-lowercase image paths; github.repository preserves
+      # the org's case (Youngshark-Technologies/Mjengo-OS).
+      - name: Resolve the lowercase image base (ghcr.io/<owner>/<repo>)
+        id: repo
+        run: echo "base=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Read the app version (package.json)
+        id: appver
+        run: echo "version=$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build + push the app image (OCI labels, main + sha tags)
+        env:
+          IMAGE: ${{ steps.repo.outputs.base }}/app
+        run: |
+          docker build \
+            --label org.opencontainers.image.source="${{ github.server_url }}/${{ github.repository }}" \
+            --label org.opencontainers.image.revision="${{ github.sha }}" \
+            --label org.opencontainers.image.version="${{ steps.appver.outputs.version }}" \
+            --label org.opencontainers.image.created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label org.opencontainers.image.title="MjengoOS app" \
+            --label org.opencontainers.image.description="Construction Site OS — app (Next.js + Prisma/SQLite, offline-first PWA)" \
+            --label org.opencontainers.image.licenses="MIT" \
+            -t "${IMAGE}:main" \
+            -t "${IMAGE}:sha-${GITHUB_SHA::12}" \
+            --push .
+
+      - name: Scan the pushed image (trivy, HIGH/CRITICAL gate)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.repo.outputs.base }}/app:main
+          format: table
+          exit-code: "1"          # the gate: HIGH/CRITICAL findings fail the run
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true    # no vendor fix available = not actionable here;
+                                  # it stays visible in the table, it just doesn't
+                                  # fail the gate (revisit policy in .trivyignore)
+          ignorefile: .trivyignore
+
+      - name: Emit the app image digest (artifact identity)
+        env:
+          IMAGE: ${{ steps.repo.outputs.base }}/app
+        run: |
+          digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}:main")"
+          echo "app: ${digest}"
+          echo "### App image" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${digest}"        >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  publish-website:
+    name: build + push + scan (website)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Resolve the lowercase image base (ghcr.io/<owner>/<repo>)
+        id: repo
+        run: echo "base=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Read the website version (mjengoos-website/package.json)
+        id: sitever
+        run: echo "version=$(jq -r .version mjengoos-website/package.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build + push the website image (OCI labels, main + sha tags)
+        env:
+          IMAGE: ${{ steps.repo.outputs.base }}/website
+        run: |
+          docker build \
+            --label org.opencontainers.image.source="${{ github.server_url }}/${{ github.repository }}" \
+            --label org.opencontainers.image.revision="${{ github.sha }}" \
+            --label org.opencontainers.image.version="${{ steps.sitever.outputs.version }}" \
+            --label org.opencontainers.image.created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label org.opencontainers.image.title="MjengoOS marketing site" \
+            --label org.opencontainers.image.description="MjengoOS marketing website — Build with evidence." \
+            --label org.opencontainers.image.licenses="MIT" \
+            -t "${IMAGE}:main" \
+            -t "${IMAGE}:sha-${GITHUB_SHA::12}" \
+            --push ./mjengoos-website
+
+      - name: Scan the pushed image (trivy, HIGH/CRITICAL gate)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.repo.outputs.base }}/website:main
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          ignorefile: .trivyignore
+
+      - name: Emit the website image digest (artifact identity)
+        env:
+          IMAGE: ${{ steps.repo.outputs.base }}/website
+        run: |
+          digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}:main")"
+          echo "website: ${digest}"
+          echo "### Website image" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${digest}"        >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
