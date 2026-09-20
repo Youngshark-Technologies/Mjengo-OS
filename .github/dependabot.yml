@@ -42,6 +42,16 @@ updates:
         exclude-patterns:
           # Security-critical exact pin (ADR 0007) — never silently grouped.
           - next-auth
+    ignore:
+      # Toolchain-blocked majors (verified 2026-09-20 on true merge results,
+      # issue #328): typescript >=7 — typescript-eslint has no TS-7 support
+      # yet (typescript-eslint#10940); eslint >=10 — eslint-plugin-react
+      # (via eslint-config-next) breaks under eslint 10. The root tree rides
+      # the same eslint-config-next parser/plugin stack as the site.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      - dependency-name: eslint
+        update-types: ["version-update:semver-major"]
 
   # ── Marketing site package tree (mjengoos-website/) ──────────────────
   # Grouping deliberately mirrors the root rather than loosening for the
@@ -67,6 +77,16 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # Toolchain-blocked majors (verified 2026-09-20, issue #328 — the
+      # closed #321/#323 carried the exact failure output): typescript >=7
+      # fails the site lint gate (typescript-eslint#10940), eslint >=10
+      # breaks eslint-plugin-react. Majors arrive as individual PRs, so
+      # without these rules every weekly run re-proposes them.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      - dependency-name: eslint
+        update-types: ["version-update:semver-major"]
 
   # ── GitHub Actions workflows (.github/workflows/) ────────────────────
   # Actions are pinned by major tag (actions/checkout@v7, oven-sh/
