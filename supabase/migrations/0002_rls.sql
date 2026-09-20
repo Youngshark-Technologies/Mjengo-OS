@@ -273,8 +273,16 @@ create trigger attendances_version_guard before update on public.attendances
 -- the service layer already treats as append-only — now DB-enforced:
 --   audit_events, mjengo_scores, risk_assessments, intel_digests,
 --   project_health, draw_packs, photo_hashes, ai_review_notes, ai_insights,
---   trust_digests, stock_movements, ledger_entries, idempotency_records,
---   credential_checks, price_points
+--   trust_digests, stock_movements, ledger_entries, ledger_transactions,
+--   idempotency_records, credential_checks, price_points
+-- #133 / DB-11: ledger_transactions joined the blanket set — reversals are
+-- NEW rows linked via reversal_of_id ("was reversed?" derived from the
+-- link), so the old reversal-marking update guard had nothing left to
+-- whitelist and was removed; the table is INSERT/SELECT-only exactly like
+-- ledger_entries. (On the SQLite twin, migration 21 keeps ONE legal
+-- update — the pending→posted posting transition that carries the balance
+-- gate; Postgres needs no such transition because the balanced-legs
+-- constraint below is deferred to COMMIT and rows are born posted.)
 -- DEVIATION (documented, deliberate): today a project DELETE cascades these
 -- rows away silently. With this trigger, cascade deletes fail unless ops
 -- sets mjengo.allow_maintenance — money-grade audit history must not vanish
@@ -297,7 +305,7 @@ begin
     'audit_events','mjengo_scores','risk_assessments','intel_digests',
     'project_health','draw_packs','photo_hashes','ai_review_notes',
     'ai_insights','trust_digests','stock_movements','ledger_entries',
-    'idempotency_records','credential_checks','price_points'
+    'ledger_transactions','idempotency_records','credential_checks','price_points'
   ] loop
     execute format('create trigger %I before update or delete on public.%I
                     for each row execute function public.reject_mutation()',
@@ -305,40 +313,13 @@ begin
   end loop;
 end $$;
 
--- Ledger transactions: the ONLY legal update is reversal-marking
--- (status 'posted' → 'reversed' + reversal_ref). Amounts/refs never change.
-create or replace function public.guard_ledger_txn_update() returns trigger
-language plpgsql as
-$$
-begin
-  if public.maintenance_allowed() then return new; end if;
-  if new.id <> old.id
-     or new.ref <> old.ref
-     or new.description <> old.description
-     or new.occurred_at <> old.occurred_at
-     or new.project_id is distinct from old.project_id
-     or new.posted_by <> old.posted_by
-     or new.posted_role <> old.posted_role
-     or new.idempotency_key is distinct from old.idempotency_key
-     or new.reversal_of_id is distinct from old.reversal_of_id
-     or new.created_at <> old.created_at then
-    raise exception 'ledger_transactions is immutable except reversal marking'
-      using errcode = '42501';
-  end if;
-  if not (old.status = 'posted' and new.status = 'reversed') then
-    raise exception 'ledger_transactions.status may only move posted -> reversed'
-      using errcode = '42501';
-  end if;
-  return new;
-end $$;
-
-create trigger ledger_transactions_update_guard
-  before update on public.ledger_transactions
-  for each row execute function public.guard_ledger_txn_update();
-
-create trigger ledger_transactions_delete_guard
-  before delete on public.ledger_transactions
-  for each row execute function public.reject_mutation();
+-- (#133 / DB-11) The reversal-only update guard that used to live here
+-- (guard_ledger_txn_update + the ledger_transactions_update_guard /
+-- ledger_transactions_delete_guard triggers) was REMOVED: with reversals
+-- modeled as new rows linked via reversal_of_id, there is no legal update
+-- on ledger_transactions to whitelist — the blanket reject_mutation()
+-- trigger above (ledger_transactions_immutable, before update or delete)
+-- enforces INSERT/SELECT-only parity with ledger_entries.
 
 -- Balanced-legs invariant (spec §39): Σ debits = Σ credits per transaction,
 -- checked at COMMIT (deferred), on top of the service-layer validation.
@@ -872,8 +853,8 @@ create policy ledger_transactions_select on public.ledger_transactions for selec
   using ((project_id is null and public.is_staff()) or public.can_read_project(project_id));
 create policy ledger_transactions_insert on public.ledger_transactions for insert to authenticated
   with check (public.is_staff());
-create policy ledger_transactions_update on public.ledger_transactions for update to authenticated
-  using (public.is_staff()) with check (public.is_staff());
+-- (#133 / DB-11) No update policy — reversals are new rows linked via
+-- reversal_of_id; the table is INSERT/SELECT-only like ledger_entries.
 
 create policy ledger_entries_select on public.ledger_entries for select to authenticated
   using (exists (select 1 from public.ledger_transactions t where t.id = txn_id

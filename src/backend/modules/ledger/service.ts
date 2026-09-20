@@ -5,17 +5,23 @@
 //
 // DB-3 (#124, migration 14_ledger_invariants): these invariants are ALSO
 // DB-enforced on SQLite — entries are append-only (UPDATE/DELETE rejected
-// by trigger), the txn lifecycle is pending → posted → reversed with a
-// reversal-only update whitelist, and Σdebits = Σcredits is asserted by the
+// by trigger), the txn lifecycle is pending → posted with the posting
+// transition as the sole legal UPDATE, and Σdebits = Σcredits is asserted by the
 // LedgerTransaction_posting_gate trigger at the pending→posted transition
 // (the SQLite equivalent of the Supabase deferred COMMIT constraint — see
 // the migration's DESIGN NOTE for why the enforcement point is the final
 // UPDATE, not a per-entry check).
+//
+// DB-11 (#133, migration 21_ledger_reversals_as_rows): reversals are NEW
+// rows, never updates. The reversal transaction carries reversalOfId → the
+// original; "was this reversed?" is DERIVED from that link (findReversalOf /
+// isReversed below) — the original row is byte-identical forever after its
+// posting transition, on both the SQLite and the Supabase path.
 
 import { db } from '@/backend/lib/db'
 import type { Cents } from '@/backend/lib/money'
 import { centsToKes, sumCents } from '@/backend/lib/money'
-import type { Prisma } from '@prisma/client'
+import type { LedgerTransaction, Prisma } from '@prisma/client'
 
 export interface LedgerLineInput {
   accountCode: string
@@ -214,25 +220,26 @@ export async function postLedgerTransactionInTx(tx: Prisma.TransactionClient, in
     data: { status: 'posted' },
     include: { entries: true },
   })
-  if (reversalOf) {
-    await tx.ledgerTransaction.update({
-      where: { id: reversalOf.id },
-      data: { status: 'reversed', reversalRef: txn.ref },
-    })
-  }
+  // DB-11 (#133): a reversal input does NOT touch the original row. The
+  // reversal txn this call just posted carries reversalOfId → original —
+  // that link IS the reversal record; "is reversed?" is derived from it
+  // (findReversalOf below). The pre-#133 model stamped the original here
+  // (status 'reversed' + reversalRef); migration 21's update guard now
+  // rejects that write class entirely.
   return txn
 }
 
 /**
  * A loaded ledger transaction with its entries (and their account codes) —
  * the shape `reverseLedgerTransactionInTx` reverses. Structural so both the
- * real Prisma client and in-memory test stubs satisfy it.
+ * real Prisma client and in-memory test stubs satisfy it. Carries NO status:
+ * reversal state is DERIVED from the reversalOfId link (#133), so the stored
+ * status of the row being reversed is irrelevant to the reversal flow.
  */
 export interface ReversibleLedgerTxn {
   id: string
   ref: string
   projectId: string | null
-  status: string
   entries: { side: string; amount: Cents; memo: string | null; account: { code: string } }[]
 }
 
@@ -243,6 +250,12 @@ export interface ReversibleLedgerTxn {
  * projection updates so the mirrored post and every derived-cache repair
  * commit or roll back as ONE unit. The original must be pre-loaded with
  * `include: { entries: { include: { account: true } } }`.
+ *
+ * DB-11 (#133): this writes ONLY new rows — the original is never UPDATEd.
+ * The double-reversal guard reads the DERIVED state (does any row's
+ * reversalOfId already point at this original?), and the unique index on
+ * reversalOfId (migration 21) is the DB-level backstop: even a racing writer
+ * that skips this check cannot land a second reversal for one original.
  */
 export async function reverseLedgerTransactionInTx(
   tx: Prisma.TransactionClient,
@@ -251,7 +264,8 @@ export async function reverseLedgerTransactionInTx(
   postedBy: string,
   postedRole: string,
 ) {
-  if (original.status === 'reversed') throw new Error('Transaction already reversed')
+  const existingReversal = await tx.ledgerTransaction.findUnique({ where: { reversalOfId: original.id } })
+  if (existingReversal) throw new Error('Transaction already reversed')
   return postLedgerTransactionInTx(tx, {
     projectId: original.projectId,
     description: `REVERSAL of ${original.ref} — ${reason}`,
@@ -275,6 +289,54 @@ export async function reverseLedgerTransaction(txnId: string, reason: string, po
   })
   if (!original) throw new Error('Ledger transaction not found')
   return db.$transaction((tx) => reverseLedgerTransactionInTx(tx, original, reason, postedBy, postedRole))
+}
+
+// ---------------------------------------------------------------------------
+// DB-11 (#133) — DERIVED reversal state: the single seam for "was reversed?".
+// A transaction is reversed iff some later transaction's reversalOfId points
+// at it. The original row itself is append-only (its stored status stays
+// 'posted'; pre-#133 rows may still carry legacy 'reversed'/reversalRef
+// stamps, which this seam deliberately IGNORES — the link is the truth).
+// Every reader (finance slice, wallet txn lists, double-reversal guard) goes
+// through these helpers instead of filtering on txn.status/reversalRef.
+// ---------------------------------------------------------------------------
+
+/**
+ * The reversal transaction linked to `txnId`, if any — the derived "is this
+ * row reversed and by what". Unique-index backed (migration 21): at most one
+ * reversal can point at any original. Accepts the db client OR a transaction
+ * client (same contract as accountSideSums) so in-tx guards read
+ * uncommitted rows.
+ */
+export async function findReversalOf(
+  client: Prisma.TransactionClient,
+  txnId: string,
+): Promise<LedgerTransaction | null> {
+  return client.ledgerTransaction.findUnique({ where: { reversalOfId: txnId } })
+}
+
+/** Derived "was this transaction reversed?" — the ONLY way to ask (#133). */
+export async function isReversed(txnId: string): Promise<boolean> {
+  return (await findReversalOf(db, txnId)) !== null
+}
+
+/**
+ * Bulk read-model for list views: original txn id → reversing txn ref, for
+ * every id in `txnIds` that has a reversal. One indexed query regardless of
+ * page size — presence in the map IS "is reversed", the value is the
+ * correcting ref for display (replaces the pre-#133 reversalRef stamp).
+ */
+export async function reversalRefsByTxnId(txnIds: string[]): Promise<Map<string, string>> {
+  if (!txnIds.length) return new Map()
+  const rows = await db.ledgerTransaction.findMany({
+    where: { reversalOfId: { in: txnIds } },
+    select: { reversalOfId: true, ref: true },
+  })
+  const pairs: Array<[string, string]> = []
+  for (const r of rows) {
+    if (r.reversalOfId) pairs.push([r.reversalOfId, r.ref])
+  }
+  return new Map(pairs)
 }
 
 /**

@@ -248,10 +248,14 @@ describe('escrow: the stored projection vs the ledger truth (spec §39)', () => 
     projection = await prisma.escrowWallet.findUniqueOrThrow({ where: { projectId: project.id } })
     expect(projection.balance).toBe(150_000n)
     expect(await derivedBalance(`ESCROW:${project.id}`)).toBe(150_000n)
-    // The original ledger transaction is marked reversed by its correction.
+    // The original ledger transaction is NEVER touched (#133 / DB-11): its
+    // reversal exists as a new row linked via reversalOfId — derived, not
+    // stamped (status stays 'posted', reversalRef stays null).
     const original = await prisma.ledgerTransaction.findUniqueOrThrow({ where: { id: spend.ledgerTxnId } })
-    expect(original.status).toBe('reversed')
-    expect(original.reversalRef).toBe(reversal.ledgerRef)
+    expect(original.status).toBe('posted')
+    expect(original.reversalRef).toBeNull()
+    const derived = await prisma.ledgerTransaction.findUnique({ where: { reversalOfId: spend.ledgerTxnId } })
+    expect(derived?.ref).toBe(reversal.ledgerRef)
   })
 
   it('spendEscrowInTx refuses when NO escrow wallet exists at all (top up first)', async () => {

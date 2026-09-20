@@ -18,9 +18,11 @@
  *      column-level unique, or a table-level unique leftmost position
  *      (SQLite never had FK indexes; Postgres requires them);
  *   6. APPEND-ONLY DISCIPLINE — the append-only artifacts have NO
- *      update/delete policies AND immutability triggers wired;
- *   7. MONEY INVARIANTS — balanced-legs deferred constraint trigger +
- *      reversal-only ledger update guard exist;
+ *      update/delete policies AND immutability triggers wired
+ *      (ledger_transactions joined the set in #133: reversals are new rows
+ *      linked via reversal_of_id — INSERT/SELECT-only like ledger_entries);
+ *   7. MONEY INVARIANTS — balanced-legs deferred constraint trigger + the
+ *      unique reversal_of_id link (one reversal per original) exist;
  *   8. HYGIENE — snake_case naming, no secrets in SQL, updated_at triggers
  *      on every table that carries an updated_at column.
  *
@@ -188,9 +190,8 @@ function parseForeignKeys(sql: string): Array<{ table: string; column: string; u
 /**
  * DO-block association: extract the array list from every `do $$ … end $$;`
  * block whose body CONTAINS the marker text. This is block-scoped, so a
- * marker that also appears outside DO blocks (e.g. reject_mutation is wired
- * on ledger_transactions as a standalone trigger) can never pull in a
- * foreign array.
+ * marker that also appears outside DO blocks (e.g. in prose about
+ * reject_mutation) can never pull in a foreign array.
  */
 function parseDoArrayForMarker(sql: string, marker: string): string[] {
   const out: string[] = []
@@ -210,11 +211,14 @@ const UNIQUE_CONSTRAINTS = parseUniqueConstraints(SCHEMA_SQL)
 const FOREIGN_KEYS = parseForeignKeys(SCHEMA_SQL)
 
 // The canonical append-only set (design doc §5.3; must match 0002 exactly).
+// #133 / DB-11: ledger_transactions joined — reversals are new rows linked
+// via reversal_of_id, so there is no reversal-marking update to whitelist.
 const APPEND_ONLY = [
   'audit_events', 'mjengo_scores', 'risk_assessments', 'intel_digests',
   'project_health', 'draw_packs', 'photo_hashes', 'ai_review_notes',
   'ai_insights', 'trust_digests', 'stock_movements', 'ledger_entries',
-  'idempotency_records', 'credential_checks', 'price_points',
+  'ledger_transactions', 'idempotency_records', 'credential_checks',
+  'price_points',
 ]
 
 // Money columns (numeric(18,2)) — the Float-money fix, pinned per column.
@@ -439,11 +443,12 @@ describe('6. append-only discipline (policies + triggers)', () => {
     expect(immutable.length).toBe(APPEND_ONLY.length)
   })
 
-  it('ledger transactions are exempt from blanket immutability (reversal-only guard instead)', () => {
-    expect(APPEND_ONLY).not.toContain('ledger_transactions')
-    expect(RLS_SQL).toContain('function public.guard_ledger_txn_update()')
-    expect(RLS_SQL).toContain('create trigger ledger_transactions_update_guard')
-    expect(RLS_SQL).toContain('create trigger ledger_transactions_delete_guard')
+  it('ledger transactions are append-only like ledger entries (#133 / DB-11: reversals are new rows)', () => {
+    // In the blanket set — the old reversal-only update guard is GONE.
+    expect(APPEND_ONLY).toContain('ledger_transactions')
+    expect(RLS_SQL).not.toContain('guard_ledger_txn_update')
+    expect(RLS_SQL).not.toContain('ledger_transactions_update_guard')
+    expect(RLS_SQL).not.toContain('ledger_transactions_delete_guard')
   })
 })
 
@@ -454,6 +459,11 @@ describe('7. money invariants DB-enforced', () => {
     expect(trig).toBeTruthy()
     expect(trig![0]).toContain('deferrable initially deferred')
     expect(trig![0]).toContain('after insert or update or delete')
+  })
+
+  it('one reversal per original: reversal_of_id carries a UNIQUE index (#133 / DB-11)', () => {
+    const idx = INDEXES.find((i) => i.table === 'ledger_transactions' && i.columns[0] === 'reversal_of_id')
+    expect(idx).toMatchObject({ unique: true })
   })
 
   it('escrow balance can never go negative', () => {

@@ -56,6 +56,28 @@ Total = 68 (matches prior QA claim).
 > baseline, kept for history. (The Float-era bullets were already closed by
 > #122's integer cents.)
 
+> **UPDATE (2026-09-23, issue #133 / DB-11 in the tracker — audit-file DB-10):**
+> reversal marking — the one legal mutation #124 left on `ledger_transactions` —
+> is GONE. Reversals are now purely NEW rows: `reverseLedgerTransaction`
+> posts the mirrored transaction carrying `reversalOfId` → original and
+> writes NOTHING else; "was this reversed?" is DERIVED from that link
+> (`findReversalOf` / `isReversed` / `reversalRefsByTxnId` in
+> modules/ledger/service.ts — the single seam; the finance slice, wallet txn
+> lists and the double-reversal guard all read it). Migration
+> `21_ledger_reversals_as_rows` drops/re-creates the live
+> `LedgerTransaction_update_guard` with the posting transition (pending→
+> posted, the balance gate) as the ONLY legal UPDATE — the previously-legal
+> `posted→'reversed' + reversalRef` write is now rejected — and adds a
+> UNIQUE index on `reversalOfId` (one reversal per original, the DB-level
+> double-reversal backstop the old status-stamp guard lacked under
+> concurrency). The `status`/`reversalRef` columns are kept as documented
+> LEGACY (additive house rule): pre-#133 rows may still carry the stamps —
+> consistent with the derived read, since the old flow posted the reversal
+> row first — and the guard freezes them in place. The Supabase design moved
+> in lockstep: `ledger_transactions` joined the blanket append-only set
+> (INSERT/SELECT-only like `ledger_entries`; the reversal-only update guard
+> and its update policy were removed; `reversal_of_id` is UNIQUE).
+
 > **MONEY-CONVENTIONS UPDATE (2026-09-21, issue #282):** `StockMovement.unitCost`
 > is integer **cents end-to-end** — the one #122 column whose writers kept
 > storing KSh after the BigInt migration (the frontend "Unit cost (KSh)"
@@ -181,7 +203,7 @@ List (`prisma/migrations`, `migration_lock.toml` = sqlite):
 | DB-7 | Medium | No unique constraint on Attendance (workerId, date) — duplicate day rows possible under concurrent check-in/USSD/sync | schema L151–178; mjengo.ts L1128–1133; trust.ts L83–89 | "Enforce one attendance day-row per (workerId, date) — unique constraint + upsert" |
 | DB-8 | Medium | Business codes not unique: requestCode/orderCode/invoiceCode/requestCode; `Transaction.ledgerTxnId` comment claims uniqueness it doesn't have | schema L657, L749, L865, L1040, L264; design doc §10.1 admits it | "Promote business codes to unique (data audit first) — MR-/PO-/INV-/PR- + Transaction.ledgerTxnId" |
 | DB-9 | Low-Medium | 11+ soft FK columns can dangle (mostly fail-closed in code, documented) | schema L447, L700–701, L1031, L1071, L320, L341, L225, L1282–1288 | "Harden soft FK links (supplierId, approval entity, wallet ledger link) with validation or constraints" |
-| DB-10 | Low | "Immutable" ledger rows ARE updated for reversal marking; no enforcement on SQLite | ledger/service.ts L181–186; guard exists only in supabase 0002 L309–340 | "Document/align ledger immutability semantics (reversal-only update) on both paths" — **CLOSED on SQLite 2026-09-19 by #124 (reversal-only update whitelist trigger)** |
+| DB-10 | Low | "Immutable" ledger rows ARE updated for reversal marking; no enforcement on SQLite | ledger/service.ts L181–186; guard exists only in supabase 0002 L309–340 | "Document/align ledger immutability semantics (reversal-only update) on both paths" — **CLOSED on SQLite 2026-09-19 by #124 (reversal-only update whitelist trigger)** — **SUPERSEDED & CLOSED PROPERLY 2026-09-23 by #133 (tracker DB-11): reversals are new rows linked via reversalOfId, "is reversed?" derived from the link; migration 21 tightens the update guard to the posting transition only + UNIQUE reversalOfId; Supabase design made ledger_transactions INSERT/SELECT-only (see §2.1 update)** |
 | DB-11 | Low | Zero enums / zero CHECKs on SQLite — status ladders are free text | schema census §1; CHECKs only in supabase 0001 | "Constrain status ladders (enums or CHECKs) to catch typos early" |
 | DB-12 | Low | SQLite `PRAGMA foreign_keys` enforcement for raw/prisma-external writers unverified; in-process ledger ref counter documented multi-process limit | migrations (all FKs); ledger/service.ts L88–105 (BE-10) | "Verify FK pragma posture for SQLite; note multi-process ref-counter limit in deploy docs" — **CLOSED 2026-09-23 via #135: boot-time execute+read-back assert (`ensureForeignKeys()` in src/backend/lib/db.ts, wired into `src/instrumentation.ts` and every seed/script entrypoint, fatal on OFF); Prisma's ON posture + P2003 orphan rejection pinned on the real engine; deploy note with the BE-10 multi-process caveat in DEPLOYMENT.md §7.2** |
 

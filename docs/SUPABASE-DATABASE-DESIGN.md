@@ -70,9 +70,12 @@ strengthening, documented, and tested):
 3. **Monotonic version guards** on `tasks.version` / `attendances.version`
    (offline-sync contract: a stale write can never roll a row back).
 4. **Ledger self-FK** `ledger_transactions.reversal_of_id` (Prisma kept it as
-   a plain column; money-grade referential integrity is worth the FK).
-5. **Append-only immutability triggers** + **balanced-legs deferred constraint**
-   + **reversal-only ledger update guard** (§5 below).
+   a plain column; money-grade referential integrity is worth the FK) with a
+   **UNIQUE index** — one reversal per original (#133 / DB-11).
+5. **Append-only immutability triggers** + **balanced-legs deferred constraint**;
+   `ledger_transactions` is INSERT/SELECT-only like `ledger_entries`
+   (#133: reversals are new rows linked via `reversal_of_id`, "was reversed?"
+   is derived from the link — there is no reversal-marking update to guard).
 
 ## 4. Tenancy model (what RLS encodes)
 
@@ -109,16 +112,21 @@ These fire for **every** principal including the service role:
 1. **Σ debits = Σ credits per ledger transaction** — deferred constraint
    trigger on `ledger_entries`, checked at COMMIT. The service already
    validates balanced legs; the DB now guarantees it survives every writer.
-2. **Ledger transactions are immutable except reversal marking** — a guard
-   trigger whitelists the only legal update (`status: posted → reversed` +
-   `reversal_ref`); amounts/refs/ids never change; deletes rejected.
+2. **Ledger transactions are INSERT/SELECT-only** (#133 / DB-11) — reversals
+   are NEW rows linked via `reversal_of_id` ("was reversed?" is derived from
+   the link, never stamped); every UPDATE is rejected and `reversal_of_id`
+   is UNIQUE, so at most one reversal can point at any original. (The SQLite
+   twin keeps ONE legal update — the pending→posted posting transition that
+   carries its balance gate; Postgres defers that check to COMMIT, so it
+   needs no transition.)
 3. **Append-only tables** (UPDATE/DELETE rejected unless the explicit
    maintenance GUC §9 is set): `audit_events`, `mjengo_scores`,
    `risk_assessments`, `intel_digests`, `project_health`, `draw_packs`,
    `photo_hashes`, `ai_review_notes`, `ai_insights`, `trust_digests`,
-   `stock_movements`, `ledger_entries`, `idempotency_records`,
-   `credential_checks`, `price_points`. These tables also carry
-   **INSERT+SELECT policies only** — no update/delete policies exist at all.
+   `stock_movements`, `ledger_entries`, `ledger_transactions`,
+   `idempotency_records`, `credential_checks`, `price_points`. These tables
+   also carry **INSERT+SELECT policies only** — no update/delete policies
+   exist at all.
    *Deliberate deviation (loud):* today a project DELETE cascades these away
    silently. Under the target design that cascade fails unless ops sets
    `mjengo.allow_maintenance` — money-grade audit history must not vanish as
@@ -154,7 +162,8 @@ supplier rows; **admin** = admin only; — = no policy (denied).
 | `invoices` (+lines) | can_read or own | own or can_write | own or can_write | staff |
 | `materials`, `professionals`, `price_points`, `credential_checks` (S) | authenticated | staff | — (append) | — |
 | `risk_assessments`, `mjengo_scores`, `intel_digests`, `project_health`, `draw_packs`, `photo_hashes`, `ai_review_notes`, `ai_insights`, `trust_digests`, `stock_movements`, `ledger_entries`, `idempotency_records` | can_read / staff (null-project) | staff / can_write (stock) | — | — |
-| `ledger_accounts`, `ledger_transactions` | null+staff or can_read | staff | staff (reversal-only via trigger) / — | staff / — |
+| `ledger_accounts` | null+staff or can_read | staff | staff / — | staff / — |
+| `ledger_transactions` | null+staff or can_read | staff | — (append-only, #133: reversals are new rows via reversal_of_id) / — | — |
 | `wallet_accounts`, `job_records`, `domain_events` | staff | staff | staff | staff |
 | `feature_flags` | admin+contractor | admin | admin | admin |
 | `saved_suppliers`, `approvals`, `consumptions` | can_read | can_write | — | staff |
@@ -256,7 +265,8 @@ its own project's notification events.
 - every FK column is covered by an explicit index (PK/unique/index scan);
 - append-only tables have no update/delete policies AND immutability
   triggers wired;
-- the balanced-legs constraint trigger and reversal guard exist;
+- the balanced-legs constraint trigger exists and `reversal_of_id` is
+  UNIQUE (one reversal per original — #133);
 - snake_case naming + no secrets in SQL.
 
 Live validation against a real Supabase project (apply → `supabase db lint`
