@@ -71,6 +71,7 @@ export function MjengoApp() {
     data, loading, load, online, outbox, syncing,
     projects, activeProjectId, viewMode, setViewMode, createProject, dispatch,
     shareToken, shareError, bootFromShare, clientRole,
+    persistDegraded, persistQueueOnly,
   } = useMjengo()
   const { data: session, status } = useSession()
   const { role: sessionRole, knownRole, tabs: roleTabs } = usePermissions()
@@ -476,6 +477,29 @@ export function MjengoApp() {
         ) : (
           <DiasporaBanner onExit={() => setViewMode('owner')} />
         )
+      )}
+
+      {/* #192 (outbox persistence hardening) — the localStorage layer is
+          degraded: writes are failing (device storage full / private mode).
+          LOUDER than the offline banner below: while degraded, offline work
+          still queues in memory but is one tab-close from loss; queue-only
+          means the adapter's fallback banked the queue by dropping the
+          re-fetchable data slice (offline WRITES survive a restart, offline
+          READS do not). Owner surfaces only — the client surfaces re-read
+          their view from the server/share token, and the queue is
+          owner-side. */}
+      {(persistDegraded || persistQueueOnly) && !isClientSurface && (
+        <div
+          className={`px-4 py-2 flex items-center justify-center gap-2 text-sm font-medium ${
+            persistDegraded ? 'bg-red-600 text-white' : 'bg-amber-600 text-stone-950'
+          }`}
+          role={persistDegraded ? 'alert' : 'status'}
+        >
+          <TriangleAlert className="w-4 h-4 shrink-0" aria-hidden />
+          <span className="text-center">
+            {persistDegraded ? t('app.persist.degraded') : t('app.persist.queueOnly')}
+          </span>
+        </div>
       )}
 
       {!online && !isClientSurface && (

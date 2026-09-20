@@ -3760,4 +3760,15 @@ export const enDict = {
   'sw.update.body': 'Reload to update MjengoOS.',
   'sw.update.reload': 'Reload',
   'sw.update.later': 'Later',
+
+  // --------------------------------------------- #192 · persistence hardening
+  // The localStorage-degradation banners (app.tsx) + the outbox sheet's
+  // device-local note (sync-outbox-panel.tsx). degraded = writes are
+  // failing outright (storage full / private mode): queued work is
+  // memory-only, one tab-close from loss; queueOnly = the fallback banked
+  // the queue by dropping the re-fetchable project data (offline WRITES
+  // survive a restart, offline READS do not).
+  'app.persist.degraded': "Can't save your offline changes — this device's storage is full. Keep this app open; your work will sync when you're back online.",
+  'app.persist.queueOnly': 'Device storage is full — queued actions are still saved on this device, but project data will not be available offline after a restart.',
+  'outbox.deviceLocal': 'Queued actions are saved on this device only — clearing browser data or switching devices loses them.',
 } satisfies Dict

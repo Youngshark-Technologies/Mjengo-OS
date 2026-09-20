@@ -444,7 +444,11 @@ describe('#128: session scoping — the supplier outbox never drains owner items
     const supplierSrc = readSrc('src/frontend/hooks/use-supplier-outbox.ts')
     const ownerSrc = readSrc('src/frontend/hooks/use-mjengo.ts')
     expect(supplierSrc).toContain("name: 'mjengo-supplier-outbox'")
-    expect(ownerSrc).toContain("name: 'mjengo-os-store'")
+    // #192 moved the owner key behind the exported MJENGO_STORE_KEY const
+    // (the guarded storage adapter needs the name) — pin BOTH the const's
+    // value and its use, the same invariant the literal pin carried.
+    expect(ownerSrc).toContain("export const MJENGO_STORE_KEY = 'mjengo-os-store'")
+    expect(ownerSrc).toContain('name: MJENGO_STORE_KEY')
     // The supplier store consumes the SHARED core (lib/outbox) but never the
     // owner store — no entanglement by construction.
     expect(supplierSrc).not.toContain("from '@/frontend/hooks/use-mjengo'")

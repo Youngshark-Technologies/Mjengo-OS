@@ -16,7 +16,7 @@
 import { useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import {
-  Check, CheckCheck, CloudOff, Loader2, RefreshCw, TriangleAlert,
+  Check, CheckCheck, CloudOff, Loader2, RefreshCw, Smartphone, TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -249,6 +249,13 @@ export function SyncOutboxPanel() {
                 : t('outbox.metaQueued', { count: outbox.length })}
             {lastSyncAt ? ` · ${t('outbox.lastSync', { when: formatDistanceToNow(new Date(lastSyncAt), { addSuffix: true }) })}` : ''}
           </SheetDescription>
+          {/* #192: the honest device-local note — the queue lives in THIS
+              browser's localStorage (spec §40; per-device by architecture,
+              issue #192's audit note), not in the cloud and not on other
+              devices. stone-600 on white (6.99:1) — the FE-4 contrast rule. */}
+          <p className="flex items-center gap-1.5 text-[11px] text-stone-600">
+            <Smartphone className="w-3 h-3 shrink-0" aria-hidden /> {t('outbox.deviceLocal')}
+          </p>
         </SheetHeader>
 
         {outbox.length === 0 ? (
