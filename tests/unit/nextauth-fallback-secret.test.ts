@@ -30,6 +30,23 @@ const naModule = (p: string) =>
 // 'next-auth/jwt' is an official subpath export — safe to import directly.
 import { encode } from 'next-auth/jwt'
 import { buildAuthOptions } from '@/backend/lib/auth'
+// Issue #181 (SEC-15): the guard now proves every decoded session against
+// the user's CURRENT tokenVersion (lib/session-revocation.ts → db). This
+// file's SUBJECT is secret verification, not revocation — the db is mocked
+// to a standing user row at version 0 so pre-#181-style claims (no
+// tokenVersion → read as 0) verify as UNrevoked, exactly what these
+// secret-path assertions mean to prove. Revocation itself has its own
+// suite (session-revocation.test.ts).
+vi.mock('@/backend/lib/db', () => ({
+  db: {
+    user: {
+      findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({
+        id: where.id,
+        tokenVersion: 0,
+      })),
+    },
+  },
+}))
 import { getSessionFromReq, withGuard } from '@/backend/lib/guard'
 import {
   detectOriginMirror,

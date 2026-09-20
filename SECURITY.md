@@ -69,7 +69,34 @@ routes, zod-validated inputs, `Idempotency-Key` dedupe on money routes,
 crypto-random 96-bit share tokens, fail-closed role guards
 (`src/backend/lib/guard.ts`) mirrored client-side, project-membership read
 scoping for the site team (`src/backend/lib/membership-scope.ts`, issue
-#174 / SEC-6), and PR-only `main` with CI quality gates.
+#174 / SEC-6), **server-side session revocation** (issue #181 / SEC-15 —
+sign-out bumps the user's `tokenVersion` and the guard rejects every token
+that predates the bump; see the incident-response line below), and PR-only
+`main` with CI quality gates.
+
+### Incident response: revoking a user's sessions (issue #181 / SEC-15)
+
+Sessions are 30-day JWTs by design (the offline-first posture — field
+devices may sit offline for days; a shorter maxAge would force re-auth at
+exactly the wrong moment). The kill switch is the per-user token version:
+every guarded request proves the token's `tokenVersion` claim against the
+current `User.tokenVersion` row (`src/backend/lib/session-revocation.ts`,
+fail closed on any lookup failure).
+
+To revoke **every session for user X** (device theft, shared-machine
+exposure, suspected token compromise):
+
+```sql
+UPDATE "User" SET "tokenVersion" = "tokenVersion" + 1 WHERE "email" = 'x@example.com';
+```
+
+That one row invalidates the JWT on every device the user holds — this one,
+other browsers', a stolen copy — from the next request (401, sign-in
+offered). Sign-out already does this per-user (next-auth's `signOut` event
+bumps the row). The per-device granularity trade-off and the design
+reasoning (why a counter, not a session table) are recorded in migration
+`20_token_version`'s header; the future password-change and role/pin-change
+surfaces must bump it too.
 
 ## Accepted risk: single-org membership posture (SEC-6, issue #174)
 

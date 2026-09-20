@@ -103,7 +103,15 @@ vi.mock('@/backend/lib/db', () => {
       return { count }
     },
   }
-  const db = { pushSubscription, __state: state }
+  // Issue #181 (SEC-15): the guard proves sessions against User.tokenVersion
+  // now — a standing row at version 0 keeps this file's session fixtures
+  // (no tokenVersion claim) UNrevoked, exactly what they mean to be.
+  const user = {
+    async findUnique({ where }: { where: { id: string } }) {
+      return { id: where.id, tokenVersion: 0 }
+    },
+  }
+  const db = { pushSubscription, user, __state: state }
   return { db }
 })
 

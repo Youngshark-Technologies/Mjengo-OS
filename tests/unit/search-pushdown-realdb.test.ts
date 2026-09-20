@@ -51,6 +51,18 @@ const tokenState: { token: Record<string, unknown> | null } = { token: null }
 vi.mock('next-auth/jwt', () => ({
   getToken: vi.fn(async () => tokenState.token),
 }))
+// Issue #181 (SEC-15): the guard now proves every session against
+// User.tokenVersion. This file's tokens are FIXTURES (mocked getToken,
+// synthetic principal ids) — the fixture means "a valid, unrevoked
+// session", so the revocation seam is mocked to exactly that. The seam
+// itself is pinned end-to-end on a REAL JWE + real user rows in
+// session-revocation.test.ts.
+vi.mock('@/backend/lib/session-revocation', async () => {
+  const actual = await vi.importActual<typeof import('@/backend/lib/session-revocation')>(
+    '@/backend/lib/session-revocation',
+  )
+  return { ...actual, sessionTokenIsRevoked: vi.fn(async () => false) }
+})
 
 import { GET as searchGet } from '@/app/api/search/route'
 import { disposeRealDb, getRealTestDb } from '../helpers/db'
