@@ -48,8 +48,11 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
+# (.env.staging.example is the staging compose template — issue #208; the
+#  real .env.staging stays ignored like every other .env*)
 .env*
 !.env.example
+!.env.staging.example
 
 # vercel
 .vercel

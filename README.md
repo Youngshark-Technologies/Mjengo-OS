@@ -621,6 +621,11 @@ form), health monitoring, scheduled backups + a drilled restore runbook
 (`deploy/backup/`), secrets handling — in
 [DEPLOYMENT.md](./DEPLOYMENT.md). Health probe: `GET /api/health`.
 
+A staging stack ships too (`docker-compose.staging.yml` — same three
+services on the same image, own ports/volumes/secrets) for rehearsing this
+exact path — migrations, rebuilds, seed chains, restore drills — on a
+prod-shaped copy before touching production: DEPLOYMENT.md §6.8.
+
 ## CI/CD
 
 Three workflows live in `.github/workflows/`, all triggered on every push to
