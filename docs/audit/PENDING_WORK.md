@@ -116,3 +116,58 @@ Offline transfer: `mjengo-wave3.bundle` (verified complete history; `git clone m
 Dev DB: rebuilt on the renamed migration set + reseeded (`bun run seed`).
 
 Next wave candidates from the register (P2): #124 DB-enforced ledger invariants · #144 SQL SUM aggregation · #154/#155 bounded reads · #156 webhook residual · #194 stock reconciliation (landed 2026-09-19 — migration 16 StockCount/StockCountItem, `inventory.count` + `inventory.count.post` actions, variance view + history + CSV on the Materials Store card; residuals tracked as REC-1) · #199 backups · #202/#204 observability · #183 offline conflict matrix (landed 2026-09-19 — full 11-type stale/fresh/absent/force matrix + §41 semantic outcomes incl. force-refuses-server-wins financial rows; client stamps attendance.override, the one versioned type it missed; client chain unit-pinned incl. the second-offline-edit invariant; reduceLocal gained the attendance.record/exception/override optimistic mirrors) · #184 real-SQLite harness (landed 2026-09-19 — harness + 5 critical-path real-DB suites; its first catches: postEscrowTopup replay projection drift, fixed in-flight; StockMovement.unitCost unit drift, filed as TEST-10) · #212 escrow drift alarm · #186 inventory consumption tests (landed 2026-09-18 — the Consumption model's posting path pinned in both idioms: `consumption.create` applier validation/scoping/audit/append-only + materials-rollup invariant received − consumed = on-site with spend views, FK honesty, over-consumption clamp vs the movement ledger's pre-write refusal, two-ledger non-interference, cross-project isolation; the NaN/Infinity applier-guard gap pinned with the engine as the only backstop).
+
+---
+
+# Session-2 addendum (2026-09-20) — the P3 register CLEARED; zero engineering backlog
+
+The "fix everything + update GitHub" session (worklog S2-SYNC → 7-b). The
+live tracker is the truth; this addendum is the landing record.
+
+## Closed this session (issue → PR → one-line evidence)
+
+| Issue | PR | What landed |
+|---|---|---|
+| #328 (new) | #329 | Dependabot ignore rules for toolchain-blocked majors (TS≥7 breaks typescript-eslint; eslint≥10 breaks eslint-plugin-react) — both npm trees; security advisories unaffected |
+| #208 | #331 | docker-compose.staging.yml (distinct names/volumes/ports, NODE_ENV=production, fail-closed secret interpolation) + explicit seed policy + promote runbook (SEC-2 sharp edge closed by construction) |
+| #217 | #332 | docs/runbooks/MONITORING.md (the dead-man-ping runbook: external health poll, backup dead-man, two-signal jobs-drain watch) + 2 POSIX monitoring scripts + the backup script's optional BACKUP_HEALTHCHECK_URL seam + 15-test suite |
+| #209 | #333 | publish.yml (GHCR + OCI labels + trivy HIGH/CRITICAL gate, GITHUB_TOKEN only) + .trivyignore policy + DEPLOYMENT §8.1 pull-by-digest path + FIXED docker.yml's birth-typo push trigger (`branches: ain]` silently disabled push runs since PR #12) |
+| #205 | #334 | /api/metrics — Prometheus text, dedicated METRICS_TOKEN (decision documented vs JOBS_RUN_TOKEN), shared health-query seam, ADR 0009 OTel phase-2 note |
+| #181 | #335 | Server-side session revocation — User.tokenVersion (migration 20), guard check (fail-closed, one PK read), jwt-callback embed + events.signOut bump, SECURITY.md incident-response UPDATE line, 16-test REAL-JWE/real-DB suite |
+| #193 | #336 | Background Sync — one-shot 'mjengoos-outbox' tag at both enqueue seams, SW sync handler asks open clients to drain, closed-app defers honestly (documented) |
+| #192 | #337 | Guarded persistence — quota/private-mode catch + queue-only fallback (banks the queue, drops re-fetchable data), red/amber banners, cross-tab storage-event rehydrate (LWW; CRDT declined with reasoning), orphaned-'syncing' normalization, bounding decision documented |
+| #150 | #338 | The Waiting-for-network worklist — REMIND-ONLY (documented decision), 11 online-only guard kinds across 5 surfaces, persisted + deduped + capped, header panel with Retry-now/Discard, reconnect toast |
+| #133 | #339 | Reversals as new rows — no UPDATE on the original (derived reversal state), migration 21 tightened the update guard (posting transition only) + reversalOfId UNIQUE, Supabase design in lockstep (INSERT/SELECT-only) |
+| #127 | #341 | Soft-FK sweep — Transaction.ledgerTxnId @unique (migration 22; the comment's claim finally held) + ADR 0010 registry (15 remaining soft links, per-column decisions + guards + failure modes) |
+| #203 | #342 | BOQ line-level lineage — migration 23 (three SetNull FK hops: boqLineId/requestLineId/StockMovement.requestLineId), ADR 0011, boqProgress derived view (estimated/requested/ordered/delivered/consumed; legacy rows listed, never name-guessed), boq-card wired |
+| #140 | #343 | USSD simulation body i18n — 71+71 EN/SW keys (LCD script, keypad aria, explainer, demo-PIN list); dial syntax stays data; locale-snapshot transcript semantics |
+| #137 | #345 | The runtime DOM a11y tier — tests/dom/ (jsdom per-file pragma, React-19 render harness, no @testing-library), 20 behavioral tests on the 4 highest-risk contracts; static pins retained as the wide net. INCIDENT fixed: the pragma string in a comment switched a node-only file's environment |
+| #344 (QA-found) | #346 | The runtime suite's FIRST CATCH fixed — overflow-tab panels unnamed on mobile; panel carries its own aria-label fallback (accname spec) |
+
+Plus dependabot queue hygiene: #322 + #330 merged (gates verified on true
+merge results), #321/#323/#265 closed with evidence (toolchain-blocked
+majors; ignore rules prevent recreation), 7 stale pre-transfer PRs
+(#262-#264, #266-#269) closed as conflicting-with-reality (the active
+weekly schedule re-proposes cleanly), the dead agent's #340 closed as
+superseded by #341.
+
+## Session gates (on the fully-merged state)
+
+- **Unit: 154 files / 3,328 tests — all green** (was 144 / 3,172 at session
+  start: +10 files, +156 tests, every one shipped with its issue)
+- **Runtime DOM tier: 21 tests green** · **E2E: 7/7 persona golden paths
+  (40s)** against the live dev server + seeded DB
+- lint 0 · strict tsc 0 · 25 migrations, zero drift · fresh migrate deploy clean
+
+## What remains (the honest end state)
+
+- **Externals (owner/business action, documented workarounds):** #40 USSD
+  telco gateway · #41 native app (ADR-0001) · #43 M-Pesa production certs ·
+  #98 CI billing lock (the publish + smoke workflows are written for unblock
+  day).
+- **Register residuals (documented, non-blocking):** REC-1 reconciliation
+  residuals (blind counts, cadence, variance alerting) · the indexed-DB
+  outbox move (true closed-app drain) · supplier-portal key on the guarded
+  adapter · axe-core tier if wanted · WhatsApp panel server-fed content ·
+  major-version dep migrations arrive as fresh weekly Dependabot PRs for
+  real gating.
