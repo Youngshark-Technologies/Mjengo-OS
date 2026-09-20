@@ -4,6 +4,9 @@ import pkg from '../../../../package.json'
 import { withRequestLogging } from '@/backend/lib/log'
 import { secretsMatch } from '@/backend/lib/jobs-token'
 import { getSessionFromReq } from '@/backend/lib/guard'
+// Issue #205: the probe + job-count queries are shared with GET /api/metrics
+// through this module, so the two endpoints cannot drift apart.
+import { dbUp, jobStatusCounts } from '@/backend/lib/health-queries'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,9 +43,11 @@ export const dynamic = 'force-dynamic'
  *   gated path — the hot probe path pays one SELECT 1 and nothing more.
  *
  * HONEST scope (§45): this is process-local liveness + a real DB round-trip.
- * No OpenTelemetry/Prometheus exporter, Redis, Temporal or queue-worker
- * checks exist to report — those fields stay absent until a real dependency
- * does. Job counts are point-in-time row counts, not queue depth gauges.
+ * No OpenTelemetry/tracing exists (the growth path is the #205 design note,
+ * docs/adr/0009); scrapeable Prometheus text lives next door at
+ * GET /api/metrics (issue #205), rendered from the SAME queries via
+ * src/backend/lib/health-queries.ts. Job counts are point-in-time row
+ * counts, not queue depth gauges.
  */
 
 /** Request header carrying the HEALTH_DETAIL_TOKEN machine credential. */
@@ -106,19 +111,18 @@ export function GET(req: NextRequest): Promise<NextResponse> {
   const startedAt = Date.now()
 
   try {
-    await db.$queryRaw`SELECT 1`
+    await dbUp()
     if (!detail) {
       // The probe minimum — exactly what compose healthchecks, the CI
       // smoke test (docker.yml's jq check) and uptime monitors assert on.
       return NextResponse.json({ ok: true, db: 'up', timestamp })
     }
-    const [jobGroups, projects, workers, notifications] = await Promise.all([
-      db.jobRecord.groupBy({ by: ['status'], _count: { _all: true } }),
+    const [jobs, projects, workers, notifications] = await Promise.all([
+      jobStatusCounts(),
       db.project.count(),
       db.worker.count(),
       db.notification.count(),
     ])
-    const byStatus = new Map(jobGroups.map((g) => [g.status, g._count._all]))
     return NextResponse.json({
       ok: true,
       uptimeSec: Math.floor(process.uptime()),
@@ -126,11 +130,7 @@ export function GET(req: NextRequest): Promise<NextResponse> {
       timestamp,
       db: 'up',
       dbLatencyMs: Date.now() - startedAt,
-      jobs: {
-        queued: byStatus.get('queued') ?? 0,
-        retrying: byStatus.get('retrying') ?? 0,
-        failed: byStatus.get('failed') ?? 0,
-      },
+      jobs,
       counts: { projects, workers, notifications },
     })
   } catch (e) {
