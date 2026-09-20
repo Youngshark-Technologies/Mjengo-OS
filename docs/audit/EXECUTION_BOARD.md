@@ -36,3 +36,30 @@ Live truth: the GitHub tracker. This board is the 2026-09-16 end-of-mission snap
 ## Verdict
 
 READY WITH APPROVED RISKS for the documented posture (single-operator, Kenya sandbox rails). NOT READY for real-money settlement until #122 lands (by design — "the ledger never lies"). QA posture: adversarial backend + browser batteries ran against the fully-merged state; 2 QA-found defects (#241, #242) were fixed the same session with regression tests.
+
+---
+
+# Session-2 board update (2026-09-20) — "fix everything, update GitHub"
+
+Live truth: the GitHub tracker. Snapshot of this session's end state.
+
+| Metric | Count |
+|---|---|
+| Issues closed this session | 15 (#328 new + #208 #217 #209 #205 #181 #193 #192 #150 #133 #127 #203 #140 #137 #344 QA-found) |
+| PRs opened AND merged | 16 (#329 #331 #332 #333 #334 #335 #336 #337 #338 #339 #341 #342 #343 #345 #346 + dependabot #322/#330) |
+| Stale PRs closed with evidence | 10 (#321 #323 #265 #262-#264 #266-#269 #340) |
+| Tests at session start | 144 files / 3,172 |
+| Tests at session end | **154 files / 3,328** (+156, all green) + 21 runtime-DOM + E2E 7/7 |
+| Lint / strict tsc / drift | 0 / 0 / zero (25 migrations, additive-only) |
+| Open PRs at end | **0** |
+| Open issues at end | **4 — all externally blocked owner/business action** (#40 #41 #43 #98) |
+
+## Verdict (updated)
+
+The engineering backlog is ZERO: every P0–P3 issue ever filed against this
+repo is closed or externally blocked with documented workarounds. The
+original mission gates all stand (integer-cents ledger + DB triggers +
+membership authz + E2E + backups + observability + revocation + lineage).
+READY WITH APPROVED RISKS for the documented posture (single-operator,
+Kenya sandbox rails); the four externals are the only path to production
+certification, and each carries its documented workaround.
