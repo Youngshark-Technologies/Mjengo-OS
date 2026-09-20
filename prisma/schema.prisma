@@ -533,6 +533,18 @@ model User {
   // is ALTER TABLE ADD COLUMN only, house rule for additive migrations); a
   // dangling id fails closed at session shaping ("no supplier linked").
   supplierId        String?
+  // Issue #181 (audit SEC-15): server-side session revocation — the per-user
+  // TOKEN VERSION. The JWT embeds it at sign-in (auth.ts jwt callback) and
+  // every guarded request compares the token's claim against this column
+  // (guard.ts via lib/session-revocation.ts): a mismatch means the token
+  // predates a revocation → the session is rejected (401). Bumping this row
+  // invalidates EVERY session the user has — sign-out does it (next-auth's
+  // events.signOut hook), and incident response can do it with one UPDATE
+  // (SECURITY.md's "revoke all sessions for user X" runbook line).
+  // Deliberately NOT a session-jti table: every bump trigger this app has
+  // (sign-out, the future password/role/pin changes, incident response) is
+  // user-scoped, and a per-user counter answers "revoke all" with one row.
+  tokenVersion      Int                 @default(0)
   createdAt         DateTime            @default(now())
   // Notification preferences (Doc A §42, backend wave): per-kind opt-in map
   // stored as JSON — the in-app channel is always on, prefs gate future channels.

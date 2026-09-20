@@ -30,6 +30,14 @@ const created: Array<Record<string, unknown>> = []
 const auditRows: Array<Record<string, unknown>> = []
 vi.mock('@/backend/lib/db', () => ({
   db: {
+    // Issue #181 (SEC-15): the guard proves sessions against
+    // User.tokenVersion now — a standing row at version 0 keeps this
+    // file's session fixtures (no tokenVersion claim) UNrevoked.
+    user: {
+      async findUnique({ where }: { where: { id: string } }) {
+        return { id: where.id, tokenVersion: 0 }
+      },
+    },
     project: {
       async create({ data }: { data: Record<string, unknown> }) {
         const row = { id: `p-${created.length + 1}`, ...data }

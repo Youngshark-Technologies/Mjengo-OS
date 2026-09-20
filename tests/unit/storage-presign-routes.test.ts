@@ -119,7 +119,13 @@ vi.mock('@/backend/lib/db', () => {
       return null
     },
   }
-  const db = { attachment, project, __state: state }
+  // Issue #181 (SEC-15): standing user row at version 0 — see push-routes.
+  const user = {
+    async findUnique({ where }: { where: { id: string } }) {
+      return { id: where.id, tokenVersion: 0 }
+    },
+  }
+  const db = { attachment, project, user, __state: state }
   return { db }
 })
 

@@ -4,10 +4,25 @@ import { getToken } from 'next-auth/jwt'
 import type { MjengoSessionUser } from '@/backend/lib/auth'
 import { isInternalError } from './error-redaction'
 import { devFallbackSecretCandidates } from '@/backend/lib/nextauth-fallback-secret'
+// Issue #181 (SEC-15): server-side revocation — every session decoded here
+// is checked against the user's CURRENT tokenVersion before it becomes a
+// GuardSession. One seam, inherited by every guarded route + route-kit's
+// publicRoute session decode + the health detail gate.
+import { sessionTokenIsRevoked } from './session-revocation'
 
 export type GuardSession = { user: MjengoSessionUser } | null
 
-/** JWT-decode the next-auth session straight off the request cookie. */
+/**
+ * JWT-decode the next-auth session straight off the request cookie — and
+ * (issue #181, SEC-15) prove it is not revoked: the decoded token's
+ * tokenVersion claim is compared against the user's current row via
+ * lib/session-revocation.ts; a mismatch (the row moved after this token
+ * was minted — a sign-out, an incident-response bump, the future
+ * password/role/pin-change surfaces) reads as signed out. A token with
+ * NO claim reads as version 0 (minted pre-#181 — the deploy itself
+ * invalidates nobody); a deleted user, a nameless token or a failed
+ * lookup all fail closed (see the revocation module header).
+ */
 export async function getSessionFromReq(req: NextRequest): Promise<GuardSession> {
   // v4's own precedence: options.secret (NEXTAUTH_SECRET) ?? NEXTAUTH_SECRET
   // env ?? AUTH_SECRET alias — the guard verifies with the SAME secret the
@@ -32,6 +47,12 @@ export async function getSessionFromReq(req: NextRequest): Promise<GuardSession>
     }
   }
   if (!token?.email) return null
+  // Issue #181: the revocation check — the ONLY additional work a valid
+  // session now costs (one PK-point read). Runs AFTER the decode succeeded
+  // so garbage cookies stay free, and BEFORE the session is shaped so every
+  // consumer (withGuard 401, publicRoute's null session, the health detail
+  // gate) sees a revoked token exactly as a signed-out one.
+  if (await sessionTokenIsRevoked(token)) return null
   return {
     user: {
       id: String(token.id ?? token.sub ?? ''),

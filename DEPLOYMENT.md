@@ -938,6 +938,15 @@ server {
   it in your secret manager / `.env` on the host (never in git, never in the
   image). Changing it invalidates all sessions (users just sign in again).
   Do not expose the SQLite file or `db/` via the proxy.
+- **Session revocation (issue #181 / SEC-15):** sessions are 30-day JWTs by
+  design (the offline-first posture — field devices may sit offline for
+  days). The server-side kill switch is the per-user `tokenVersion`: the
+  guard proves every decoded token against the current row, so **sign-out
+  revokes that user's sessions on every device**, and an operator can do
+  the same with one SQL UPDATE (the incident-response runbook line in
+  SECURITY.md). The shorter-maxAge alternative was weighed and declined for
+  now — it is one config constant away if a deployment wants it; the
+  tradeoff is recorded in migration `20_token_version`'s header.
 
 #### 7.2.1 Installing the scheduled backup
 

@@ -13,6 +13,9 @@ import {
   recordLoginFailure,
 } from '@/backend/lib/rate-limit'
 import { log } from '@/backend/lib/log'
+// Issue #181 (SEC-15): the signOut event bumps the user's tokenVersion —
+// server-side revocation for a money-moving app.
+import { bumpUserTokenVersion } from '@/backend/lib/session-revocation'
 
 /** Shape carried on the session (JWT → session callback). */
 export interface MjengoSessionUser {
@@ -32,6 +35,9 @@ declare module 'next-auth' {
     role?: string
     projectId?: string | null
     supplierId?: string | null
+    // Issue #181 (SEC-15): authorize returns the fresh User row's token
+    // version so the jwt callback can embed it in the minted token.
+    tokenVersion?: number
   }
   interface Session {
     user: MjengoSessionUser
@@ -44,6 +50,11 @@ declare module 'next-auth/jwt' {
     role?: string
     projectId?: string | null
     supplierId?: string | null
+    // Issue #181 (SEC-15): the per-user token version — embedded at
+    // sign-in, compared against User.tokenVersion on every guarded
+    // request (guard.ts via lib/session-revocation.ts). ABSENT on tokens
+    // minted before #181 → reads as 0 (the deploy invalidates nobody).
+    tokenVersion?: number
   }
 }
 
@@ -204,6 +215,9 @@ export function buildAuthOptions(secureCookies: boolean): NextAuthOptions {
           role: user.role,
           projectId: user.projectId,
           supplierId: user.supplierId,
+          // Issue #181: stamped at sign-in so the guard can later prove the
+          // token is not revoked (User.tokenVersion comparison).
+          tokenVersion: user.tokenVersion,
         }
       },
     }),
@@ -217,6 +231,11 @@ export function buildAuthOptions(secureCookies: boolean): NextAuthOptions {
         token.supplierId = user.supplierId ?? null
         token.name = user.name ?? token.name
         token.email = user.email ?? token.email
+        // Issue #181 (SEC-15): the token version travels IN the JWT. The
+        // `user` object here is authorize's return (the fresh User row),
+        // so a minted token always carries the CURRENT version — the
+        // guard's later comparison then catches any bump in between.
+        token.tokenVersion = user.tokenVersion ?? 0
       }
       return token
     },
@@ -230,6 +249,20 @@ export function buildAuthOptions(secureCookies: boolean): NextAuthOptions {
         supplierId: token.supplierId ?? null,
       }
       return session
+    },
+  },
+  // Issue #181 (SEC-15): server-side revocation on sign-out. v4's default
+  // sign-out only clears the client cookie — the JWT itself stayed valid
+  // for its full 30-day life. The signOut event (JWT sessions: the decoded
+  // token arrives as `message.token`) bumps the user's tokenVersion, so
+  // every token they hold — this one, other devices', a stolen copy — is
+  // rejected by the guard from the next request. bumpUserTokenVersion
+  // never throws (a failed bump logs loudly; the cookie still clears —
+  // the revocation then rides the next successful bump; see the module).
+  events: {
+    async signOut({ token }) {
+      const userId = String(token?.id ?? token?.sub ?? '')
+      if (userId) await bumpUserTokenVersion(userId)
     },
   },
   }

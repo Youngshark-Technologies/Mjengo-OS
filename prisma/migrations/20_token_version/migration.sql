@@ -1,0 +1,42 @@
+-- 20_token_version (issue #181 / audit SEC-15 — server-side session
+-- revocation for a money-moving app): the per-user token version.
+--
+-- BEFORE: sessions are 30-day JWTs with no refresh, no rotation and no
+-- server-side revocation. Sign-out only cleared the client cookie — the
+-- JWT itself stayed valid until expiry, and role/projectId/supplierId
+-- changes only took effect when the token was re-minted at the next
+-- login. A stolen session token was valid for up to 30 days with NO
+-- incident-response kill switch.
+--
+-- AFTER: `User.tokenVersion` is embedded in the JWT at sign-in
+-- (auth.ts jwt callback) and compared on every guarded request
+-- (guard.ts via src/backend/lib/session-revocation.ts). A token whose
+-- claim is behind this row is rejected (401) — bumping the row
+-- invalidates EVERY session the user has:
+--   · sign-out — next-auth v4's events.signOut hook (the decoded token is
+--     available server-side there) increments it;
+--   · incident response — one UPDATE (SECURITY.md's "revoke all sessions
+--     for user X" line);
+--   · the future password-change and role/pin-change surfaces MUST bump
+--     it too (no such surface exists today — honest scope, see the PR).
+--
+-- WHY A PER-USER COUNTER, NOT A SESSION-JTI TABLE: every bump trigger
+-- this app has is user-scoped (sign-out everywhere is the DEFENSIBLE
+-- posture for a money app; role/password changes must kill all sessions
+-- anyway; incident response asks for "all"), a counter answers it with
+-- one column and one indexed read per guarded request, and there is no
+-- session table to mint/clean/GC. Per-device sign-out granularity is a
+-- documented trade-off, not a silent loss (SECURITY.md records it).
+--
+-- BACKWARD COMPATIBILITY (the offline-PWA posture, issue #78): tokens
+-- minted BEFORE this migration carry no tokenVersion claim — the
+-- verification seam reads a missing claim as 0, and every existing row
+-- is born at 0, so NO field session is invalidated by the deploy itself;
+-- deploys must not force re-auth on devices that may be offline for
+-- days. The first bump (any sign-out after the deploy) revokes them.
+--
+-- Additive-only house rule: ONE ALTER TABLE ADD COLUMN with a default,
+-- no existing row is rewritten (they read 0 via the default), no
+-- constraint, no index needed (the lookup is a PK-point read:
+-- findUnique({ where: { id } })).
+ALTER TABLE "User" ADD COLUMN "tokenVersion" INTEGER NOT NULL DEFAULT 0;
