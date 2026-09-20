@@ -16,6 +16,7 @@ import { toast } from 'sonner'
 import { formatKES, dateShort } from '@/frontend/lib/format'
 import { useT } from '@/frontend/i18n/provider'
 import { downloadCSV, materialsLedgerCSV, reconciliationCSV, projectFilePrefix } from '@/frontend/mjengo/export-utils'
+import { materialMatches } from '@/backend/modules/supply/compare'
 import type { InventoryItemRow, StockMovementType } from '@/backend/modules/inventory/types'
 
 function SourceBadge({ source }: { source: string }) {
@@ -448,6 +449,11 @@ function SiteStoreCard() {
   const [mRef, setMRef] = useState('')
   const [mNote, setMNote] = useState('')
   const [mTo, setMTo] = useState('')
+  // #203: structured consumption attribution — the source request line the
+  // operator picks when one is known ('none' = unattributed, the pre-#203
+  // shape). Rides the payload as requestLineId; the free-text reference field
+  // stays for humans.
+  const [mRequestLine, setMRequestLine] = useState('none')
   // Stock reconciliation (issue #194): run-count dialog + reconciliation detail.
   const [countOpen, setCountOpen] = useState(false)
   const [countDetailId, setCountDetailId] = useState<string | null>(null)
@@ -480,12 +486,27 @@ function SiteStoreCard() {
 
   const isNewLine = mType === 'opening' || mType === 'received'
   const selectedItem = items.find((i) => i.id === mItem)
+  // #203: candidate source request lines for the consume dialog — LIVE
+  // requests only (draft/submitted/approved/converted; rejected/withdrawn
+  // never sourced anything). When nothing fuzzy-matches the picked stock
+  // line, ALL live lines are offered: name drift between the request and the
+  // stock item is exactly the case manual attribution exists for.
+  const consumeLineOptions = (() => {
+    const live = data.supply.requests.filter((r) => ['draft', 'submitted', 'approved', 'converted'].includes(r.status))
+    const all = live.flatMap((r) =>
+      r.lines.map((l) => ({ id: l.id, requestCode: r.requestCode, materialName: l.materialName, unit: l.unit, qty: l.qty })),
+    )
+    if (!selectedItem) return all
+    const matching = all.filter((l) => materialMatches(l.materialName, selectedItem.materialName))
+    return matching.length ? matching : all
+  })()
 
   function openMovementDialog() {
     setMType('received')
     setMItem(items[0]?.id ?? '')
     setMName(''); setMUnit(''); setMLocation('Site Store')
     setMQty(''); setMCost(''); setMRef(''); setMNote(''); setMTo('')
+    setMRequestLine('none')
     setMovementOpen(true)
   }
 
@@ -582,7 +603,7 @@ function SiteStoreCard() {
         break
       case 'consumed':
         action = 'inventory.consume'
-        payload = { ...payload, inventoryItemId: selectedItem?.id, reference: mRef.trim() || undefined, note: mNote.trim() || undefined }
+        payload = { ...payload, inventoryItemId: selectedItem?.id, reference: mRef.trim() || undefined, note: mNote.trim() || undefined, requestLineId: mRequestLine !== 'none' ? mRequestLine : undefined }
         label = `Consumed ${qty} ${selectedItem?.unit} ${selectedItem?.materialName}`
         toastLabel = t('mat.toastLbl.consumed', { qty, unit, name: matName })
         break
@@ -839,7 +860,7 @@ function SiteStoreCard() {
             ) : (
               <div className="space-y-2">
                 <Label>{t('mat.store.label.stockLine')}</Label>
-                <Select value={mItem} onValueChange={setMItem}>
+                <Select value={mItem} onValueChange={(v) => { setMItem(v); setMRequestLine('none') }}>
                   <SelectTrigger aria-label={t('mat.store.label.stockLine')}><SelectValue placeholder={t('mat.ph.chooseStockLine')} /></SelectTrigger>
                   <SelectContent>
                     {items.map((i) => (
@@ -869,6 +890,26 @@ function SiteStoreCard() {
               <div className="space-y-2">
                 <Label htmlFor="ss-to">{t('mat.store.label.toLocation')}</Label>
                 <Input id="ss-to" value={mTo} onChange={(e) => setMTo(e.target.value)} placeholder={t('mat.ph.toLocation')} />
+              </div>
+            )}
+            {mType === 'consumed' && (
+              <div className="space-y-2">
+                {/* #203: the source-line pick — structured consumption
+                    attribution (requestLineId on the movement). Optional by
+                    design: unattributed consumption stays legal. */}
+                <Label>{t('mat.store.label.requestLine')}</Label>
+                <Select value={mRequestLine} onValueChange={setMRequestLine}>
+                  <SelectTrigger aria-label={t('mat.store.label.requestLine')}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t('mat.store.requestLineNone')}</SelectItem>
+                    {consumeLineOptions.map((l) => (
+                      <SelectItem key={l.id} value={l.id}>
+                        {t('mat.store.requestLineOption', { code: l.requestCode, name: l.materialName, qty: l.qty, unit: l.unit })}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] leading-snug text-stone-400">{t('mat.store.requestLineHint')}</p>
               </div>
             )}
             {mType === 'consumed' && (

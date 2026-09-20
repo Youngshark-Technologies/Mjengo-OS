@@ -22,10 +22,15 @@ vi.mock('@/backend/lib/db', () => {
     seq: 0,
     items: new Map<string, Record<string, unknown>>(),
     movements: new Map<string, Record<string, unknown>>(),
+    // #203: request lines for the consumption-attribution scope guard.
+    requests: new Map<string, Record<string, unknown>>(),
+    requestLines: new Map<string, Record<string, unknown>>(),
     failOnMovementType: null as string | null,
     reset() {
       state.items.clear()
       state.movements.clear()
+      state.requests.clear()
+      state.requestLines.clear()
       state.seq = 0
       state.failOnMovementType = null
     },
@@ -71,17 +76,32 @@ vi.mock('@/backend/lib/db', () => {
       return { ...m }
     },
   }
+  const materialRequestLine = {
+    // #203: the scope guard's read — line by id, request scoped to the
+    // caller's project (consumeStock's findItem twin).
+    async findFirst({ where }: { where: { id: string; request: { projectId: string } } }) {
+      const line = state.requestLines.get(where.id)
+      if (!line) return null
+      const req = state.requests.get(line.requestId as string)
+      return req && req.projectId === where.request.projectId ? { ...line } : null
+    },
+  }
   const db = {
     inventoryItem,
     stockMovement,
+    materialRequestLine,
     async $transaction(fn: (tx: typeof db) => unknown) {
       const items = new Map(state.items)
       const movements = new Map(state.movements)
+      const requests = new Map(state.requests)
+      const requestLines = new Map(state.requestLines)
       try {
         return await fn(db)
       } catch (err) {
         state.items = items
         state.movements = movements
+        state.requests = requests
+        state.requestLines = requestLines
         throw err
       }
     },
@@ -99,6 +119,8 @@ import {
 type StubState = {
   items: Map<string, Record<string, unknown>>
   movements: Map<string, Record<string, unknown>>
+  requests: Map<string, Record<string, unknown>>
+  requestLines: Map<string, Record<string, unknown>>
   failOnMovementType: string | null
   reset: () => void
 }
@@ -110,6 +132,15 @@ const P = 'proj-1'
 async function seedItem(qty = 10): Promise<string> {
   const r = await openStock(P, { materialName: 'Cement', unit: 'bags', qty, location: 'Site Store', unitCost: 750 })
   return r.inventoryItemId
+}
+
+/** Seed a request + one line (the #203 attribution target) in the stub. */
+function seedRequestLine(projectId: string, qty = 50): string {
+  const rid = `mr_${++state.seq}`
+  state.requests.set(rid, { id: rid, projectId, requestCode: `MR-${1000 + state.seq}` })
+  const lid = `mrl_${++state.seq}`
+  state.requestLines.set(lid, { id: lid, requestId: rid, materialName: 'Cement', unit: 'bags', qty })
+  return lid
 }
 
 beforeEach(() => {
@@ -142,6 +173,53 @@ describe('consumeStock — over-consumption never persists (DB-2)', () => {
 
   it('unknown item id is rejected', async () => {
     await expect(consumeStock(P, { inventoryItemId: 'nope', qty: 1 })).rejects.toThrow('Inventory item not found')
+  })
+})
+
+describe('consumeStock — structured consumption attribution (#203)', () => {
+  it('stamps the movement with the validated requestLineId', async () => {
+    const itemId = await seedItem(10)
+    const lineId = seedRequestLine(P, 50)
+    const r = await consumeStock(P, { inventoryItemId: itemId, qty: 4, requestLineId: lineId })
+    expect(r.closingQty).toBe(6) // the attribution changes nothing about the ledger math
+    const consumed = movementsOf(itemId).find((m) => m.type === 'consumed')!
+    expect(consumed.requestLineId).toBe(lineId)
+  })
+
+  it('refuses an unknown or FOREIGN-PROJECT requestLineId with no movement persisted', async () => {
+    const itemId = await seedItem(10)
+    const foreignLine = seedRequestLine('proj-2', 50) // another project's line
+    await expect(consumeStock(P, { inventoryItemId: itemId, qty: 4, requestLineId: foreignLine })).rejects.toThrow(
+      'Request line not found in this project',
+    )
+    await expect(consumeStock(P, { inventoryItemId: itemId, qty: 4, requestLineId: 'ghost' })).rejects.toThrow(
+      'Request line not found in this project',
+    )
+    expect(movementsOf(itemId).filter((m) => m.type === 'consumed')).toHaveLength(0)
+    expect(state.movements.size).toBe(1) // only the opening row
+  })
+
+  it('absent / empty / null requestLineId stays UNATTRIBUTED (null) — the pre-#203 shape', async () => {
+    const itemId = await seedItem(10)
+    await consumeStock(P, { inventoryItemId: itemId, qty: 1 })
+    await consumeStock(P, { inventoryItemId: itemId, qty: 1, requestLineId: '' })
+    await consumeStock(P, { inventoryItemId: itemId, qty: 1, requestLineId: null })
+    const consumed = movementsOf(itemId).filter((m) => m.type === 'consumed')
+    expect(consumed).toHaveLength(3)
+    for (const m of consumed) expect(m.requestLineId).toBeNull()
+  })
+
+  it('every other movement type writes requestLineId null (receipts attribute through the delivery chain)', async () => {
+    const lineId = seedRequestLine(P, 50)
+    await openStock(P, { materialName: 'Cement', unit: 'bags', qty: 10, location: 'Site Store' })
+    const itemId = [...state.items.values()][0]!.id as string
+    // receiveStock ignores any requestLineId in the payload — only the
+    // consume path accepts attribution.
+    await receiveStock(P, { materialName: 'Cement', unit: 'bags', location: 'Site Store', qty: 5, requestLineId: lineId })
+    await returnStock(P, { inventoryItemId: itemId, qty: 1 })
+    for (const m of movementsOf(itemId)) {
+      if (m.type !== 'consumed') expect(m.requestLineId).toBeNull()
+    }
   })
 })
 

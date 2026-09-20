@@ -42,6 +42,8 @@ export interface StockMovementRow {
   quantity: number
   unitCost: number | null
   reference: string | null
+  /** #203: structured consumption attribution — the source MaterialRequestLine (null = unattributed / legacy). */
+  requestLineId: string | null
   note: string | null
   recordedBy: string
   createdAt: string

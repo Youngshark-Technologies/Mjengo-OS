@@ -782,6 +782,14 @@ model MaterialRequest {
   // until the generators are unified.
 }
 
+// Line-level BOQ lineage (#203 / ADR 0011): boqLineId is the FIRST hop of
+// the traceability chain BoqLine → MaterialRequestLine → PurchaseOrderLine →
+// OrderDeliveryLine, with StockMovement.requestLineId closing the loop from
+// consumption back to the request line. Nullable + SetNull on BOTH ends:
+// deleting (or re-drafting) a BOQ line never breaks a request — the line
+// survives as a legacy/name-only row (the documented fallback), exactly like
+// PurchaseOrder.requestId's SetNull on the header hop. Stamped by
+// inventory/service.ts boqToRequest (one request line per selected BOQ line).
 model MaterialRequestLine {
   id           String          @id @default(cuid())
   requestId    String
@@ -789,6 +797,18 @@ model MaterialRequestLine {
   materialName String
   unit         String
   qty          Float
+  boqLineId    String? // #203 lineage hop 1 — the BoqLine this line was generated from (boqToRequest stamps it); null = legacy/name-only row
+  boqLine      BoqLine?        @relation(fields: [boqLineId], references: [id], onDelete: SetNull)
+  // #203 lineage hop 2 — purchase order lines sourced from this request line
+  // (supply/service.ts createOrder stamps one PO line per request line).
+  orderLines   PurchaseOrderLine[]
+  // #203 lineage hop 3 — consumption movements attributed to this request
+  // line (inventory/service.ts consumeStock stamps the operator's pick).
+  stockMovements StockMovement[]
+
+  // DB-6-style hot path: the lineage reads (BOQ-vs-actual per line) filter on
+  // this column — same discipline as StockMovement's inventoryItemId index.
+  @@index([boqLineId])
 }
 
 // Project-configurable approval policy (Finder spec §11): the FIRST active rule
@@ -897,6 +917,13 @@ model PurchaseOrderLine {
   qty           Float
   unitPrice     BigInt // cents — integer money (issue #122; was Float KSh)
   lineTotal     BigInt // cents — integer money (issue #122; was Float KSh)
+  // #203 / ADR 0011 lineage hop 2 — the MaterialRequestLine this PO line was
+  // priced from (createOrder builds one PO line per request line and stamps
+  // the link). Nullable + SetNull: a request-line rewrite or request deletion
+  // never breaks the PO — the line survives, attributed only via the header
+  // (order.requestId), the pre-#203 shape. Legacy PO lines stay null.
+  requestLineId String?
+  requestLine   MaterialRequestLine? @relation(fields: [requestLineId], references: [id], onDelete: SetNull)
   deliveryLines OrderDeliveryLine[]
 }
 
@@ -1270,6 +1297,16 @@ model StockMovement {
   quantity        Float // positive KES qty; sign semantics by type
   unitCost        BigInt? // integer KSh CENTS end-to-end (issues #122, #282) — KSh only at the boundaries: inventory service parseUnitCost converts the KSh action payload (frontend contract "Unit cost (KSh)"); supply postDeliveryToInventory stores the PO line's cents untouched; loadInventorySlice reads back via centsToKes
   reference       String? // PO code / delivery id / consumption id
+  // #203 / ADR 0011 lineage hop 3 — STRUCTURED consumption attribution: the
+  // MaterialRequestLine this consumption draws against (the BOQ-vs-actual
+  // view's "consumed" column). `reference` above stays free text for humans;
+  // this column is what queries join on. Nullable + SetNull: the movement
+  // ledger is append-only and must SURVIVE request deletion (an audit-grade
+  // trail outliving its subject — the ADR 0010 #15 posture), losing only its
+  // attribution. Stamped by consumeStock from the operator's pick; null =
+  // unattributed (legacy rows, or consumption with no known source line).
+  requestLineId   String?
+  requestLine     MaterialRequestLine? @relation(fields: [requestLineId], references: [id], onDelete: SetNull)
   note            String?
   recordedBy      String // name/role
   createdAt       DateTime      @default(now())
@@ -1351,6 +1388,9 @@ model BoqLine {
   estUnitPrice BigInt  @default(0) // cents — integer money (issue #122; was Float KSh). #285: writers normalized — payload is KSh, converted at the service write boundary (createBoq/upsertBoqLine → nonNegativeKesToCents)
   category     String? // structural, finishes, plumbing, electrical...
   note         String?
+  // #203 / ADR 0011: the request lines generated from this line (the lineage
+  // back-relation — boqToRequest stamps MaterialRequestLine.boqLineId).
+  requestLines MaterialRequestLine[]
 }
 
 // Saved/favorite suppliers per project (spec §30 "save supplier").

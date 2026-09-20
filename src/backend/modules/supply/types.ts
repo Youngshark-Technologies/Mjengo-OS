@@ -247,6 +247,55 @@ export interface BoqMaterialRow {
   remaining: number
 }
 
+// ---- PURE BOQ-vs-actual lineage contract (insights.ts boqProgress — #203) ----
+// The LINEAGE counterpart of BoqMaterialRow: per BoqLine, the whole
+// estimated → requested → ordered → delivered → consumed chain walked over
+// the FK links stamped by boqToRequest / createOrder / consumeStock — never
+// over material-name matching. Unlinked (legacy/name-only) request lines are
+// NOT guessed into these rows; boqProgress lists them separately so the UI
+// can label the gap with the same honesty as BOQ-lite.
+
+/** One BOQ line's chain position — every qty is 2-dp rounded. */
+export interface BoqProgressRow {
+  /** The BOQ this line belongs to (multiple BOQs share the view). */
+  boqId: string
+  boqLineId: string
+  materialName: string
+  unit: string
+  /** BoqLine.qty — the estimate-of-record the client signed off on. */
+  estimated: number
+  /** Σ MaterialRequestLine.qty where boqLineId = this line, live requests (draft/submitted/approved/converted — rejected/cancelled excluded). */
+  requested: number
+  /** Σ PurchaseOrderLine.qty reached through requestLineId, non-cancelled orders. */
+  ordered: number
+  /** Σ OrderDeliveryLine.qtyReceived reached through orderLineId → requestLineId, non-voided deliveries. */
+  delivered: number
+  /** Σ StockMovement.quantity of type 'consumed' attributed via requestLineId. */
+  consumed: number
+  /**
+   * estimated − consumed, SIGNED: negative is an OVERRUN of the
+   * estimate-of-record (the quantity-overrun detection #203 exists for).
+   * Unlike BOQ-lite's display-floored remaining, the sign is kept —
+   * overruns must be visible, not clipped.
+   */
+  remaining: number
+}
+
+/** A live request line with no BOQ lineage (legacy or manually created). */
+export interface BoqUnlinkedRequestLine {
+  requestId: string
+  requestCode: string
+  materialName: string
+  unit: string
+  qty: number
+}
+
+/** The BOQ-vs-actual view: per-line rows + the honest unlinked listing. */
+export interface BoqProgressResult {
+  rows: BoqProgressRow[]
+  unlinked: BoqUnlinkedRequestLine[]
+}
+
 export interface ProcurementTotals {
   required: number
   purchased: number

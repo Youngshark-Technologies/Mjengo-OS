@@ -61,7 +61,7 @@ afterAll(disposeRealDb)
 const count = (table: string): number => Number((sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: bigint }).n)
 
 describe('the harness (issue #184)', () => {
-  it('runs on a database migrated by the real prisma migrate deploy (24 migrations recorded — two 18_* folders)', () => {
+  it('runs on a database migrated by the real prisma migrate deploy (25 migrations recorded — two 18_* folders)', () => {
     const rows = sqlite.prepare(`SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL`).get() as { n: bigint }
     // 00→17 is one-per-number (18 migrations); #159 (18_upload_confirm_object_key)
     // and #207 (18_reorder_level) merged 9 minutes apart each carrying an
@@ -72,7 +72,7 @@ describe('the harness (issue #184)', () => {
     // Renaming a folder post-merge would re-apply it on every
     // already-migrated database, so the numbering collision is documented
     // here instead of "fixed".
-    expect(Number(rows.n)).toBe(24)
+    expect(Number(rows.n)).toBe(25)
     // The ledger invariant triggers are live in this database.
     const triggers = sqlite.prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'LedgerTransaction%'`).all() as Array<{ name: string }>
     expect(triggers.map((t) => t.name)).toContain('LedgerTransaction_posting_gate')
