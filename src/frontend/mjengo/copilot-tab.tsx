@@ -172,7 +172,7 @@ async function downscaleDataUrl(dataUrl: string, max = 1024, quality = 0.72): Pr
 }
 
 function PhotoPanel({ online }: { online: boolean }) {
-  const { data, dispatch, load } = useMjengo()
+  const { data, dispatch, load, enqueuePendingNetwork } = useMjengo()
   const dataMode = useMjengo((s) => s.dataMode)
   const { data: session } = useSession()
   const t = useT()
@@ -213,7 +213,13 @@ function PhotoPanel({ online }: { online: boolean }) {
 
   async function analyze() {
     if (!preview) { toast.error(t('copilot.toast.needPhoto')); return }
-    if (!online) { toast.error(t('copilot.toast.needOnline')); return }
+    if (!online) {
+      toast.error(t('copilot.toast.needOnline'))
+      // #150: the photo itself is ephemeral (a dataURL/URL, never queued) —
+      // the worklist keeps a reminder, not the input.
+      enqueuePendingNetwork({ kind: 'copilot.analyze', labelKey: 'netlist.kind.analyze', tab: 'copilot' })
+      return
+    }
     if (!aiProgressOn) { toast.error(t('copilot.toast.flagOff')); return }
     setBusy(true); setResult(null)
     try {
@@ -409,7 +415,7 @@ function PhotoPanel({ online }: { online: boolean }) {
 // ------------------------------------------------------------------ Voice
 
 function VoicePanel({ online }: { online: boolean }) {
-  const { data, dispatch, load } = useMjengo()
+  const { data, dispatch, load, enqueuePendingNetwork } = useMjengo()
   const { data: session } = useSession()
   const t = useT()
   const [recording, setRecording] = useState(false)
@@ -469,7 +475,12 @@ function VoicePanel({ online }: { online: boolean }) {
   }
 
   async function runVoice(base64: string) {
-    if (!online) { toast.error(t('copilot.voice.toast.needOnline')); return }
+    if (!online) {
+      toast.error(t('copilot.voice.toast.needOnline'))
+      // #150: the recording is ephemeral — remind, never queue the input.
+      enqueuePendingNetwork({ kind: 'copilot.voice', labelKey: 'netlist.kind.voice', tab: 'copilot' })
+      return
+    }
     if (!aiVoiceOn) { toast.error(t('copilot.voice.toast.flagOff')); return }
     setBusy(true); setParsed(null); setConfirmed(false)
     try {
@@ -484,7 +495,12 @@ function VoicePanel({ online }: { online: boolean }) {
   }
 
   async function playSample(file: string) {
-    if (!online) { toast.error(t('copilot.voice.toast.needOnlineShort')); return }
+    if (!online) {
+      toast.error(t('copilot.voice.toast.needOnlineShort'))
+      // #150: same voice-AI intent as runVoice — one reminder, not two.
+      enqueuePendingNetwork({ kind: 'copilot.voice', labelKey: 'netlist.kind.voice', tab: 'copilot' })
+      return
+    }
     setBusy(true); setParsed(null); setConfirmed(false)
     try {
       const blob = await fetch(file).then((r) => r.blob())
@@ -494,7 +510,12 @@ function VoicePanel({ online }: { online: boolean }) {
 
   async function parseText() {
     if (!textMode.trim()) { toast.error(t('copilot.voice.toast.typeFirst')); return }
-    if (!online) { toast.error(t('copilot.voice.toast.parseOnline')); return }
+    if (!online) {
+      toast.error(t('copilot.voice.toast.parseOnline'))
+      // #150: the typed text is an ephemeral input — remind, never queue.
+      enqueuePendingNetwork({ kind: 'copilot.voiceParse', labelKey: 'netlist.kind.voiceParse', tab: 'copilot' })
+      return
+    }
     setBusy(true); setParsed(null); setConfirmed(false)
     try {
       const res = await fetch('/api/ai/parse-text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: textMode.trim(), projectId: data?.project.id }) })
@@ -651,7 +672,7 @@ function VoicePanel({ online }: { online: boolean }) {
 // ------------------------------------------------------------------ Scan
 
 function ScanPanel({ online }: { online: boolean }) {
-  const { data, load } = useMjengo()
+  const { data, load, enqueuePendingNetwork } = useMjengo()
   const t = useT()
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ScanResult | null>(null)
@@ -659,7 +680,12 @@ function ScanPanel({ online }: { online: boolean }) {
   if (!data) return null
 
   async function runScan() {
-    if (!online) { toast.error(t('copilot.scan.toast.needOnline')); return }
+    if (!online) {
+      toast.error(t('copilot.scan.toast.needOnline'))
+      // #150: reminder for the anomaly scan (server-side AI — ephemeral intent).
+      enqueuePendingNetwork({ kind: 'copilot.scan', labelKey: 'netlist.kind.scan', tab: 'copilot' })
+      return
+    }
     setBusy(true); setResult(null)
     try {
       const res = await fetch('/api/ai/anomaly-scan', {

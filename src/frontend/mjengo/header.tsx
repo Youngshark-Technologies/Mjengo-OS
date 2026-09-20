@@ -12,6 +12,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/frontend/ui/popover'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from '@/frontend/ui/sheet'
 import { ProjectSwitcher } from '@/frontend/mjengo/project-switcher'
 import { SyncOutboxPanel } from '@/frontend/mjengo/sync-outbox-panel'
+import { PendingNetworkPanel } from '@/frontend/mjengo/pending-network-panel'
 import { SHOW_CONNECTIVITY_SIM } from '@/frontend/lib/dev-affordances'
 import {
   Wifi, CloudOff, HardHat, RefreshCw, CheckCheck, Share2, Bell, LogOut,
@@ -949,6 +950,14 @@ export function Header({
 
             {/* Notification center — owner and client */}
             <NotificationBell />
+
+            {/* #150 — "Waiting for network" reminders for online-only flows
+                refused offline (money pay/payroll, AI review, copilot,
+                trust digest). Renders NOTHING while the list is empty; on
+                BOTH surfaces (owner + client) because the trust-digest
+                generate guard is reachable from the client-visible intel
+                tab. Retry-now navigates back to the flow — remind-only. */}
+            <PendingNetworkPanel />
 
             {!isShareClient && (
               <>

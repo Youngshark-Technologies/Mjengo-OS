@@ -697,6 +697,34 @@ export const swDict = {
   'outbox.autoRetryNote': 'Kujaribu tena kiotomatiki — ujaribu wa {attempts} kati ya {max} mnamo {when}',
   'outbox.autoRetryExhausted': 'Imejaribiwa tena kiotomatiki mara {max} bila mafanikio — tumia kitufe cha “Jaribu tena” hapa chini.',
 
+  // #150 — orodha ya "Inasubiri mtandao" (pending-network-panel.tsx + toast ya
+  // kurudi mtandaoni kutoka use-mjengo). Haya ni VIKUMBUSHO kwa utiririke wa
+  // mtandaoni-pekee uliokataliwa nje ya mtandao — pesa hubaki na kikwizi chake,
+  // ingizo za AI ni za muda mfupi, hakuna kinachotekelezwa kiotomatiki.
+  'sync.backOnlineWaiting': 'Tumerudi mtandaoni — vitendo {count} bado vinasubiri muunganisho',
+  'netlist.trigger': 'Inasubiri',
+  'netlist.aria.trigger': 'Inasubiri mtandao — vitendo {count}',
+  'netlist.title': 'Inasubiri mtandao',
+  'netlist.meta': 'Vitendo {count} ulivyojaribu nje ya mtandao vinahitaji muunganisho',
+  'netlist.listAria': 'Vitendo vinavyosubiri muunganisho',
+  'netlist.queuedAgo': 'kulijaribu {when}',
+  'netlist.hint': 'Haya ni vikumbusho, si foleni — fungua utiririke huo na fanya kitendo mwenyewe ukiwa mtandaoni.',
+  'netlist.retryNow': 'Jaribu tena sasa',
+  'netlist.retryOfflineNote': 'Kujaribu tena kunapatikana ukirudi mtandaoni',
+  'netlist.discard': 'Ondoa',
+  'netlist.allCleared': 'Hakuna kinachosubiri — vikumbusho vilivyotolewa vimeondolewa kabisa.',
+  'netlist.kind.moneyPay': 'Lipa ombi la malipo {code}',
+  'netlist.kind.aiReview': 'Uhakiki wa AI wa hatua “{name}”',
+  'netlist.kind.payroll': 'Endesha mishahara ya {period}',
+  'netlist.kind.analyze': 'Chambua picha ya eneo la kazi',
+  'netlist.kind.voice': 'Rekodi sauti ya ugawaji wa vifaa',
+  'netlist.kind.voiceParse': 'Soma dokezo la ugawaji lililoandikwa',
+  'netlist.kind.scan': 'Kagua mradi kwa mambo yasiyo ya kawaida',
+  'netlist.kind.docs': 'Toe rasimu kutoka “{file}”',
+  'netlist.kind.docsReview': 'Amua kuhusu rasimu ya “{file}”',
+  'netlist.kind.trustDigest': 'Tengeneza digest ya uaminifu ya kila wiki',
+  'netlist.kind.trustAudio': 'Cheza sauti ya digest',
+
   // materials tab — toasts + dialog placeholders (labels/buttons are a later
   // per-tab wave; data-mirroring placeholders like 'Site Store' stay as-is)
   'mat.error.nameUnit': 'Weka jina la kifaa na kipimo',

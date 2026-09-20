@@ -103,6 +103,12 @@ interface MjengoState {
    */
   persistDegraded: boolean
   persistQueueOnly: boolean
+  /**
+   * #150 — the "Waiting for network" worklist: online-only flows the user
+   * attempted while offline (money pay/payroll, AI review, copilot, trust
+   * digest). REMINDERS, not queued mutations — see the #150 section comment.
+   */
+  pendingNetwork: PendingNetworkItem[]
   /** Low-data mode (spec §74) — persisted so it survives reloads. */
   dataMode: DataMode
   setDataMode: (m: DataMode) => void
@@ -124,6 +130,10 @@ interface MjengoState {
   resolveConflict: (id: string, choice: 'keep-server' | 'keep-mine') => Promise<boolean>
   /** Re-queue every failed item for ONE manual drain attempt (no auto-retry loops). */
   retryAll: () => void
+  /** #150 — record an online-only refusal as a waiting reminder (deduped per intent, capped). */
+  enqueuePendingNetwork: (entry: PendingNetworkInput) => void
+  /** #150 — drop one waiting reminder (the Discard button / a consumed Retry-now). */
+  discardPendingNetwork: (id: string) => void
   /**
    * #191: drain a queue stranded by an auth-blocked (401) drain. Called from
    * app.tsx when a session (re)authenticates: re-queues auth-blocked items and
@@ -201,6 +211,85 @@ function registerOutboxBackgroundSync(): void {
     // Synchronous surprises (frozen/absent globals) are equally not ours to fail on.
   }
 }
+
+// ---------------- #150 — the "Waiting for network" worklist ----------------
+//
+// Online-only flows (money payment.pay, fundis wages.pay, AI draw review,
+// copilot analyze/voice/scan/docs, trust digest) refuse honestly with a
+// toast when offline — but the refusal had no MEMORY: the user had to
+// remember to come back and redo the action. This slice is that memory:
+// every guard that refuses also records a reminder entry, surfaced in a
+// header panel (pending-network-panel.tsx) with Retry-now (navigates back
+// to the flow) and Discard, and re-surfaced by the reconnect toast
+// ("{count} action(s) are waiting for a connection" — mirrors the outbox's
+// sync.backOnlineDraining pattern).
+//
+// REMIND-ONLY, BY DELIBERATE DECISION (the issue's per-flow choice):
+//   · NO entry is ever auto-executed. Money flows keep their hard stop —
+//     auto-paying a payroll or payment request from a reminder list, hours
+//     after the attempt, is a large idempotency surface (the user may have
+//     settled it another way in the meantime; the online path's idempotency
+//     discipline was never designed for deferred execution), and the issue
+//     explicitly sanctions "keep the hard-stop with a 'remind me' entry
+//     only". AI/copilot flows cannot queue anyway — their inputs (photo
+//     dataURLs, voice blobs, typed text) are ephemeral and the guards
+//     refuse before anything is uploaded.
+//   · Retry-now NAVIGATES (the 'mjengo:tab' event — app.tsx's role-filtered
+//     listener) and consumes the reminder; completing the action stays
+//     human. Nothing on this list is ever posted to /api/sync.
+//   · PERSISTED deliberately (see the partialize decision comment): a
+//     reload is exactly the "user must remember" failure mode this slice
+//     exists to fix — losing the list on refresh would defeat the point,
+//     and entries are tiny (kind + dict key + timestamp + short context
+//     vars) behind a cap. This is NOT the outbox: outbox items are drained
+//     mutations with a §40 lifecycle; pendingNetwork items are intent
+//     reminders with a human-only lifecycle (retry-navigate / discard).
+
+/** The tabs the guarded flows live on (Retry-now targets; app.tsx's mjengo:tab listener re-checks role visibility). */
+export type PendingNetworkTab = 'money' | 'fundis' | 'copilot' | 'intel'
+
+/** Which online-only flow was refused (drives dedupe: kind + context = one intent). */
+export type PendingNetworkKind =
+  | 'payment.pay'
+  | 'ai.drawReview'
+  | 'wages.pay'
+  | 'copilot.analyze'
+  | 'copilot.voice'
+  | 'copilot.voiceParse'
+  | 'copilot.scan'
+  | 'copilot.docs'
+  | 'copilot.docsReview'
+  | 'ai.trustDigest'
+  | 'ai.trustAudio'
+
+/**
+ * One online-only refusal the user attempted offline (#150). A REMINDER,
+ * not a queued mutation — the label renders from the dict at DISPLAY time
+ * (locale follows the UI, not the enqueue moment), so the stored shape is
+ * key + interpolation vars, never a frozen sentence.
+ */
+export interface PendingNetworkItem {
+  id: string
+  kind: PendingNetworkKind
+  /** Dict key for the human label (rendered via t(labelKey, context)). */
+  labelKey: string
+  /** Label interpolation vars (payment code, payroll period, file name…). */
+  context?: Record<string, string | number>
+  /** Epoch ms of the LATEST offline attempt (a repeat refreshes, not stacks). */
+  createdAt: number
+  /** The tab Retry-now focuses ('mjengo:tab'). */
+  tab: PendingNetworkTab
+}
+
+/** The enqueue seam's shape — id/createdAt are the store's to stamp. */
+export type PendingNetworkInput = Omit<PendingNetworkItem, 'id' | 'createdAt'>
+
+/**
+ * Newest-kept cap for the worklist. A reminder list that outgrows this is a
+ * forgotten to-do list anyway; entries are per-INTENT (deduped), so the cap
+ * only bites after ~20 genuinely different refused flows.
+ */
+export const PENDING_NETWORK_CAP = 20
 
 // ---------------- #192 — guarded persistence (quota / private mode) ----------------
 //
@@ -338,7 +427,7 @@ function serverRefusalToast(json: unknown): string {
 }
 
 /** EAT "today" — mirrors the server's todayStr() so client-side row lookups line up. */
-function todayEAT(): string {
+export function todayEAT(): string {
   return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10)
 }
 
@@ -871,6 +960,7 @@ export const useMjengo = create<MjengoState>()(
       lastSyncAt: null,
       persistDegraded: false,
       persistQueueOnly: false,
+      pendingNetwork: [],
       dataMode: 'normal',
 
       setDataMode: (m) => {
@@ -1059,6 +1149,15 @@ export const useMjengo = create<MjengoState>()(
           toast.info(t('sync.backOnlineConflicts', { count: conflictCount }))
         } else {
           toast.success(t('sync.backOnline'))
+        }
+        // #150: online-only refusals remembered from this offline stretch —
+        // the worklist surfaces itself alongside the outbox toast (two
+        // distinct intents: the queue drains itself, waiting actions need a
+        // human tap). Remind-only: the entries STAY for the panel's
+        // retry/discard — reconnect never consumes them.
+        const waitingCount = get().pendingNetwork.length
+        if (waitingCount > 0) {
+          toast.info(t('sync.backOnlineWaiting', { count: waitingCount }))
         }
         // Not-yet-due failures keep their bounded schedule while online.
         armAutoRetryTimer()
@@ -1463,6 +1562,36 @@ export const useMjengo = create<MjengoState>()(
         await get().syncNow()
         return true
       },
+
+      /**
+       * #150 — record an online-only refusal. The refusal toast stays the
+       * immediate honesty (the guards keep firing it); this is the MEMORY of
+       * the intent so the reconnect toast + the header panel can offer a
+       * retry. One entry per INTENT (kind + context): a repeated attempt
+       * refreshes the reminder's timestamp instead of stacking duplicates —
+       * the worklist is a to-do surface, not an attempt log.
+       */
+      enqueuePendingNetwork: (entry) => {
+        const list = get().pendingNetwork
+        const sig = JSON.stringify([entry.kind, entry.context ?? null])
+        const existing = list.find((i) => JSON.stringify([i.kind, i.context ?? null]) === sig)
+        if (existing) {
+          set({
+            pendingNetwork: list.map((i) =>
+              i.id === existing.id ? { ...i, createdAt: Date.now() } : i),
+          })
+          return
+        }
+        const item: PendingNetworkItem = { id: uid(), createdAt: Date.now(), ...entry }
+        // Newest-kept cap (PENDING_NETWORK_CAP): overflow drops the OLDEST
+        // reminders — the freshest intents are the ones still actionable.
+        set({ pendingNetwork: [...list, item].slice(-PENDING_NETWORK_CAP) })
+      },
+
+      /** #150 — drop one reminder. Human-only lifecycle: discard (or a consumed Retry-now); nothing else removes entries. */
+      discardPendingNetwork: (id) => {
+        set({ pendingNetwork: get().pendingNetwork.filter((i) => i.id !== id) })
+      },
     }),
     {
       name: MJENGO_STORE_KEY,
@@ -1538,6 +1667,15 @@ export const useMjengo = create<MjengoState>()(
         online: s.online,
         outbox: s.outbox,
         syncHistory: s.syncHistory,
+        // #150 PERSISTENCE DECISION (documented, not faked): the waiting
+        // worklist IS persisted. These are tiny REMINDER entries (kind +
+        // dict key + timestamp + short context vars — never payloads,
+        // never blobs), and a reload losing them would resurrect the exact
+        // "user must remember" failure the issue exists to fix. Deliberately
+        // SEPARATE from the outbox: outbox items are drained mutations with
+        // a §40 lifecycle; these are intent reminders with a human-only
+        // lifecycle, capped at PENDING_NETWORK_CAP so the key stays small.
+        pendingNetwork: s.pendingNetwork,
         data: s.data,
         lastSyncAt: s.lastSyncAt,
         activeProjectId: s.activeProjectId,

@@ -64,7 +64,7 @@ function formatTotal(total: number | null, currency: string | null): string {
 }
 
 export function DocumentsPanel({ online }: { online: boolean }) {
-  const { data } = useMjengo()
+  const { data, enqueuePendingNetwork } = useMjengo()
   const { data: session } = useSession()
   const t = useT()
   const [docs, setDocs] = useState<ReviewQueueDocument[] | null>(null)
@@ -128,7 +128,12 @@ export function DocumentsPanel({ online }: { online: boolean }) {
   const selected = docs?.find((d) => d.id === selectedId) ?? null
 
   async function runExtract(doc: ReviewQueueDocument) {
-    if (!online) { toast.error(t('copilot.docs.toast.needOnline')); return }
+    if (!online) {
+      toast.error(t('copilot.docs.toast.needOnline'))
+      // #150: document AI is server-side — the refusal keeps a reminder.
+      enqueuePendingNetwork({ kind: 'copilot.docs', labelKey: 'netlist.kind.docs', context: { file: doc.fileName }, tab: 'copilot' })
+      return
+    }
     setBusyId(doc.id)
     try {
       const res = await extractDocumentDraft(doc.id)
@@ -146,7 +151,12 @@ export function DocumentsPanel({ online }: { online: boolean }) {
   }
 
   async function decide(doc: ReviewQueueDocument, decision: 'approved' | 'rejected') {
-    if (!online) { toast.error(t('copilot.docs.toast.needOnline')); return }
+    if (!online) {
+      toast.error(t('copilot.docs.toast.needOnline'))
+      // #150: the review decision needs the server — remind, never queue.
+      enqueuePendingNetwork({ kind: 'copilot.docsReview', labelKey: 'netlist.kind.docsReview', context: { file: doc.fileName }, tab: 'copilot' })
+      return
+    }
     setBusyId(doc.id)
     try {
       const res = await reviewDocumentDraft(doc.id, decision)

@@ -935,6 +935,10 @@ describe('non-influence: digest rows change no action outcomes anywhere', () => 
       'src/backend/modules/intel/flags.ts', // comment-only enforcement-map lines
       'src/frontend/mjengo/intel/sections/trust-digest-section.tsx', // display wiring only
       'src/frontend/mjengo/intel-tab.tsx', // mounts the section — display wiring only
+      // #150 waiting-worklist: the offline-refusal REMINDER taxonomy names
+      // the flow as a string literal kind ('ai.trustDigest') — taxonomy only,
+      // the store never reads or writes digest rows (remind-only, no execution).
+      'src/frontend/hooks/use-mjengo.ts',
       'src/frontend/mjengo/audit-tab.tsx', // the audit kind filter list
       'src/frontend/mjengo/header.tsx', // the notification-kind icon map
       // display strings only — dictionary values, no logic

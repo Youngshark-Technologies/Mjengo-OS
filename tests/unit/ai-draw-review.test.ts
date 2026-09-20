@@ -829,6 +829,10 @@ describe('non-influence: note rows change no action outcomes anywhere', () => {
       'src/backend/api/share.ts', // the read: serves the latest note through the token gate
       'src/frontend/mjengo/draw-pack-viewer.tsx', // displays the note (response shape + i18n)
       'src/frontend/mjengo/money-tab.tsx', // the "Run AI review" trigger — display wiring only
+      // #150 waiting-worklist: the offline-refusal REMINDER taxonomy names
+      // the flow as a string literal kind ('ai.drawReview') — taxonomy only,
+      // the store never reads or writes note rows (remind-only, no execution).
+      'src/frontend/hooks/use-mjengo.ts',
       'src/frontend/i18n/dicts/en.ts', // display strings only
       'src/frontend/i18n/dicts/sw.ts', // display strings only
     ].map((p) => fileURLToPath(new URL(`../../${p}`, import.meta.url))))

@@ -39,7 +39,7 @@ interface DigestView {
 }
 
 export function TrustDigestSection() {
-  const { data, viewMode, shareToken, online } = useMjengo()
+  const { data, viewMode, shareToken, online, enqueuePendingNetwork } = useMjengo()
   const t = useT()
   const [lang, setLang] = useState<'en' | 'sw'>('en')
   const [digest, setDigest] = useState<DigestView | null>(null)
@@ -93,6 +93,12 @@ export function TrustDigestSection() {
   async function generate() {
     if (!data?.project?.id || !online) {
       toast.error(t('trustDigest.needsOnline'))
+      // #150: digest generation composes server-side — the offline refusal
+      // keeps a reminder (the selected language is re-chosen at retry, not
+      // stored; the no-project arm stays toast-only, exactly as before).
+      if (data?.project?.id) {
+        enqueuePendingNetwork({ kind: 'ai.trustDigest', labelKey: 'netlist.kind.trustDigest', tab: 'intel' })
+      }
       return
     }
     setBusy(true)
@@ -134,6 +140,8 @@ export function TrustDigestSection() {
   async function renderAudio() {
     if (!online) {
       toast.error(t('trustDigest.needsOnline'))
+      // #150: the voice note renders server-side — a reminder, not a queue.
+      enqueuePendingNetwork({ kind: 'ai.trustAudio', labelKey: 'netlist.kind.trustAudio', tab: 'intel' })
       return
     }
     setRendering(true)
