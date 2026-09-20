@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware'
 import { toast } from 'sonner'
 import { useLocalePrefs } from '@/frontend/i18n/store'
 import { translate } from '@/frontend/i18n/provider'
@@ -90,6 +90,19 @@ interface MjengoState {
   /** Synced + conflict-resolved items, retained (capped) as history for inspection. */
   syncHistory: SyncHistoryItem[]
   lastSyncAt: number | null
+  /**
+   * #192 — persistence health (NEVER persisted; flipped by the guarded
+   * storage adapter below). `persistDegraded`: the last write attempt
+   * failed outright (quota full / private mode / security software) — the
+   * in-memory store keeps working, but nothing since the last good
+   * snapshot reaches disk (queued mutations are one tab-close from loss).
+   * `persistQueueOnly`: the last successful write was the #192 fallback —
+   * the re-fetchable `data` slice was dropped so the mutation queue fits;
+   * the queue is banked on-device, offline READS won't survive a restart.
+   * The app-level banner (app.tsx) renders while either is set.
+   */
+  persistDegraded: boolean
+  persistQueueOnly: boolean
   /** Low-data mode (spec §74) — persisted so it survives reloads. */
   dataMode: DataMode
   setDataMode: (m: DataMode) => void
@@ -186,6 +199,117 @@ function registerOutboxBackgroundSync(): void {
       .catch(() => undefined) // a rejected lookup must never ripple out
   } catch {
     // Synchronous surprises (frozen/absent globals) are equally not ours to fail on.
+  }
+}
+
+// ---------------- #192 — guarded persistence (quota / private mode) ----------------
+//
+// The whole app state (ProjectPayload `data` + the outbox + syncHistory)
+// lives in ONE localStorage key. Before #192 a failed setItem
+// (QuotaExceededError on a full low-storage Android, iOS private-window
+// PWA, security software) propagated straight out of `set()`: zustand's
+// persist middleware calls storage.setItem synchronously inside every
+// setState, so the exception broke whichever action was running, the
+// in-memory store kept accepting optimistic writes, and every queued
+// field mutation sat silently one tab-close from loss — no surface ever
+// said so (the SW has a quota LRU for photos; the mutation queue had
+// nothing).
+//
+// The fix is a storage ADAPTER (the zustand createJSONStorage seam), not
+// a change to WHAT is persisted (see the partialize decision comment):
+//   · every write failure is CAUGHT — the triggering action never sees
+//     the exception; the in-memory store remains the source of truth;
+//   · a quota failure retries ONCE with the re-fetchable `data` slice
+//     dropped (queue-only fallback): the mutation queue is the only part
+//     of the payload that is NOT re-fetchable from the server, so a full
+//     device still banks the user's work;
+//   · the outcome flips the non-persisted persistDegraded/persistQueueOnly
+//     flags → the app.tsx banner — degradation is LOUD, never silent;
+//   · a later successful FULL write self-heals the flags.
+
+/** The ONE localStorage key the whole owner store persists to (spec §40). */
+export const MJENGO_STORE_KEY = 'mjengo-os-store'
+
+/**
+ * The raw localStorage seam wrapped for createJSONStorage. Never touches
+ * localStorage at module scope — the typeof guard in the persist options
+ * below keeps node/SSR exactly as inert as the old default storage.
+ */
+const guardedLocalStorage: StateStorage = {
+  getItem: (name) => localStorage.getItem(name),
+  setItem: (name, value) => {
+    try {
+      localStorage.setItem(name, value)
+      setPersistHealth('ok')
+      return
+    } catch (e) {
+      // QuotaExceededError / private-mode refusal. NEVER rethrow: this
+      // runs synchronously inside every setState, so an escaping exception
+      // would break the action that called set() — the exact silent-loss
+      // failure mode #192 exists to fix.
+      console.error(`[${MJENGO_STORE_KEY}] persistence write failed — surfacing degradation`, e)
+    }
+    // Queue-only fallback (the #192 bounding decision): drop `data` (the
+    // largest RE-FETCHABLE slice — a reload refills it from /api/project
+    // once connectivity returns) and retry once, so the irreplaceable part
+    // (the queued mutations + their §41 conflict state) still reaches disk.
+    try {
+      const parsed = JSON.parse(value) as { state?: Record<string, unknown> }
+      if (parsed && typeof parsed === 'object' && parsed.state && typeof parsed.state === 'object') {
+        localStorage.setItem(name, JSON.stringify({ ...parsed, state: { ...parsed.state, data: null } }))
+        setPersistHealth('queue-only')
+      } else {
+        // Not the shape we know how to slim (should never happen — the
+        // value is always createJSONStorage's { state, version }).
+        setPersistHealth('degraded')
+      }
+    } catch {
+      // Even the slimmed write does not fit (hard quota / private mode):
+      // nothing reaches disk — the loud banner is the only honest signal.
+      setPersistHealth('degraded')
+    }
+  },
+  removeItem: (name) => {
+    try {
+      localStorage.removeItem(name)
+    } catch {
+      // A failing removal never loses data the app still holds in memory.
+    }
+  },
+}
+
+/**
+ * The adapter's write outcome → the store's non-persisted health flags.
+ *
+ * Re-entrancy: flipping the flags is itself a setState, which itself
+ * triggers a storage write (persist writes on EVERY setState) — the depth
+ * guard makes that inner write's health report a no-op instead of a loop;
+ * the transition check keeps the steady state (every successful write
+ * reports 'ok') write-free.
+ *
+ * TDZ: the FIRST hydrate at store creation can run setItem while the
+ * `useMjengo` binding is still initialising (the same reason the
+ * onRehydrateStorage timer defers — see below); the report is re-sent a
+ * tick later instead of dropped.
+ */
+let persistHealthDepth = 0
+function setPersistHealth(health: 'ok' | 'queue-only' | 'degraded'): void {
+  if (persistHealthDepth > 0) return // our own flag-flip's write — already decided
+  let s: Pick<MjengoState, 'persistDegraded' | 'persistQueueOnly'>
+  try {
+    s = useMjengo.getState()
+  } catch {
+    setTimeout(() => setPersistHealth(health), 0)
+    return
+  }
+  const degraded = health === 'degraded'
+  const queueOnly = health === 'queue-only'
+  if (s.persistDegraded === degraded && s.persistQueueOnly === queueOnly) return
+  persistHealthDepth++
+  try {
+    useMjengo.setState({ persistDegraded: degraded, persistQueueOnly: queueOnly })
+  } finally {
+    persistHealthDepth--
   }
 }
 
@@ -745,6 +869,8 @@ export const useMjengo = create<MjengoState>()(
       outbox: [],
       syncHistory: [],
       lastSyncAt: null,
+      persistDegraded: false,
+      persistQueueOnly: false,
       dataMode: 'normal',
 
       setDataMode: (m) => {
@@ -1339,8 +1465,18 @@ export const useMjengo = create<MjengoState>()(
       },
     }),
     {
-      name: 'mjengo-os-store',
+      name: MJENGO_STORE_KEY,
       version: 1,
+      // #192 — the guarded adapter: write failures (quota / private mode)
+      // are caught + surfaced, and a quota failure retries once with the
+      // re-fetchable data slice dropped so the mutation queue still banks.
+      // The typeof guard keeps node/SSR byte-identical to the old default
+      // storage (createJSONStorage returns undefined when getStorage
+      // throws → persist inert — no phantom localStorage in tests/server).
+      storage: createJSONStorage(() => {
+        if (typeof localStorage === 'undefined') throw new Error('localStorage unavailable')
+        return guardedLocalStorage
+      }),
       // v0 → v1: outbox items gain the §40 lifecycle fields; old items become
       // 'pending' so a pre-upgrade queue still drains exactly as before.
       migrate: (persisted: unknown) => {
@@ -1351,18 +1487,54 @@ export const useMjengo = create<MjengoState>()(
           syncHistory: (s.syncHistory ?? []).map(normalizeOutboxItem),
         } as MjengoState
       },
-      onRehydrateStorage: () => (state) => {
+      onRehydrateStorage: () => (state, error) => {
+        // #192: a hydration failure (unreadable/corrupted key) is ALSO a
+        // persistence degradation — surface it, never swallow it.
+        if (error) setPersistHealth('degraded')
         // Belt-and-braces: any stale shape is normalised after rehydration.
         if (state?.outbox) state.outbox = state.outbox.map(normalizeOutboxItem)
         if (state?.syncHistory) state.syncHistory = state.syncHistory.map(normalizeOutboxItem)
+        // #192: orphaned 'syncing' items → 'pending'. A persisted 'syncing'
+        // item is by definition a snapshot written MID-DRAIN (persist writes
+        // on every setState): the drain that marked it either completed in
+        // the writing surface (whose result snapshot carries the outcome) or
+        // died with it. No drain owns it in THIS surface — without this it
+        // strands forever showing “Syncing…” (syncNow only drains 'pending').
+        // The cross-tab rehydrate below rides the same normalization.
+        const orphaned = state?.outbox?.some((o) => o.syncStatus === 'syncing') ?? false
         // #132: restore the auto-retry schedule after a reload — the persisted
         // nextAttemptAt stamps survive, the timer itself does not. Deferred a
         // tick because this callback can run while the module is still
         // initialising (useMjengo is in its TDZ then); inert in node/tests
         // (no storage → zustand never calls this back there).
         setTimeout(() => armAutoRetryTimer(), 0)
+        if (orphaned) {
+          // Same deferral reason (TDZ): return the orphaned 'syncing' items
+          // to the drainable 'pending' state a tick after the merge.
+          setTimeout(() => {
+            useMjengo.setState({
+              outbox: useMjengo.getState().outbox.map((o) =>
+                o.syncStatus === 'syncing' ? { ...o, syncStatus: 'pending' as const } : o),
+            })
+          }, 0)
+        }
       },
       partialize: (s) => ({
+        // #192 BOUNDING DECISION (documented, not faked): `data` STAYS
+        // persisted. The offline boot (issue #78 — offline-boot.ts
+        // shouldOfflineBoot) serves `data` straight from this key when the
+        // app relaunches with no network; dropping it would trade a size
+        // win for breaking every offline read. There are no photo BLOBS to
+        // strip (SitePhoto.url is a server URL — bytes live in the SW's
+        // LRU-capped CacheStorage, never here), and the server reads are
+        // already take-capped (#105/#154/#155), so `data` is bounded by the
+        // project's own lifetime rows. The measured size budget for a
+        // representative large project + 100 queued actions is pinned by
+        // tests/unit/outbox-persistence.test.ts. The outbox stays
+        // unbounded BY DESIGN (spec §52 — the live queue is never pruned:
+        // pruning it IS data loss, the exact thing #192 protects against);
+        // the quota-guarded adapter above + its queue-only fallback are the
+        // loud backstop when the device runs out anyway.
         online: s.online,
         outbox: s.outbox,
         syncHistory: s.syncHistory,
@@ -1375,6 +1547,65 @@ export const useMjengo = create<MjengoState>()(
     },
   ),
 )
+
+/**
+ * #192 — cross-tab rehydration (the browser `storage` event).
+ *
+ * zustand-persist does NOT listen for `storage`: with two surfaces open
+ * (installed PWA window + browser tab) each surface's writes are invisible
+ * to the other, and the stale surface's next write clobbers the newer
+ * snapshot wholesale — an older outbox can wipe newer queued mutations.
+ *
+ * v1 semantics (deliberate, documented): DEBOUNCED LAST-WRITER-WINS WITH
+ * REHYDRATE. When another surface writes our key, this surface re-reads it
+ * (persist.rehydrate() → shallow merge of the partialized keys) within a
+ * short trailing debounce (persist writes on every setState, so an active
+ * peer emits bursts). A CRDT is explicitly NOT wanted: true conflicts are
+ * already arbitrated server-side (§41 rules + per-row baseVersion
+ * rejections — outbox-versions.test.ts); a client-side CRDT would duplicate
+ * that machinery and still could not decide a semantic conflict.
+ * Honest v1 limits: a rehydrate can momentarily revert an in-flight drain's
+ * 'syncing' items to the peer's snapshot state (the orphan normalization in
+ * onRehydrateStorage returns them to 'pending'; the server's versioned
+ * appliers arbitrate any double-flush), and a key CLEARED by another tab
+ * (storage event with key === null) is ignored — this surface keeps working
+ * from memory and its next write re-creates the key.
+ */
+
+/** Debounce window for cross-tab rehydrates (#192). */
+export const CROSS_TAB_REHYDRATE_DEBOUNCE_MS = 250
+
+/**
+ * Pure decision (#192): only writes to OUR key rehydrate. `key === null` is
+ * a clear() from another surface — deliberately NOT ours to react to (see
+ * the section comment).
+ */
+export function shouldRehydrateFromStorageEvent(e: { key: string | null }): boolean {
+  return e.key === MJENGO_STORE_KEY
+}
+
+let crossTabRehydrateTimer: ReturnType<typeof setTimeout> | null = null
+
+/** The storage-event entry point (#192): debounced rehydrate on our key's foreign writes. */
+export function handleCrossTabStorageEvent(e: { key: string | null }): void {
+  if (!shouldRehydrateFromStorageEvent(e)) return
+  if (crossTabRehydrateTimer !== null) clearTimeout(crossTabRehydrateTimer)
+  crossTabRehydrateTimer = setTimeout(() => {
+    crossTabRehydrateTimer = null
+    try {
+      void useMjengo.persist.rehydrate()
+    } catch {
+      // A rehydrate must never throw into the browser's event dispatch.
+    }
+  }, CROSS_TAB_REHYDRATE_DEBOUNCE_MS)
+}
+
+// Registered once per page load at module scope (the store is a singleton —
+// same home as the __MJENGO_DEBUG__ hook below; node/SSR have no window, so
+// tests call handleCrossTabStorageEvent directly).
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('storage', handleCrossTabStorageEvent)
+}
 
 /**
  * Dev/debug console hook (W1-SYNC): `window.__MJENGO_DEBUG__()` returns the live

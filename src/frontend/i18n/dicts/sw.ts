@@ -3766,4 +3766,16 @@ export const swDict = {
   'sw.update.body': 'Pakia upya ili kusasisha MjengoOS.',
   'sw.update.reload': 'Pakia upya',
   'sw.update.later': 'Baadaye',
+
+  // --------------------------------------------- #192 · kuimarisha kudumu kwa foleni
+  // Benga za uharibifu wa hifadhi (app.tsx) + dokezo la "kifaa hiki pekee"
+  // la foleni (sync-outbox-panel.tsx). degraded = maandishi yamefeli kabisa
+  // (hifadhi imejaa / hali ya faragha): kazi iliyowekwa foleni ipo kwenye
+  // kumbukumbu pekee, hatua moja ya kufunga kabla ya kupotea; queueOnly =
+  // akiba ya dharura imehifadhi foleni kwa kudondosha data za mradi
+  // zinazoweza kupatikana tena (kuANDIKA nje ya mtandao kutavuma baada ya
+  // kufungua upya, kuSOMA hakutavuma).
+  'app.persist.degraded': 'Mabadiliko yako ya nje ya mtandao hayawezi kuhifadhiwa — hifadhi ya kifaa hiki imejaa. Baki na programu wazi; kazi yako itasawazishwa ukirudi mtandaoni.',
+  'app.persist.queueOnly': 'Hifadhi ya kifaa imejaa — vitendo vilivyowekwa foleni bado vimehifadhiwa kwenye kifaa hiki, lakini data za mradi hazitapatikana nje ya mtandao baada ya kufungua upya.',
+  'outbox.deviceLocal': 'Vitendo vilivyowekwa foleni vimehifadhiwa kwenye kifaa hiki pekee — kufuta data za kivinjari au kubadilisha kifaa kutavipoteza.',
 } satisfies Dict
