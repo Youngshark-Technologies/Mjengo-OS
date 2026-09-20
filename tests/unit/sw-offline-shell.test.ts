@@ -14,17 +14,26 @@
  *     /api network-only, push handlers appended);
  *   · manifest identity (id/lang), a VALID 32×32 favicon.ico, the bilingual
  *     offline.html, the copilot capture attribute, and the W7 i18n keys
- *     (parity itself is enforced by i18n.test.ts + dicts/check.ts).
+ *     (parity itself is enforced by i18n.test.ts + dicts/check.ts);
+ *   · #193 Background Sync: the pure registration/guard helpers in
+ *     sw-handlers.ts + sw.js source pins for the `sync` listener, the
+ *     use-mjengo enqueue seams and the app.tsx drain-request listener
+ *     (the behavioral enqueue-seam suite is outbox-background-sync.test.ts).
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   DEV_HOSTNAMES,
   PHOTO_CACHE_CAP,
   navigationShellKey,
   photoLruEvictions,
   shouldCacheNavigationHtml,
+  isDrainRequestMessage,
+  registerOutboxSync,
+  syncManagerOf,
+  OUTBOX_SYNC_TAG,
+  DRAIN_REQUEST_MESSAGE_TYPE,
 } from '@/frontend/sw-handlers'
 import { AUTH_LOADING_TIMEOUT_MS, shouldOfflineBoot } from '@/frontend/mjengo/offline-boot'
 import { enDict } from '@/frontend/i18n/dicts/en'
@@ -40,6 +49,10 @@ const COPILOT_SRC = readFileSync(
   'utf8',
 )
 const APP_SRC = readFileSync(fileURLToPath(new URL('../../src/frontend/mjengo/app.tsx', import.meta.url)), 'utf8')
+const USE_MJENGO_SRC = readFileSync(
+  fileURLToPath(new URL('../../src/frontend/hooks/use-mjengo.ts', import.meta.url)),
+  'utf8',
+)
 const FAVICON = readFileSync(fileURLToPath(new URL('../../public/favicon.ico', import.meta.url)))
 
 // ---------------------------------------------- pure helpers (sw-handlers.ts)
@@ -187,6 +200,101 @@ describe('public/sw.js v3 — offline app shell wired as designed', () => {
 
   it('still exactly ONE fetch listener (push handlers appended, not added to)', () => {
     expect(SW_SOURCE.match(/self\.addEventListener\('fetch'/g)).toEqual(["self.addEventListener('fetch'"])
+  })
+})
+
+// ---------------------------------------------- #193 Background Sync (pure helpers)
+
+describe('isDrainRequestMessage — the SW drain ask (#193)', () => {
+  it('accepts exactly the sync handler payload', () => {
+    expect(isDrainRequestMessage({ type: 'mjengoos:drain' })).toBe(true)
+    expect(isDrainRequestMessage({ type: DRAIN_REQUEST_MESSAGE_TYPE })).toBe(true)
+  })
+
+  it('rejects anything else posted at the container', () => {
+    expect(isDrainRequestMessage(null)).toBe(false)
+    expect(isDrainRequestMessage(undefined)).toBe(false)
+    expect(isDrainRequestMessage('mjengoos:drain')).toBe(false)
+    expect(isDrainRequestMessage([])).toBe(false)
+    expect(isDrainRequestMessage({})).toBe(false)
+    expect(isDrainRequestMessage({ type: 'SKIP_WAITING' })).toBe(false)
+    // Exact match only — a near-miss type is not our message.
+    expect(isDrainRequestMessage({ type: 'mjengoos:drain ' })).toBe(false)
+    expect(isDrainRequestMessage({ type: 'mjengoos:drain', extra: 1 })).toBe(true) // payload may grow
+  })
+})
+
+describe('syncManagerOf — Background Sync feature detection (#193)', () => {
+  const syncManager = { register: async () => undefined }
+
+  it('finds the sync manager on a supporting registration', () => {
+    expect(syncManagerOf({ sync: syncManager })).toBe(syncManager)
+  })
+
+  it('reads absence/partial implementations as unsupported (never throws)', () => {
+    expect(syncManagerOf(undefined)).toBeNull()
+    expect(syncManagerOf(null)).toBeNull()
+    expect(syncManagerOf({})).toBeNull()
+    expect(syncManagerOf({ sync: null })).toBeNull()
+    expect(syncManagerOf({ sync: {} })).toBeNull() // register not a function
+    expect(syncManagerOf({ sync: { register: 'nope' } })).toBeNull()
+    expect(syncManagerOf(['sync'])).toBeNull()
+    expect(syncManagerOf('registration')).toBeNull()
+  })
+})
+
+describe('registerOutboxSync — one-shot tag registration (#193)', () => {
+  it("registers the 'mjengoos-outbox' tag, resolves true", async () => {
+    expect(OUTBOX_SYNC_TAG).toBe('mjengoos-outbox')
+    const register = vi.fn(async () => undefined)
+    await expect(registerOutboxSync({ sync: { register } })).resolves.toBe(true)
+    expect(register).toHaveBeenCalledTimes(1)
+    expect(register).toHaveBeenCalledWith('mjengoos-outbox')
+  })
+
+  it('resolves false (never throws) without Background Sync support', async () => {
+    await expect(registerOutboxSync(undefined)).resolves.toBe(false)
+    await expect(registerOutboxSync({})).resolves.toBe(false)
+  })
+
+  it('swallows a register refusal (permission/quota) — resolves false', async () => {
+    const register = vi.fn(() => Promise.reject(new Error('NotAllowedError')))
+    await expect(registerOutboxSync({ sync: { register } })).resolves.toBe(false)
+  })
+})
+
+// ---------------------------------------------- #193 Background Sync (source pins)
+
+describe('public/sw.js + wiring — Background Sync drain tag (#193)', () => {
+  it('sw.js registers exactly ONE sync listener scoped to the outbox tag', () => {
+    expect(SW_SOURCE.match(/self\.addEventListener\('sync'/g)).toEqual(["self.addEventListener('sync'"])
+    expect(SW_SOURCE).toContain("const OUTBOX_SYNC_TAG = 'mjengoos-outbox'")
+    expect(SW_SOURCE).toContain('event.tag !== OUTBOX_SYNC_TAG')
+  })
+
+  it('the sync handler asks open window clients to drain via postMessage', () => {
+    expect(SW_SOURCE).toContain("const DRAIN_REQUEST_MESSAGE_TYPE = 'mjengoos:drain'")
+    expect(SW_SOURCE).toContain("self.clients.matchAll({ type: 'window', includeUncontrolled: true })")
+    expect(SW_SOURCE).toContain('client.postMessage({ type: DRAIN_REQUEST_MESSAGE_TYPE })')
+  })
+
+  it("sw.js documents the closed-app posture honestly (defers to the next app open)", () => {
+    expect(SW_SOURCE).toContain('defers honestly to the next app open')
+  })
+
+  it('both enqueue seams in use-mjengo dispatch() register the tag', () => {
+    // The feature-detected helper is what the seams call.
+    expect(USE_MJENGO_SRC).toContain('import { registerOutboxSync } from \'@/frontend/sw-handlers\'')
+    // Exactly the two queue-write sites (own-line CALLS — the definition
+    // itself also ends in `()`): the online network-failure catch + the
+    // explicit-offline branch.
+    expect(USE_MJENGO_SRC.match(/^\s+registerOutboxBackgroundSync\(\)$/gm)).toHaveLength(2)
+  })
+
+  it('app.tsx listens for the drain ask and runs syncNow (client half)', () => {
+    expect(APP_SRC).toContain('isDrainRequestMessage(e.data)')
+    expect(APP_SRC).toContain('void useMjengo.getState().syncNow()')
+    expect(APP_SRC).toContain("sw.addEventListener('message', onMessage)")
   })
 })
 

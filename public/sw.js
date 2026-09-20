@@ -21,6 +21,14 @@
  *   - /_next/static/** → network-first with cache fallback — dev chunk URLs
  *     are stable-named but recompiled, so cache-first would serve stale code.
  *   - Non-GET and HMR paths → untouched, straight to the network.
+ *
+ * Background Sync (issue #193): queuing an outbox item registers the
+ * one-shot 'mjengoos-outbox' tag (feature-detected, Chromium only); when
+ * connectivity returns — even with no page open — the browser fires the
+ * `sync` event and the handler below asks any open client to drain. A
+ * CLOSED app defers honestly to the next app open: the outbox lives in the
+ * page's localStorage, which this worker cannot read (see the sync section
+ * at the bottom for the full posture).
  */
 
 const VERSION = 'mjengoos-2f-3'
@@ -423,4 +431,50 @@ self.addEventListener('message', (event) => {
   ) {
     self.skipWaiting()
   }
+})
+
+// ---------------- sync (#193 — Background Sync outbox drain) ---------------
+//
+// The Background Sync half of the offline outbox. When the app queues an
+// outbox item it registers the one-shot tag 'mjengoos-outbox' (the
+// registerOutboxSync helper in src/frontend/sw-handlers.ts — the canonical,
+// unit-tested statement; the tag + payload constants are mirrored inline
+// here because this is a static script with no bundler step) wherever the
+// browser supports it (Chrome/Edge/Android — the primary field audience;
+// Safari/Firefox never fire this event and keep the page-lifetime drain
+// behavior). When connectivity returns — EVEN IF no page is open — Chromium
+// re-launches this worker and fires 'sync', retrying on its own backoff
+// while the tag's promise rejects.
+//
+// HONEST LIMIT (the issue's documented posture): the outbox lives in the
+// page's localStorage, which this worker CANNOT read, and the drain logic
+// (auth, per-item §41 conflict semantics, #132 retry schedules) lives in
+// the app store. So this handler's job is to ASK, not to drain: postMessage
+// { type: 'mjengoos:drain' } at every open window client — an open page
+// runs syncNow() (app.tsx's container listener, guarded by
+// isDrainRequestMessage semantics). With NO client open there is nothing
+// this worker can honestly do: the waitUntil promise RESOLVES (Chromium
+// then consumes the one-shot tag instead of pointlessly re-firing it at a
+// closed app on its own backoff — the next enqueue re-registers), and the
+// drain defers honestly to the next app open (boot + setOnline + the #191
+// drainAfterAuth path all drain the queue). A true closed-app drain
+// requires moving the outbox to SW-readable storage (IndexedDB) — the
+// persistence issue, deliberately out of scope here.
+
+const OUTBOX_SYNC_TAG = 'mjengoos-outbox'
+const DRAIN_REQUEST_MESSAGE_TYPE = 'mjengoos:drain'
+
+self.addEventListener('sync', (event) => {
+  // Only our tag — anything else another layer registered is not ours to act on.
+  if (event.tag !== OUTBOX_SYNC_TAG) return
+  event.waitUntil(
+    (async () => {
+      // Ask every open app window to drain (the notificationclick client
+      // idiom): this worker cannot read the outbox or run the drain itself.
+      const windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      await Promise.all(
+        windowClients.map((client) => client.postMessage({ type: DRAIN_REQUEST_MESSAGE_TYPE })),
+      )
+    })(),
+  )
 })

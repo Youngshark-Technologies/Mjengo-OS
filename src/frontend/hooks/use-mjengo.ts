@@ -31,6 +31,9 @@ import {
   type SyncHistoryItem,
   type SyncItemResult,
 } from '@/frontend/lib/outbox'
+// #193: Background Sync registration — the feature-detected pure helper
+// (sw-handlers.ts, unit-tested) the enqueue seams below ride on.
+import { registerOutboxSync } from '@/frontend/sw-handlers'
 
 export type { OutboxItem, OutboxSyncStatus, ConflictRule, SyncHistoryItem, SyncItemResult }
 export { normalizeOutboxItem, AUTO_RETRY_MAX_ATTEMPTS, AUTO_RETRY_DELAYS_MS }
@@ -159,6 +162,31 @@ function requeueDueFailedItems(): number {
 
 function armAutoRetryTimer(): void {
   autoRetry.arm()
+}
+
+// ---------------- #193 — Background Sync registration at enqueue time ----------------
+//
+// Queuing an outbox item ALSO asks the browser to drain it when connectivity
+// returns, even if the app is closed by then (Chromium's Background Sync;
+// Safari/Firefox keep today's page-lifetime behavior — the helper
+// feature-detects). Best-effort BY CONSTRUCTION: fire-and-forget, every
+// failure mode swallowed — a refused or unsupported registration must never
+// break the enqueue it rides on. The sw.js `sync` handler posts
+// { type: 'mjengoos:drain' } at any open client (app.tsx listens and runs
+// syncNow); a closed app defers honestly to the next app open (documented
+// limit — the SW cannot read the page's localStorage outbox).
+function registerOutboxBackgroundSync(): void {
+  try {
+    if (typeof navigator === 'undefined') return // SSR / node tests
+    const sw = navigator.serviceWorker
+    if (!sw || typeof sw.getRegistration !== 'function') return
+    void sw
+      .getRegistration()
+      .then((registration) => registerOutboxSync(registration))
+      .catch(() => undefined) // a rejected lookup must never ripple out
+  } catch {
+    // Synchronous surprises (frozen/absent globals) are equally not ours to fail on.
+  }
 }
 
 /**
@@ -1003,6 +1031,10 @@ export const useMjengo = create<MjengoState>()(
             const item: OutboxItem = { id: uid(), type, payload: queuedPayload, label, createdAt: Date.now(), projectId: projectId ?? null, syncStatus: 'pending', retryCount: 0 }
             if (data) set({ data: reduceLocal(data, type, queuedPayload) })
             set({ outbox: [...get().outbox, item] })
+            // #193: queued while the network lied about being up — register the
+            // one-shot Background Sync tag so Chromium re-launches the SW (and
+            // pings any open client) when connectivity actually returns.
+            registerOutboxBackgroundSync()
             // FE-6c (issue #80): honest queued copy. Callers branch their
             // success toast on `online` from their render closure — still
             // true here — so they would fire the ONLINE copy for a write that
@@ -1024,6 +1056,10 @@ export const useMjengo = create<MjengoState>()(
         const item: OutboxItem = { id: uid(), type, payload: queuedPayload, label, createdAt: Date.now(), projectId: projectId ?? null, syncStatus: 'pending', retryCount: 0 }
         if (data) set({ data: reduceLocal(data, type, queuedPayload) })
         set({ outbox: [...get().outbox, item] })
+        // #193: queued offline — register the one-shot Background Sync tag so
+        // the browser asks for a drain the moment the radio comes back, even
+        // if this page is gone by then (the enqueue is what re-arms it).
+        registerOutboxBackgroundSync()
         return true
       },
 

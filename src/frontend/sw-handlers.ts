@@ -241,3 +241,93 @@ export function isSkipWaitingMessage(data: unknown): boolean {
     (data as Record<string, unknown>).type === SKIP_WAITING_MESSAGE_TYPE
   )
 }
+
+// ------------- #193 · Background Sync (one-shot outbox drain tag) ---------
+//
+// The outbox's drain triggers were all page-lifetime-bound (window `online`,
+// manual Sync, the retry footer, the #132 auto-retry timer) — if the PWA is
+// CLOSED when connectivity returns, queued mutations sit until the next app
+// open. Background Sync closes that gap on Chromium (Chrome/Edge/Android —
+// the primary field audience): queuing an outbox item registers a ONE-SHOT
+// tag; the browser re-launches the SW and fires `sync` when connectivity
+// returns, even with no page open. Safari/Firefox have no Background Sync —
+// feature-detected, they keep today's behavior exactly (progressive
+// enhancement, the PWA-first answer to #41).
+//
+// HONEST LIMIT (the issue's sanctioned posture): the SW cannot drain a
+// CLOSED app itself — the outbox lives in the page's localStorage (invisible
+// to the SW) and the drain logic (auth, per-item §41 conflict semantics,
+// retry schedules) lives in the app store. So the sw.js `sync` handler's
+// only job is to ASK: postMessage { type: 'mjengoos:drain' } at every open
+// client (app.tsx's container listener runs syncNow). With no client open
+// the drain defers honestly to the next app open (boot + setOnline + #191
+// drainAfterAuth all drain the queue); a true closed-app drain needs the
+// outbox in SW-readable storage (IndexedDB) — the persistence issue, out
+// of scope. These pure functions are the canonical, unit-tested statement
+// of that contract (tests/unit/sw-offline-shell.test.ts pins the helpers +
+// sw.js wiring; tests/unit/outbox-background-sync.test.ts pins the enqueue
+// seam behaviorally); public/sw.js mirrors the tag + payload constants
+// inline exactly like the push and SKIP_WAITING halves.
+
+/** The one-shot Background Sync tag registered when an outbox item queues. */
+export const OUTBOX_SYNC_TAG = 'mjengoos-outbox'
+
+/** Message type the sw.js `sync` handler posts at open clients to request a drain. */
+export const DRAIN_REQUEST_MESSAGE_TYPE = 'mjengoos:drain'
+
+/**
+ * Is this message the SW asking the page to drain the outbox (#193)? The
+ * sw.js sync handler posts { type: 'mjengoos:drain' } at its window clients;
+ * app.tsx's container listener mirrors this check before running syncNow.
+ * Anything else posted at the container is ignored.
+ */
+export function isDrainRequestMessage(data: unknown): boolean {
+  return (
+    data !== null &&
+    typeof data === 'object' &&
+    !Array.isArray(data) &&
+    (data as Record<string, unknown>).type === DRAIN_REQUEST_MESSAGE_TYPE
+  )
+}
+
+/**
+ * The Background Sync manager of a service-worker registration, or null when
+ * the browser does not support the API (#193 feature detection). Structural:
+ * a missing `sync`, a non-object, or a non-function `register` all read as
+ * unsupported — the caller then keeps today's page-lifetime behavior, and
+ * nothing throws.
+ */
+export function syncManagerOf(
+  registration: unknown,
+): { register: (tag: string) => Promise<void> } | null {
+  if (registration === null || typeof registration !== 'object' || Array.isArray(registration)) {
+    return null
+  }
+  const sync = (registration as Record<string, unknown>).sync
+  if (sync === null || typeof sync !== 'object' || Array.isArray(sync)) return null
+  const register = (sync as Record<string, unknown>).register
+  return typeof register === 'function'
+    ? (sync as { register: (tag: string) => Promise<void> })
+    : null
+}
+
+/**
+ * Register the one-shot outbox drain tag (#193) — progressive enhancement,
+ * called from the outbox ENQUEUE seams (use-mjengo dispatch). MUST NEVER
+ * break enqueueing: an unsupported browser (Safari/Firefox), a missing
+ * registration, or any register refusal (permission/quota) resolves false
+ * instead of throwing. Re-registration while the tag is already pending is
+ * fine — the browser coalesces one-shot tags by name.
+ */
+export async function registerOutboxSync(registration: unknown): Promise<boolean> {
+  const sync = syncManagerOf(registration)
+  if (!sync) return false
+  try {
+    await sync.register(OUTBOX_SYNC_TAG)
+    return true
+  } catch {
+    // NotAllowedError / quota / any refusal: the queue keeps its
+    // page-lifetime drain behavior — the write itself already landed.
+    return false
+  }
+}
