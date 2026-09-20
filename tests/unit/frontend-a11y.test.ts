@@ -1,11 +1,11 @@
 /**
  * FE-3/4/5/7 (issue #80) — static source pins for the robustness & a11y pass.
  *
- * The repo's convention for frontend invariants that have no DOM test env
- * (vitest runs node-only; cf. client-actions.test.ts / i18n.test.ts): read
- * the component source and assert the pattern is present (or the regression
- * is absent). A behavioral suite for the FE-6 data flow lives in
- * frontend-robustness.test.ts; this file pins the MARKUP-level contracts:
+ * The repo's convention for frontend invariants (cf. client-actions.test.ts
+ * / i18n.test.ts): read the component source and assert the pattern is
+ * present (or the regression is absent). A behavioral suite for the FE-6
+ * data flow lives in frontend-robustness.test.ts; this file pins the
+ * MARKUP-level contracts:
  *
  *   · FE-3  route error files exist (error.tsx branded + reset;
  *           global-error.tsx owns <html><body>) + a shell boundary wraps
@@ -20,6 +20,20 @@
  *   · FE-1/MD-1  the login demo quick-fill panel is gated on module-scope
  *           NODE_ENV !== 'production' (Next inlines NODE_ENV — build-time
  *           removal from production bundles; manual login stays ungated).
+ *
+ * #137 UPDATE — the "no DOM test env" half of this convention is HISTORY:
+ * the runtime DOM tier now exists in tests/dom/ (jsdom via vitest's
+ * per-file environment pragma — see any tests/dom suite's first line;
+ * this file and every other suite stay node-only). The four highest-risk contracts from the pins below are
+ * now enforced BEHAVIORALLY there — tab strip id pairing + roving tabindex
+ * (tests/dom/tab-strip.test.ts), dialog error announcement
+ * (tests/dom/dialog-error-announcement.test.ts), the GlobalSearch combobox
+ * wiring (tests/dom/global-search-combobox.test.ts) and the <html lang>
+ * provider sync (tests/dom/html-lang-runtime.test.ts). These source pins
+ * STAY: they are the cheap wide net (every file above, plus contrast
+ * tokens, 44px targets, gates the runtime tier deliberately does not mount);
+ * the DOM suite is the deep net on the pairing/semantics a string match
+ * cannot see.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'

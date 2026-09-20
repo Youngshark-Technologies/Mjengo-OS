@@ -14,7 +14,15 @@ import { defineConfig } from 'vitest/config'
  *    the site's build does. Specific key FIRST (aliases match in order);
  *    every other `@/…` keeps meaning `./src/`;
  *  · node environment: the seams under test are pure/shared/server modules,
- *    no DOM needed;
+ *    no DOM needed. EXCEPTION (issue #137 / audit FE-8): files under
+ *    tests/dom/ opt into jsdom PER FILE via the first-line
+ *    `// @vitest-environment jsdom` docblock pragma — vitest's supported
+ *    scoping mechanism — so THIS default stays node for every other suite
+ *    (no environmentMatchGlobs/projects split needed; jsdom is the only dev
+ *    dependency the tier adds). The runtime suite renders React 19 via
+ *    react-dom/client + `act` (no @testing-library — see
+ *    tests/dom/_helpers/react-render.ts for the harness and its two pinned
+ *    gotchas: async act for discrete events, auto-cleanup for id lookups);
  *  · conservative execution for the 4GB CI/dev box: one fork, no file
  *    parallelism, tests inside a file run sequentially.
  */
