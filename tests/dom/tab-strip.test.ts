@@ -148,12 +148,34 @@ describe('#137 runtime tab strip: tablist/tab/tabpanel roles + id pairing', () =
     // Panel → desktop tab still resolves after the switch.
     const labelledBy = (panel.getAttribute('aria-labelledby') as string).split(' ')
     expect(byId(labelledBy[0])).toBe(desktopTab('money'))
-    // KNOWN LIMITATION (filed as #344, PR body "Known limitations"): the
-    // second id (`mjengo-mtab-money`) does NOT resolve — 'money' lives in the
-    // bottom-nav "More" sheet for this role, whose buttons carry no tab ids.
-    // We deliberately do NOT pin the dangling ref as correct; the desktop id
-    // (first in the list, always mounted) is the load-bearing one.
+    // #344 FIXED: the second id (`mjengo-mtab-money`) does not resolve —
+    // 'money' lives in the bottom-nav "More" sheet for this role, whose
+    // buttons only mount while the sheet is open (and the desktop tab is
+    // display:none on mobile viewports) — the labelledby idrefs can BOTH be
+    // unresolvable exactly there. The panel therefore carries its OWN
+    // aria-label (the active tab's translated full label): accname prefers
+    // labelledby when it resolves, aria-label is the spec's fallback when it
+    // cannot — the panel is named on every surface/viewport intersection.
     expect(byId('mjengo-mtab-money')).toBeNull()
+    expect(panel.getAttribute('aria-label')).toBe('Money')
+  })
+
+  it('#344: an overflow tab\'s panel is named even with NO resolvable labelledby id (the mobile-viewport intersection)', async () => {
+    await fireClick(desktopTab('money'))
+    const panel = byRole(app.container, 'tabpanel') as HTMLElement
+    // The exact #344 condition: for an overflow tab, NEITHER labelledby id
+    // reliably resolves (the desktop tab is display:none below md; the
+    // mtab element only mounts while the More sheet is open). In THIS jsdom
+    // render CSS visibility does not apply (the desktop id exists), so the
+    // honest jsdom pin is the FALLBACK itself: the aria-label is present,
+    // non-empty, and equals the active tab's full translated label — the
+    // name computation can never come up empty.
+    expect((panel.getAttribute('aria-label') as string).length).toBeGreaterThan(0)
+    expect(panel.getAttribute('aria-label')).toBe('Money')
+    // And the fallback label TRACKS the active tab, not a frozen one.
+    await fireClick(desktopTab('overview'))
+    const panel2 = byRole(app.container, 'tabpanel') as HTMLElement
+    expect(panel2.getAttribute('aria-label')).toBe('Overview')
   })
 
   it('the mobile bottom-nav is its own tablist with a distinct id namespace', () => {
