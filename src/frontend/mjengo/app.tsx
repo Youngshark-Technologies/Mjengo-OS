@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useMjengo } from '@/frontend/hooks/use-mjengo'
+import { metaFor } from '@/frontend/mjengo/nav/tab-meta'
 import { Header } from '@/frontend/mjengo/header'
 import { OverviewTab } from '@/frontend/mjengo/overview-tab'
 import { SitePlanTab } from '@/frontend/mjengo/site-plan-tab'
@@ -520,11 +521,20 @@ export function MjengoApp() {
             visible strip: the desktop tab (hidden below md, ignored by AT) or
             the mobile bottom-nav tab (`mjengo-mtab-<key>`, hidden md+); the
             client surface has no bottom nav — the header strip is its only
-            strip, so the first id always resolves. */}
+            strip, so the first id always resolves.
+            #344: the labelledby idrefs can BOTH be unresolvable — on a mobile
+            viewport an overflow tab (bottom-nav "More" sheet) has no primary
+            `mjengo-mtab-<key>` element (the sheet's buttons only mount while
+            open, and the desktop tab is display:none) — so the panel ALSO
+            carries its own aria-label (the active tab's translated full
+            label). Accname prefers labelledby when it resolves; aria-label is
+            the spec's fallback when it cannot — either way the panel is
+            named on every surface/viewport intersection. */}
         <div
           role="tabpanel"
           id={`mjengo-panel-${activeTab}`}
           aria-labelledby={`mjengo-tab-${activeTab} mjengo-mtab-${activeTab}`}
+          aria-label={t(metaFor(activeTab).label)}
         >
         {/* One error boundary around the ACTIVE tab panel (W3-F2): a render
             crash in any tab swaps in the friendly boundary card instead of
