@@ -8,8 +8,9 @@
  *  · unbalanced (debits ≠ credits) or malformed lines never post;
  *  · a posted transaction carries balanced legs;
  *  · an idempotency key replays the original transaction — never a double post;
- *  · a reversal is a NEW mirrored transaction that flips the original's
- *    status, never an edit of history;
+ *  · a reversal is a NEW mirrored transaction linked via reversalOfId — the
+ *    original row is never touched (DB-11 / #133: "is reversed?" is derived
+ *    from the link, never stamped);
  *  · derived balances follow the account's normal side.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -51,11 +52,15 @@ vi.mock('@/backend/lib/db', () => {
     },
   }
   const ledgerTransaction = {
-    async findUnique({ where }: { where: { id?: string; idempotencyKey?: string } }) {
+    async findUnique({ where }: { where: { id?: string; idempotencyKey?: string; reversalOfId?: string } }) {
       let t: Record<string, unknown> | undefined
       if (where.id) t = state.txns.get(where.id)
       else if (where.idempotencyKey) {
         t = [...state.txns.values()].find((x) => x.idempotencyKey === where.idempotencyKey)
+      } else if (where.reversalOfId) {
+        // The #133 derived-reversal lookup: the (unique) row whose
+        // reversalOfId points at the queried original.
+        t = [...state.txns.values()].find((x) => x.reversalOfId === where.reversalOfId)
       }
       return t ? { ...t, entries: entriesFor(t.id as string) } : null
     },
@@ -121,8 +126,8 @@ vi.mock('@/backend/lib/db', () => {
 
 import { db } from '@/backend/lib/db'
 import {
-  cashAccountForMethod, derivedBalance, ensureAccount, postLedgerTransaction,
-  reverseLedgerTransaction,
+  cashAccountForMethod, derivedBalance, ensureAccount, findReversalOf, isReversed,
+  postLedgerTransaction, reverseLedgerTransaction,
 } from '@/backend/modules/ledger/service'
 
 const state = (db as unknown as { __state: ReturnType<typeof getState> }).__state
@@ -296,18 +301,20 @@ describe('ensureAccountTx — chart of accounts resolution', () => {
   })
 })
 
-describe('reverseLedgerTransaction — corrections are new entries, never edits', () => {
-  it('creates a mirrored transaction and flips the original status', async () => {
+describe('reverseLedgerTransaction — corrections are new rows, never edits (DB-11 / #133)', () => {
+  it('creates a mirrored transaction and leaves the original row untouched', async () => {
     const original = asPosted(await post())
     const originalEntryIds = [...state.entries.values()].filter((e) => e.transactionId === original.id).map((e) => e.id)
+    const originalRowBefore = { ...state.txns.get(original.id) as Record<string, unknown> }
 
     const reversal = asPosted(await reverseLedgerTransaction(original.id, 'wrong amount', 'finance@mjengo.os', 'finance'))
 
-    // the original's history is untouched (append-only): same entries, now marked
+    // the original's history is untouched (append-only): same entries…
     expect([...state.entries.values()].filter((e) => e.transactionId === original.id).map((e) => e.id)).toEqual(originalEntryIds)
-    const marked = [...state.txns.values()].find((t) => t.id === original.id)
-    expect(marked!.status).toBe('reversed')
-    expect(marked!.reversalRef).toBe(reversal.ref)
+    // …and the SAME ROW — byte-identical, no status/reversalRef stamp (#133:
+    // the pre-#133 model flipped the original to 'reversed' here)
+    expect(state.txns.get(original.id)).toEqual(originalRowBefore)
+    expect((state.txns.get(original.id) as Record<string, unknown>).status).toBe('posted')
 
     // the reversal points back at the original and mirrors every leg
     expect(reversal.reversalOfId).toBe(original.id)
@@ -325,12 +332,35 @@ describe('reverseLedgerTransaction — corrections are new entries, never edits'
     expect(await derivedBalance('ESCROW:proj-1')).toBe(0n)
   })
 
-  it('refuses to reverse an already-reversed transaction', async () => {
+  it('derived state: findReversalOf/isReversed read the link, not a stamp', async () => {
+    const original = asPosted(await post())
+    // not reversed yet — no row points at it
+    expect(await isReversed(original.id)).toBe(false)
+    expect(await findReversalOf(db, original.id)).toBeNull()
+
+    const reversal = asPosted(await reverseLedgerTransaction(original.id, 'derived probe', 'finance@mjengo.os', 'finance'))
+
+    // reversed now — DERIVED from the reversalOfId link (the original row
+    // still says 'posted'; nothing was stamped)
+    expect(await isReversed(original.id)).toBe(true)
+    const found = await findReversalOf(db, original.id)
+    expect(found?.id).toBe(reversal.id)
+    expect(found?.ref).toBe(reversal.ref)
+    // the reversal itself is NOT reversed (no link points at it)
+    expect(await isReversed(reversal.id)).toBe(false)
+    // unknown ids are honestly not-reversed (no throw)
+    expect(await isReversed('nope')).toBe(false)
+  })
+
+  it('refuses to reverse an already-reversed transaction (derived guard)', async () => {
     const original = asPosted(await post())
     await reverseLedgerTransaction(original.id, 'first', 'finance@mjengo.os', 'finance')
     await expect(reverseLedgerTransaction(original.id, 'second', 'finance@mjengo.os', 'finance')).rejects.toThrow(
       'Transaction already reversed',
     )
+    // exactly ONE reversal row points at the original — the guard read the
+    // link, and a second reversal never landed
+    expect([...state.txns.values()].filter((t) => t.reversalOfId === original.id)).toHaveLength(1)
   })
 
   it('refuses to reverse an unknown transaction id', async () => {

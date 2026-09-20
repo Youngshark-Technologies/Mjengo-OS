@@ -22,9 +22,14 @@
  *    P2003 (verified: the engine maps any SQLITE_CONSTRAINT abort this way)
  *    — so the assertion is rejects + state, and the honest reason text is
  *    probed through the better-sqlite3 handle;
- *  · reversal: mirrored legs post, the original is marked reversed with
- *    reversalRef, derived balances are restored to zero; double reversal
- *    refuses;
+ *  · reversal: mirrored legs post as a NEW transaction linked via
+ *    reversalOfId, the original row stays byte-identical (DB-11 / #133 —
+ *    "is reversed?" is derived from the link, never stamped), derived
+ *    balances are restored to zero; double reversal refuses (derived
+ *    guard) and the unique reversalOfId index is the DB backstop;
+ *  · the migration-21 tightened update guard: the previously-legal
+ *    reversal marking (posted→'reversed' + reversalRef) is now REJECTED —
+ *    the only legal UPDATE left is the posting transition;
  *  · idempotency: the same key replays the original transaction — exactly
  *    one set of rows ever lands (real LedgerTransaction.idempotencyKey
  *    unique index under the replay);
@@ -56,17 +61,18 @@ afterAll(disposeRealDb)
 const count = (table: string): number => Number((sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: bigint }).n)
 
 describe('the harness (issue #184)', () => {
-  it('runs on a database migrated by the real prisma migrate deploy (22 migrations recorded — two 18_* folders)', () => {
+  it('runs on a database migrated by the real prisma migrate deploy (23 migrations recorded — two 18_* folders)', () => {
     const rows = sqlite.prepare(`SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL`).get() as { n: bigint }
     // 00→17 is one-per-number (18 migrations); #159 (18_upload_confirm_object_key)
     // and #207 (18_reorder_level) merged 9 minutes apart each carrying an
     // 18-numbered folder — distinct names, so deploy applies both and the
     // count was 20 through wave 19; #129 adds 19_status_ladder_checks → 21;
-    // #181 adds 20_token_version (session revocation) → 22.
+    // #181 adds 20_token_version (session revocation) → 22; #133 adds
+    // 21_ledger_reversals_as_rows (reversals as new rows) → 23.
     // Renaming a folder post-merge would re-apply it on every
     // already-migrated database, so the numbering collision is documented
     // here instead of "fixed".
-    expect(Number(rows.n)).toBe(22)
+    expect(Number(rows.n)).toBe(23)
     // The ledger invariant triggers are live in this database.
     const triggers = sqlite.prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'LedgerTransaction%'`).all() as Array<{ name: string }>
     expect(triggers.map((t) => t.name)).toContain('LedgerTransaction_posting_gate')
@@ -264,8 +270,8 @@ describe('double-entry posting through the real engine', () => {
   })
 })
 
-describe('reversal (append-only corrections)', () => {
-  it('posts mirrored legs, marks the original reversed, and restores derived balances', async () => {
+describe('reversal (append-only corrections — DB-11 / #133)', () => {
+  it('posts mirrored legs as a NEW row; the original stays byte-identical; balances restore', async () => {
     const project = await seedProject(prisma)
     const AMOUNT = 125_000n
     const original = await postLedgerTransaction({
@@ -280,13 +286,21 @@ describe('reversal (append-only corrections)', () => {
     })
     expect(await derivedBalance(`ESCROW:${project.id}`)).toBe(AMOUNT)
 
+    // The ORIGINAL row, every column, read through the raw handle — the
+    // byte-identical snapshot the reversal must not disturb (#133).
+    const before = sqlite.prepare(`SELECT * FROM LedgerTransaction WHERE id = ?`).get(original.id)
+
     const reversal = await reverseLedgerTransaction(original.id, 'wrong amount', 'Finance', 'finance')
 
-    // The original row: reversed, pointing at its correction.
-    const flipped = await prisma.ledgerTransaction.findUniqueOrThrow({ where: { id: original.id } })
-    expect(flipped.status).toBe('reversed')
-    expect(flipped.reversalRef).toBe(reversal.ref)
-    // The reversal row: posted, mirrored, linked back.
+    // THE #133 invariant: the original row is byte-identical after the
+    // reversal — no status flip, no reversalRef stamp, nothing.
+    expect(sqlite.prepare(`SELECT * FROM LedgerTransaction WHERE id = ?`).get(original.id)).toEqual(before)
+    const untouched = await prisma.ledgerTransaction.findUniqueOrThrow({ where: { id: original.id } })
+    expect(untouched.status).toBe('posted')
+    expect(untouched.reversalRef).toBeNull()
+
+    // The reversal row: posted, mirrored, linked back — the link IS the
+    // reversal record.
     expect(reversal.status).toBe('posted')
     expect(reversal.reversalOfId).toBe(original.id)
     const legs = await prisma.ledgerEntry.findMany({ where: { txnId: reversal.id } })
@@ -294,13 +308,18 @@ describe('reversal (append-only corrections)', () => {
     const escrowLeg = legs.find((l) => l.side === 'debit')
     expect(escrowLeg?.amount).toBe(AMOUNT) // mirror of the original credit
 
+    // Derived reversal state: the link, not a stamp.
+    const derived = await prisma.ledgerTransaction.findUnique({ where: { reversalOfId: original.id } })
+    expect(derived?.id).toBe(reversal.id)
+    expect(derived?.ref).toBe(reversal.ref)
+
     // Money moved back: the escrow account's derived balance is restored.
     expect(await derivedBalance(`ESCROW:${project.id}`)).toBe(0n)
     // History grew — nothing was edited or deleted.
     expect(count('LedgerTransaction')).toBeGreaterThan(0)
   })
 
-  it('refuses to reverse an already-reversed transaction', async () => {
+  it('refuses to reverse an already-reversed transaction (derived guard)', async () => {
     const project = await seedProject(prisma)
     const txn = await postLedgerTransaction({
       projectId: project.id,
@@ -314,6 +333,85 @@ describe('reversal (append-only corrections)', () => {
     })
     await reverseLedgerTransaction(txn.id, 'first', 'Finance', 'finance')
     await expect(reverseLedgerTransaction(txn.id, 'second', 'Finance', 'finance')).rejects.toThrow('Transaction already reversed')
+  })
+
+  it('migration 21: the previously-legal reversal marking UPDATE is now REJECTED by the tightened guard', async () => {
+    const project = await seedProject(prisma)
+    const txn = await postLedgerTransaction({
+      projectId: project.id,
+      description: 'guard probe',
+      postedBy: 't',
+      postedRole: 'finance',
+      lines: [
+        { accountCode: 'CASH_MPESA', side: 'debit', amount: 10n },
+        { accountCode: `ESCROW:${project.id}`, side: 'credit', amount: 10n },
+      ],
+    })
+    // The pre-#133 service write: posted → 'reversed' + reversalRef. Under
+    // migration 14/19's whitelist this was the one legal mutation; migration
+    // 21 removed the arm — the original is never UPDATEd again.
+    expect(() =>
+      sqlite.prepare(`UPDATE LedgerTransaction SET status = 'reversed', reversalRef = 'LX-gone' WHERE id = ?`).run(txn.id),
+    ).toThrow(/DB-11 \(#133\)/)
+    // Through Prisma too — no writer path is exempt.
+    await expect(
+      prisma.ledgerTransaction.update({ where: { id: txn.id }, data: { status: 'reversed', reversalRef: 'LX-gone' } }),
+    ).rejects.toThrow()
+    // The row is untouched by the failed attempts.
+    const row = await prisma.ledgerTransaction.findUniqueOrThrow({ where: { id: txn.id } })
+    expect(row.status).toBe('posted')
+    expect(row.reversalRef).toBeNull()
+    // The posting transition (the balance gate's enforcement point) is
+    // still the one legal UPDATE — a fresh post exercises it end-to-end.
+    const again = await postLedgerTransaction({
+      projectId: project.id,
+      description: 'posting transition still legal',
+      postedBy: 't',
+      postedRole: 'finance',
+      lines: [
+        { accountCode: 'CASH_MPESA', side: 'debit', amount: 5n },
+        { accountCode: `ESCROW:${project.id}`, side: 'credit', amount: 5n },
+      ],
+    })
+    expect(again.status).toBe('posted')
+  })
+
+  it('migration 21: one reversal per original — the unique index is the DB-level double-reversal backstop', async () => {
+    const project = await seedProject(prisma)
+    const txn = await postLedgerTransaction({
+      projectId: project.id,
+      description: 'unique link probe',
+      postedBy: 't',
+      postedRole: 'finance',
+      lines: [
+        { accountCode: 'CASH_MPESA', side: 'debit', amount: 10n },
+        { accountCode: `ESCROW:${project.id}`, side: 'credit', amount: 10n },
+      ],
+    })
+    const first = await reverseLedgerTransaction(txn.id, 'the one reversal', 'Finance', 'finance')
+    // A rogue writer that skips the service's derived guard cannot land a
+    // SECOND reversal row pointing at the same original — the unique
+    // index on reversalOfId fails it closed.
+    await expect(
+      prisma.ledgerTransaction.create({
+        data: {
+          ref: 'LX-ROGUE-SECOND-REVERSAL',
+          projectId: project.id,
+          description: 'rogue second reversal',
+          occurredAt: new Date(),
+          postedBy: 'attacker',
+          postedRole: 'finance',
+          status: 'pending',
+          reversalOfId: txn.id,
+        },
+      }),
+    ).rejects.toThrow(/Unique constraint failed/)
+    // …and the index is live in sqlite_master under Prisma's name.
+    const idx = sqlite.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'LedgerTransaction_reversalOfId_key'`).get()
+    expect(idx).toEqual({ name: 'LedgerTransaction_reversalOfId_key' })
+    // Ordinary rows (NULL reversalOfId) never collide — many coexist.
+    expect(count('LedgerTransaction')).toBeGreaterThan(1)
+    expect(first.status).toBe('posted')
   })
 })
 

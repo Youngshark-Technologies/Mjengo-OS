@@ -1101,8 +1101,16 @@ model LedgerAccount {
 // DB-3 (#124, migration 14_ledger_invariants): the lifecycle is DB-enforced —
 // rows are BORN 'pending' (a trigger rejects any other birth status), legs
 // may only attach while pending, and the pending→'posted' UPDATE is the
-// balance gate (Σdebits = Σcredits asserted by trigger). The only other
-// legal mutation is reversal marking: posted→'reversed' + reversalRef.
+// balance gate (Σdebits = Σcredits asserted by trigger).
+//
+// DB-11 (#133, migration 21_ledger_reversals_as_rows): that posting
+// transition is now the ONLY legal mutation — reversals are NEW rows whose
+// reversalOfId points back at the original, and "was this reversed?" is
+// DERIVED from that link (ledger service findReversalOf/isReversed), never
+// stamped onto the original. The status/reversalRef columns are kept as
+// LEGACY (additive house rule — no destructive migration): pre-#133 rows
+// may still carry status 'reversed' + reversalRef stamps; nothing writes
+// them anymore and the update guard freezes them in place.
 model LedgerTransaction {
   id             String        @id @default(cuid())
   ref            String        @unique // LX-2026-000001
@@ -1112,9 +1120,9 @@ model LedgerTransaction {
   occurredAt     DateTime      @default(now())
   postedBy       String // actor name
   postedRole     String // contractor, client, finance, system
-  status         String        @default("posted") // pending → posted → reversed (DB-enforced, migration 14)
-  reversalOfId   String? // if this txn reverses an earlier one
-  reversalRef    String? // quick-lookup ref of the reversing txn
+  status         String        @default("posted") // pending → posted (DB-enforced, migration 14); 'reversed' is LEGACY/derived — never written since #133
+  reversalOfId   String?       @unique // if this txn reverses an earlier one — UNIQUE: one reversal per original (DB-enforced, migration 21 / DB-11)
+  reversalRef    String? // LEGACY (pre-#133 stamp of the reversing txn's ref) — no longer written; derive via reversalOfId
   idempotencyKey String?       @unique // natural idempotency (spec §57)
   createdAt      DateTime      @default(now())
   entries        LedgerEntry[]

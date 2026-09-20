@@ -180,11 +180,15 @@ vi.mock('@/backend/lib/db', () => {
     },
   }
   const ledgerTransaction = {
-    async findUnique({ where }: { where: { id?: string; idempotencyKey?: string } }) {
+    async findUnique({ where }: { where: { id?: string; idempotencyKey?: string; reversalOfId?: string } }) {
       let t: Record<string, unknown> | undefined
       if (where.id) t = state.ledgerTxns.get(where.id)
       else if (where.idempotencyKey) {
         t = [...state.ledgerTxns.values()].find((x) => x.idempotencyKey === where.idempotencyKey)
+      } else if (where.reversalOfId) {
+        // #133 derived-reversal lookup: the row whose reversalOfId points at
+        // the queried original.
+        t = [...state.ledgerTxns.values()].find((x) => x.reversalOfId === where.reversalOfId)
       }
       return t ? { ...t, entries: entriesFor(t.id as string) } : null
     },
@@ -390,10 +394,15 @@ describe('escrow-spend reversals restore the EscrowWallet projection (issue #213
     // THE #213 invariant: the projection is restored in the same transaction
     expect(escrowChip()).toEqual({ derived: 100_000_000n, projected: 100_000_000n, consistent: true })
 
-    // the mirrored ledger post: ESCROW credit / EXPENSE debit, original flipped
-    const originalLedger = state.ledgerTxns.get(release.ledgerTxnId) as unknown as { status: string; reversalRef: string }
-    expect(originalLedger.status).toBe('reversed')
-    expect(originalLedger.reversalRef).toBe(out.ledgerRef)
+    // the mirrored ledger post: ESCROW credit / EXPENSE debit — and the
+    // original row is NEVER touched (#133 / DB-11): the reversal exists as a
+    // new row linked via reversalOfId, derived not stamped
+    const originalLedger = state.ledgerTxns.get(release.ledgerTxnId) as unknown as { status: string; reversalRef: string | null | undefined }
+    expect(originalLedger.status).toBe('posted')
+    // no stamp was written (stub: never-set key; real DB: NULL)
+    expect(originalLedger.reversalRef ?? null).toBeNull()
+    const derivedReversal = [...state.ledgerTxns.values()].find((t) => t.reversalOfId === release.ledgerTxnId) as unknown as { ref: string } | undefined
+    expect(derivedReversal?.ref).toBe(out.ledgerRef)
     const reversalTxn = [...state.ledgerTxns.values()].find((t) => t.ref === out.ledgerRef) as unknown as { id: string }
     const legs = [...state.entries.values()].filter((e) => e.transactionId === reversalTxn.id)
     expect(legs.filter((e) => e.side === 'credit').map((e) => [e.amount, state.accounts.get(e.accountId as string)?.code])).toContainEqual([20_000_000n, `ESCROW:${P}`])

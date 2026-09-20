@@ -953,8 +953,11 @@ create table public.ledger_accounts (
 create index ledger_accounts_project_idx on public.ledger_accounts (project_id);
 create index ledger_accounts_owner_idx on public.ledger_accounts (owner_type, owner_id);
 
--- LedgerTransaction — immutable except the reversal-marking columns (guard
--- trigger in 0002). reversal_of_id gains a self-FK (deliberate addition).
+-- LedgerTransaction — INSERT/SELECT-only like ledger_entries (#133 / DB-11):
+-- reversals are NEW rows linked via reversal_of_id; "was reversed?" is
+-- derived from that link, so there is no reversal-marking update to guard.
+-- reversal_of_id gains a self-FK (deliberate addition) and a UNIQUE index
+-- (one reversal per original — the DB-level double-reversal backstop).
 create table public.ledger_transactions (
   id              text primary key,
   ref             text not null unique,
@@ -972,7 +975,7 @@ create table public.ledger_transactions (
 );
 
 create index ledger_transactions_project_idx on public.ledger_transactions (project_id, occurred_at desc);
-create index ledger_transactions_reversal_of_idx on public.ledger_transactions (reversal_of_id);
+create unique index ledger_transactions_reversal_of_idx on public.ledger_transactions (reversal_of_id);
 
 -- LedgerEntry — one balanced leg. Append-only. Σdebits = Σcredits per txn is
 -- DB-enforced by a deferred constraint trigger (0002) on top of the service

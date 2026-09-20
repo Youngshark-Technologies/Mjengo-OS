@@ -25,8 +25,11 @@
  *    deferred balanced-legs constraint (0002_rls.sql L344-366);
  *  · ledger rows are append-only: LedgerEntry UPDATE/DELETE and
  *    LedgerTransaction DELETE are rejected;
- *  · the LedgerTransaction update whitelist: only pending→posted and
- *    posted→reversed (+reversalRef) are legal (0002_rls.sql L309-340);
+ *  · the LedgerTransaction update guard: migration 21 (#133 / DB-11)
+ *    tightened it to the posting transition ONLY — pending→posted is the
+ *    one legal UPDATE; the pre-#133 reversal marking
+ *    (posted→'reversed' + reversalRef) is rejected like every other edit,
+ *    and reversalOfId is UNIQUE (one reversal row per original);
  *  · legs may only attach to a pending transaction, and transactions are
  *    born pending — the gate cannot be skipped by direct DML;
  *  · CHECK constraints: side ∈ {debit, credit}, amount > 0;
@@ -86,6 +89,13 @@ describe('migration replay', () => {
 
   it('migration 14_ledger_invariants is part of the chain', () => {
     expect(migrationDirs()).toContain('14_ledger_invariants')
+  })
+
+  it('migration 21_ledger_reversals_as_rows is part of the chain (#133 / DB-11)', () => {
+    expect(migrationDirs()).toContain('21_ledger_reversals_as_rows')
+    // The unique double-reversal backstop is live under Prisma's index name.
+    const idx = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'LedgerTransaction_reversalOfId_key'`).get()
+    expect(idx).toEqual({ name: 'LedgerTransaction_reversalOfId_key' })
   })
 
   it('migration 18_reorder_level is part of the chain (#207 low-stock threshold)', () => {
@@ -296,19 +306,21 @@ describe('migration 14 — ledger balance + append-only invariants (DB-3, issue 
     })
   })
 
-  describe('LedgerTransaction update whitelist (0002_rls.sql L309-340 parity)', () => {
-    it('allows reversal marking: posted → reversed + reversalRef', () => {
+  describe('LedgerTransaction update guard (migration 21 — posting transition ONLY, #133 / DB-11)', () => {
+    it('rejects the pre-#133 reversal marking: posted → reversed + reversalRef', () => {
       postBalanced('t-1')
+      // The ONE update this migration removed from migration 14's
+      // whitelist: the marking the old reverseLedgerTransaction wrote.
       expect(() =>
         db
           .prepare(`UPDATE LedgerTransaction SET status = 'reversed', reversalRef = 'LX-2026-t-2' WHERE id = 't-1'`)
           .run(),
-      ).not.toThrow()
+      ).toThrow(/DB-11 \(#133\)/)
       const row = db.prepare(`SELECT status, reversalRef FROM LedgerTransaction WHERE id = 't-1'`).get() as {
         status: string
-        reversalRef: string
+        reversalRef: string | null
       }
-      expect(row).toEqual({ status: 'reversed', reversalRef: 'LX-2026-t-2' })
+      expect(row).toEqual({ status: 'posted', reversalRef: null })
     })
 
     it('rejects editing immutable columns (description, occurredAt, ref, postedBy)', () => {
@@ -321,20 +333,59 @@ describe('migration 14 — ledger balance + append-only invariants (DB-3, issue 
       expect(() => db.prepare(`UPDATE LedgerTransaction SET postedBy = 'attacker' WHERE id = 't-1'`).run()).toThrow(/immutable/)
     })
 
-    it('rejects status edits outside the two legal transitions', () => {
+    it('rejects EVERY status edit except pending→posted (the posting transition)', () => {
       postBalanced('t-1')
-      // posted → posted (no-op), posted → pending, and reversalRef without
-      // the posted → reversed move are all outside the whitelist
+      // posted → posted (no-op), posted → pending, reversalRef alone, and
+      // the reversal marking are all outside the tightened guard
       expect(() => db.prepare(`UPDATE LedgerTransaction SET status = 'posted' WHERE id = 't-1'`).run()).toThrow(/immutable/)
       expect(() => db.prepare(`UPDATE LedgerTransaction SET status = 'pending' WHERE id = 't-1'`).run()).toThrow(/immutable/)
       expect(() => db.prepare(`UPDATE LedgerTransaction SET reversalRef = 'X' WHERE id = 't-1'`).run()).toThrow(/immutable/)
       // pending → reversed skips the balance gate — rejected
       insertTxn('t-2', 'pending')
       expect(() => db.prepare(`UPDATE LedgerTransaction SET status = 'reversed' WHERE id = 't-2'`).run()).toThrow(/immutable/)
-      // a reversed row is frozen
-      postBalanced('t-3')
-      db.prepare(`UPDATE LedgerTransaction SET status = 'reversed', reversalRef = 'LX-x' WHERE id = 't-3'`).run()
-      expect(() => db.prepare(`UPDATE LedgerTransaction SET reversalRef = 'LX-y' WHERE id = 't-3'`).run()).toThrow(/immutable/)
+      // pending → posted with balanced legs is still THE one legal UPDATE
+      insertLeg('t-2-d', 't-2', 'debit', 500)
+      insertLeg('t-2-c', 't-2', 'credit', 500)
+      expect(() => db.prepare(`UPDATE LedgerTransaction SET status = 'posted' WHERE id = 't-2'`).run()).not.toThrow()
+    })
+
+    it('a legacy stamped (reversed) row is frozen — the guard holds on pre-#133 data', () => {
+      // Reversal marking can only land under maintenance now; simulate a
+      // pre-#133 database by stamping under the archival exemption, then
+      // re-arming the guard.
+      postBalanced('t-1')
+      db.prepare(`INSERT INTO LedgerMaintenance (id, allow) VALUES (1, 1)`).run()
+      db.prepare(`UPDATE LedgerTransaction SET status = 'reversed', reversalRef = 'LX-legacy' WHERE id = 't-1'`).run()
+      db.prepare(`UPDATE LedgerMaintenance SET allow = 0 WHERE id = 1`).run()
+      // The legacy stamp survives (additive migration — no data rewrite)…
+      expect(db.prepare(`SELECT status, reversalRef FROM LedgerTransaction WHERE id = 't-1'`).get()).toEqual({
+        status: 'reversed',
+        reversalRef: 'LX-legacy',
+      })
+      // …and is frozen like everything else.
+      expect(() => db.prepare(`UPDATE LedgerTransaction SET reversalRef = 'LX-y' WHERE id = 't-1'`).run()).toThrow(/immutable/)
+      expect(() => db.prepare(`UPDATE LedgerTransaction SET status = 'posted' WHERE id = 't-1'`).run()).toThrow(/immutable/)
+    })
+
+    it('one reversal per original: reversalOfId is UNIQUE (migration 21 backstop)', () => {
+      postBalanced('t-1')
+      const reversal = db.prepare(
+        `INSERT INTO LedgerTransaction (id, ref, projectId, description, occurredAt, postedBy, postedRole, status, reversalOfId, createdAt)
+         VALUES ('t-r1', 'LX-2026-t-r1', 'p-1', 'the reversal', '2026-09-16 10:00:00', 'tester', 'finance', 'pending', 't-1', CURRENT_TIMESTAMP)`,
+      )
+      expect(() => reversal.run()).not.toThrow()
+      // A SECOND row pointing at the same original — the double-reversal
+      // shape the old status-stamp guard could race past — fails closed.
+      expect(() =>
+        db.prepare(
+          `INSERT INTO LedgerTransaction (id, ref, projectId, description, occurredAt, postedBy, postedRole, status, reversalOfId, createdAt)
+           VALUES ('t-r2', 'LX-2026-t-r2', 'p-1', 'rogue second reversal', '2026-09-16 10:00:00', 'tester', 'finance', 'pending', 't-1', CURRENT_TIMESTAMP)`,
+        ).run(),
+      ).toThrow(/UNIQUE constraint failed: LedgerTransaction.reversalOfId/)
+      // NULLs (ordinary rows) never collide.
+      insertTxn('t-3', 'pending')
+      insertTxn('t-4', 'pending')
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM LedgerTransaction WHERE reversalOfId IS NULL`).get()).toEqual({ n: 3 })
     })
   })
 

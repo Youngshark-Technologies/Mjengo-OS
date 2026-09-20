@@ -35,8 +35,8 @@ export interface LedgerTxnRow {
   ref: string
   description: string
   occurredAt: string
-  status: string // posted, reversed
-  reversalOfRef: string | null
+  status: string // DERIVED (#133): 'reversed' iff a reversal txn links back via reversalOfId; the stored row is append-only 'posted'
+  reversalOfRef: string | null // DERIVED (#133): the reversing txn's ref, from the reversalOfId link (not the legacy stored stamp)
   postedBy: string
   postedRole: string
   entries: LedgerEntryRow[]

@@ -1098,6 +1098,8 @@ export function MoneyTab() {
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5">
+                        {/* status/reversalOfRef are DERIVED server-side (#133): 'reversed' iff a
+                            reversal txn links back via reversalOfId — the stored row never changes. */}
                         {txn.status === 'reversed' && (
                           <Badge className="border-0 bg-stone-200 text-stone-700 hover:bg-stone-200">{txn.reversalOfRef ? t('money.ledger.reversedBy', { ref: txn.reversalOfRef }) : t('money.ledger.reversed')}</Badge>
                         )}

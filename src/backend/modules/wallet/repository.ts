@@ -5,6 +5,7 @@
 
 import { db } from '@/backend/lib/db'
 import { centsToKes, sumCents, type Cents } from '@/backend/lib/money'
+import { reversalRefsByTxnId } from '@/backend/modules/ledger/service'
 import type { FinanceSlice, LedgerTxnRow, LedgerAccountRow } from './types'
 
 export async function loadFinanceSlice(projectId: string): Promise<FinanceSlice> {
@@ -40,13 +41,18 @@ export async function loadFinanceSlice(projectId: string): Promise<FinanceSlice>
     sumCents(openInvoices.map((i) => i.total)) +
     sumCents(pendingVariations.filter((v) => v.budgetImpact > 0n).map((v) => v.budgetImpact))
 
+  // DB-11 (#133): reversal state is DERIVED — the reversal rows linked via
+  // reversalOfId, looked up in ONE indexed query for the whole page. The
+  // original rows are never stamped (status stays 'posted'; reversalRef is a
+  // legacy column nothing writes anymore).
+  const reversalRefs = await reversalRefsByTxnId(txns.map((t) => t.id))
   const txnRows: LedgerTxnRow[] = txns.map((t) => ({
     id: t.id,
     ref: t.ref,
     description: t.description,
     occurredAt: t.occurredAt.toISOString(),
-    status: t.status,
-    reversalOfRef: t.reversalRef,
+    status: reversalRefs.has(t.id) ? 'reversed' : t.status,
+    reversalOfRef: reversalRefs.get(t.id) ?? null,
     postedBy: t.postedBy,
     postedRole: t.postedRole,
     entries: t.entries.map((e) => ({

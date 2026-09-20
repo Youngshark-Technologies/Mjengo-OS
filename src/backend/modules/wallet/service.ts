@@ -25,6 +25,7 @@ import {
   derivedBalance,
   accountSideSums,
   cashAccountForMethod,
+  reversalRefsByTxnId,
   type TxClient,
 } from '@/backend/modules/ledger/service'
 import { notify } from '@/backend/modules/notify/service'
@@ -1105,6 +1106,9 @@ export async function walletLedgerTransactions(projectId: string, idOrCode: any)
     orderBy: { occurredAt: 'desc' },
     take: 100,
   })
+  // DB-11 (#133): 'reversed' is DERIVED from the reversalOfId link (one
+  // indexed query for the page) — the stored rows are append-only 'posted'.
+  const reversalRefs = await reversalRefsByTxnId(txns.map((t) => t.id))
   return {
     wallet: { code: wallet.code, label: wallet.label, ledgerAccount: account.code },
     balance: centsToKes(balance),
@@ -1113,7 +1117,7 @@ export async function walletLedgerTransactions(projectId: string, idOrCode: any)
       ref: t.ref,
       description: t.description,
       occurredAt: t.occurredAt.toISOString(),
-      status: t.status,
+      status: reversalRefs.has(t.id) ? 'reversed' : t.status,
       postedBy: t.postedBy,
       postedRole: t.postedRole,
       entries: t.entries.map((e) => ({

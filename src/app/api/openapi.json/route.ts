@@ -90,7 +90,7 @@ const ledgerTxnSchema = {
     ref: { type: 'string', description: 'Ledger ref, e.g. LX-2026-000001.' },
     description: { type: 'string' },
     occurredAt: { type: 'string', format: 'date-time' },
-    status: { type: 'string', enum: ['posted', 'reversed'] },
+    status: { type: 'string', enum: ['posted', 'reversed'], description: "Derived (issue #133): 'reversed' iff a reversal transaction links back via reversalOfId — the stored ledger row is append-only 'posted'." },
     postedBy: { type: 'string' },
     postedRole: { type: 'string' },
     entries: {

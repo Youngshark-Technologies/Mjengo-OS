@@ -201,11 +201,14 @@ vi.mock('@/backend/lib/db', () => {
     },
   }
   const ledgerTransaction = {
-    async findUnique({ where }: { where: { id?: string; idempotencyKey?: string } }) {
+    async findUnique({ where }: { where: { id?: string; idempotencyKey?: string; reversalOfId?: string } }) {
       let t: Record<string, unknown> | undefined
       if (where.id) t = state.ledgerTxns.get(where.id)
       else if (where.idempotencyKey) {
         t = [...state.ledgerTxns.values()].find((x) => x.idempotencyKey === where.idempotencyKey)
+      } else if (where.reversalOfId) {
+        // #133 derived-reversal lookup (the double-reversal guard's read).
+        t = [...state.ledgerTxns.values()].find((x) => x.reversalOfId === where.reversalOfId)
       }
       return t ? { ...t, entries: entriesFor(t.id as string) } : null
     },

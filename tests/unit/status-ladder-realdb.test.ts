@@ -262,10 +262,14 @@ describe('migration 19 ladder CHECKs through the real Prisma writer', () => {
     })
     expect(posted.status).toBe('posted')
     const reversal = await reverseLedgerTransaction(posted.id, 'ladder probe reversal', 'Test', 'finance')
-    // The original is marked reversed; the mirrored reversal posts (the
-    // ledger-realdb contract — reversal is a NEW transaction, never an edit).
-    const flipped = await prisma.ledgerTransaction.findUniqueOrThrow({ where: { id: posted.id } })
-    expect(flipped.status).toBe('reversed')
+    // DB-11 (#133): the original row is never touched — 'reversed' is DERIVED
+    // from the reversal row's reversalOfId link (the ledger-realdb contract —
+    // reversal is a NEW transaction, never an edit).
+    const untouched = await prisma.ledgerTransaction.findUniqueOrThrow({ where: { id: posted.id } })
+    expect(untouched.status).toBe('posted')
+    expect(untouched.reversalRef).toBeNull()
+    const derived = await prisma.ledgerTransaction.findUnique({ where: { reversalOfId: posted.id } })
+    expect(derived?.id).toBe(reversal.id)
     expect(reversal.status).toBe('posted')
     expect(reversal.reversalOfId).toBe(posted.id)
     // A wrong postedRole is refused by the CHECK even on a legal pending birth.
