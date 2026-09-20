@@ -22,9 +22,20 @@
 //   delivery lines of delivered/closed orders) vs remaining — normalized
 //   material names group supplier wording variants ("Cement 50kg (32.5N)"
 //   ↔ "Cement 50kg").
+//
+//   BOQ-vs-actual per BOQ LINE (#203): boqProgress walks the STRUCTURAL
+//   lineage chain BoqLine →(boqLineId)→ MaterialRequestLine
+//   →(requestLineId)→ PurchaseOrderLine →(orderLineId)→ OrderDeliveryLine,
+//   with StockMovement.requestLineId closing the consumption loop — estimated
+//   / requested / ordered / delivered / consumed / remaining per line, never
+//   a name match. Legacy name-only rows (null links) are listed separately,
+//   not guessed in (the same "labeled separately" honesty as BOQ-lite; the
+//   BOQ-lite table above stays the name-based fallback view for them).
 
 import { materialMatches } from './compare'
-import type { BoqMaterialRow, EstimateBasis, ProcurementTotals } from './types'
+import type {
+  BoqMaterialRow, BoqProgressResult, BoqProgressRow, BoqUnlinkedRequestLine, EstimateBasis, ProcurementTotals,
+} from './types'
 
 export interface EstimateLine {
   materialName: string
@@ -184,6 +195,155 @@ export function boqRows(
     row.remaining = Math.max(0, Math.round((row.required - row.purchased) * 100) / 100)
   }
   return rows.sort((a, b) => b.remaining - a.remaining || a.materialKey.localeCompare(b.materialKey))
+}
+
+// ---------------- BOQ-vs-actual per line (#203 — lineage, not names) --------
+
+/**
+ * The lineage-traced request shape boqProgress consumes — what the `supply`
+ * slice's RequestWithLines rows already carry (id/requestCode/status/lines,
+ * each line with its #203 boqLineId stamp).
+ */
+export interface ProgressRequest {
+  id: string
+  requestCode: string
+  status: string
+  lines: Array<{ id: string; boqLineId: string | null; materialName: string; unit: string; qty: number }>
+}
+
+/** The lineage-traced order shape — PO lines carry their #203 requestLineId. */
+export interface ProgressOrder {
+  status: string
+  lines: Array<{ id: string; requestLineId: string | null; qty: number }>
+  deliveries: Array<{ status: string; lines: Array<{ orderLineId: string; qtyReceived: number }> }>
+}
+
+/** The movement shape — only type/quantity/requestLineId matter here. */
+export interface ProgressMovement {
+  type: string
+  quantity: number
+  requestLineId: string | null
+}
+
+/** The BOQ shape — id/name + the estimate lines (BoqRow's own fields). */
+export interface ProgressBoq {
+  id: string
+  name: string
+  lines: Array<{ id: string; materialName: string; unit: string; qty: number }>
+}
+
+/**
+ * Requests whose lines count toward the lineage view. Wider than BOQ-lite's
+ * REQUIREMENT_STATUSES on purpose: the trace answers "what did this BOQ line
+ * spawn", and boqToRequest births DRAFT requests — a just-generated MR must
+ * show up as requested immediately. Rejected ('rejected') and withdrawn
+ * ('cancelled') requests are excluded: their quantities never sourced
+ * anything. (#203 / ADR 0011.)
+ */
+const LIVE_REQUEST_STATUSES = ['draft', 'submitted', 'approved', 'converted']
+
+const r2 = (n: number): number => Math.round(n * 100) / 100
+
+/**
+ * #203: the BOQ-vs-actual view, computed from STRUCTURAL lineage only —
+ * BoqLine →(boqLineId) request lines →(requestLineId) PO lines
+ * →(orderLineId) delivery lines, + 'consumed' movements via
+ * StockMovement.requestLineId. Material names are display labels here, never
+ * join keys: a request line renamed after generation still aggregates under
+ * the BOQ line that spawned it (the name-drift case fuzzy matching misses).
+ *
+ * `unlinked` lists the live request lines with boqLineId null — legacy or
+ * manually created — instead of guessing them onto BOQ lines by name. The
+ * BOQ-lite table (boqRows above) remains the name-based view for exactly
+ * those rows; the UI renders both, labeled separately.
+ */
+export function boqProgress(
+  boqs: ProgressBoq[],
+  requests: ProgressRequest[],
+  orders: ProgressOrder[],
+  movements: ProgressMovement[],
+): BoqProgressResult {
+  // requestLineId → Σ PO-line qty (non-cancelled orders): the "ordered" hop.
+  const orderedByRequestLine = new Map<string, number>()
+  // orderLineId → Σ qtyReceived (non-voided deliveries): the "delivered" hop.
+  const deliveredByOrderLine = new Map<string, number>()
+  // requestLineId → Σ 'consumed' movement qty: the "consumed" hop.
+  const consumedByRequestLine = new Map<string, number>()
+  // requestLineId → Σ order-line ids that sourced it (the ordered→delivered walk).
+  const orderLinesByRequestLine = new Map<string, string[]>()
+
+  for (const o of orders) {
+    if (o.status === 'cancelled') continue
+    for (const line of o.lines) {
+      if (!line.requestLineId) continue
+      orderedByRequestLine.set(line.requestLineId, (orderedByRequestLine.get(line.requestLineId) ?? 0) + line.qty)
+      const ids = orderLinesByRequestLine.get(line.requestLineId) ?? []
+      ids.push(line.id)
+      orderLinesByRequestLine.set(line.requestLineId, ids)
+    }
+    for (const d of o.deliveries) {
+      if (d.status === 'cancelled') continue // #206 voided dispatch — no stock posted
+      for (const dl of d.lines) {
+        deliveredByOrderLine.set(dl.orderLineId, (deliveredByOrderLine.get(dl.orderLineId) ?? 0) + dl.qtyReceived)
+      }
+    }
+  }
+
+  for (const m of movements) {
+    if (m.type !== 'consumed' || !m.requestLineId) continue
+    consumedByRequestLine.set(m.requestLineId, (consumedByRequestLine.get(m.requestLineId) ?? 0) + m.quantity)
+  }
+
+  // requestLineId → the boqLineId it traces back to + its qty (live requests
+  // only — rejected/withdrawn requests never sourced anything).
+  const boqLineByRequestLine = new Map<string, string>()
+  const qtyByRequestLine = new Map<string, number>()
+  const unlinked: BoqUnlinkedRequestLine[] = []
+  for (const r of requests) {
+    if (!LIVE_REQUEST_STATUSES.includes(r.status)) continue
+    for (const line of r.lines) {
+      if (line.boqLineId) {
+        boqLineByRequestLine.set(line.id, line.boqLineId)
+        qtyByRequestLine.set(line.id, line.qty)
+      } else {
+        unlinked.push({ requestId: r.id, requestCode: r.requestCode, materialName: line.materialName, unit: line.unit, qty: line.qty })
+      }
+    }
+  }
+
+  const rows: BoqProgressRow[] = []
+  for (const boq of boqs) {
+    for (const bl of boq.lines) {
+      // The request lines THIS BOQ line spawned, with their downstream sums.
+      let requested = 0
+      let ordered = 0
+      let delivered = 0
+      let consumed = 0
+      for (const [requestLineId, boqLineId] of boqLineByRequestLine) {
+        if (boqLineId !== bl.id) continue
+        requested += qtyByRequestLine.get(requestLineId) ?? 0
+        ordered += orderedByRequestLine.get(requestLineId) ?? 0
+        consumed += consumedByRequestLine.get(requestLineId) ?? 0
+        for (const orderLineId of orderLinesByRequestLine.get(requestLineId) ?? []) {
+          delivered += deliveredByOrderLine.get(orderLineId) ?? 0
+        }
+      }
+      rows.push({
+        boqId: boq.id,
+        boqLineId: bl.id,
+        materialName: bl.materialName,
+        unit: bl.unit,
+        estimated: r2(bl.qty),
+        requested: r2(requested),
+        ordered: r2(ordered),
+        delivered: r2(delivered),
+        consumed: r2(consumed),
+        remaining: r2(bl.qty - consumed),
+      })
+    }
+  }
+
+  return { rows, unlinked }
 }
 
 // ---------------- price alert (read-only, Finder §17 / §20) ----------------

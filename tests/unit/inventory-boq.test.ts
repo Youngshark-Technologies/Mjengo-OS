@@ -17,9 +17,11 @@
  *  · deleteBoqLine — line resolved through the BOQ's project (scoping);
  *  · approveBoq — approve-once refusal (`BOQ already approved`);
  *  · boqToRequest — full-vs-selected lineIds, `MR-<1000 + count + 1>` code
- *    sequence per project, draft status, notes-only lineage
- *    (`From BOQ "<name>" v<version>`), and request lines carrying ONLY
- *    material/unit/qty (no price, category or note crosses over);
+ *    sequence per project, draft status, the notes echo
+ *    (`From BOQ "<name>" v<version>`), and #203 STRUCTURAL lineage: every
+ *    request line carries `boqLineId` naming the exact BoqLine it was
+ *    generated from (still material/unit/qty only otherwise — no price,
+ *    category or note crosses over);
  *  · saveSupplier / unsaveSupplier — shortlist upsert/remove round-trip.
  *
  * Mirrors tests/unit/inventory-atomicity.test.ts (issue's own idiom):
@@ -558,7 +560,7 @@ describe('approveBoq — approve once, refuse forever after', () => {
 
 // --------------------------------------------------------------- boqToRequest
 
-describe('boqToRequest — line selection, MR- sequence, notes-only lineage', () => {
+describe('boqToRequest — line selection, MR- sequence, structural lineage (#203)', () => {
   function seedTwoLineBoq(): string {
     return seedBoq(P, { name: 'Revised plan', version: 2, createdAt: T(1) }, [
       { materialName: 'Cement', unit: 'bag', qty: 120, estUnitPrice: 65000n, category: 'structural', note: 'OPC 42.5' },
@@ -578,17 +580,47 @@ describe('boqToRequest — line selection, MR- sequence, notes-only lineage', ()
     expect(request.status).toBe('draft')
     expect(request.requestedByRole).toBe('contractor') // default
     expect(request.requestedByName).toBe('Site Manager') // default
-    // Notes-only lineage: the request's notes name the source BOQ + version.
+    // The notes ECHO the source BOQ + version (the human-readable lineage;
+    // the structural one is boqLineId below — #203).
     expect(request.notes).toBe('From BOQ "Revised plan" v2')
 
-    // Request lines carry ONLY materialName/unit/qty — no price, category or
-    // note crosses over (MaterialRequestLine has no such columns).
+    // Request lines carry materialName/unit/qty + the #203 boqLineId stamp —
+    // no price, category or note crosses over (MaterialRequestLine has no
+    // such columns).
     const lines = [...state.requestLines.values()].filter((l) => l.requestId === r.id)
     expect(lines).toHaveLength(2)
     for (const l of lines) {
-      expect(Object.keys(l).sort()).toEqual(['id', 'materialName', 'qty', 'requestId', 'unit'])
+      expect(Object.keys(l).sort()).toEqual(['boqLineId', 'id', 'materialName', 'qty', 'requestId', 'unit'])
     }
     expect(lines.find((l) => l.materialName === 'Cement')!.qty).toBe(120)
+  })
+
+  it('#203: stamps boqLineId on EVERY generated line — the exact BoqLine each came from', async () => {
+    const boqId = seedTwoLineBoq()
+    const cementId = [...state.boqLines.values()].find((l) => l.boqId === boqId && l.materialName === 'Cement')!.id as string
+    const ballastId = [...state.boqLines.values()].find((l) => l.boqId === boqId && l.materialName === 'Ballast')!.id as string
+
+    const r = await boqToRequest(P, { id: boqId })
+    const lines = [...state.requestLines.values()].filter((l) => l.requestId === r.id)
+    expect(lines.find((l) => l.materialName === 'Cement')!.boqLineId).toBe(cementId)
+    expect(lines.find((l) => l.materialName === 'Ballast')!.boqLineId).toBe(ballastId)
+
+    // SELECTED lineIds: only the chosen line crosses, stamped with ITS id —
+    // the other BOQ line's id never leaks onto it.
+    const selected = await boqToRequest(P, { id: boqId, lineIds: [cementId] })
+    const selectedLines = [...state.requestLines.values()].filter((l) => l.requestId === selected.id)
+    expect(selectedLines).toHaveLength(1)
+    expect(selectedLines[0].boqLineId).toBe(cementId)
+
+    // Another BOQ's line id is never stamped onto a request line of THIS
+    // conversion (each request line points into its own BOQ only).
+    const otherBoq = seedBoq(P, { name: 'Other plan', version: 3, createdAt: T(4) }, [
+      { materialName: 'Sand', unit: 'tonne', qty: 7 },
+    ])
+    const third = await boqToRequest(P, { id: otherBoq })
+    const thirdLines = [...state.requestLines.values()].filter((l) => l.requestId === third.id)
+    expect(thirdLines[0].boqLineId).not.toBe(cementId)
+    expect(thirdLines[0].boqLineId).toBe([...state.boqLines.values()].find((l) => l.boqId === otherBoq)!.id)
   })
 
   it('an explicit requester is honored; the MR- code advances with THIS project’s count only', async () => {

@@ -884,6 +884,11 @@ export const enDict = {
   'mat.store.label.reason': 'Reason',
   'mat.store.lineOption': '{name} — {location} (closing {qty} {unit})',
   'mat.store.selectedLine': '{name} @ {location} — closing {qty} {unit}',
+  // #203 — structured consumption attribution (source request line pick)
+  'mat.store.label.requestLine': 'Source request line (optional)',
+  'mat.store.requestLineNone': 'No source line (unattributed)',
+  'mat.store.requestLineOption': '{code} — {name} ({qty} {unit})',
+  'mat.store.requestLineHint': 'Attributing the draw to its source request line traces consumption back to the BOQ (the BOQ vs actual view).',
 
   // stock reconciliation (issue #194) — count → variance → count-linked
   // adjustment, on the Site Store card
@@ -3121,6 +3126,20 @@ export const enDict = {
   'finder.boq.col.qty': 'Qty',
   'finder.boq.col.estUnit': 'Est. unit',
   'finder.boq.col.estTotal': 'Est. total',
+  // #203 — BOQ vs actual lineage view (finder.boq.progress.*)
+  'finder.boq.progress.caption': 'BOQ vs actual for {name} — traced by line lineage',
+  'finder.boq.progress.col.material': 'Material',
+  'finder.boq.progress.col.estimated': 'Estimated',
+  'finder.boq.progress.col.requested': 'Requested',
+  'finder.boq.progress.col.ordered': 'Ordered',
+  'finder.boq.progress.col.delivered': 'Delivered',
+  'finder.boq.progress.col.consumed': 'Consumed',
+  'finder.boq.progress.col.remaining': 'Remaining',
+  'finder.boq.progress.overrun': 'Overrun',
+  'finder.boq.progress.desc': 'Traced through the request → PO → delivery links and attributed consumption — not name matching. Remaining = estimated − consumed; a negative value is an overrun of the signed-off estimate.',
+  'finder.boq.progress.unlinkedTitle': 'Request lines without BOQ lineage ({count})',
+  'finder.boq.progress.unlinkedMore': '+{count} more',
+  'finder.boq.progress.unlinkedDesc': 'Legacy or manually created lines — covered by the BOQ-lite table below, not guessed onto BOQ lines by name.',
   'finder.boq.createTitle': 'New BOQ',
   'finder.boq.createDesc': 'Bill of quantities with estimated quantities and prices (spec §28). Lines convert into a material request once the BOQ is approved.',
   'finder.boq.nameLabel': 'BOQ name',

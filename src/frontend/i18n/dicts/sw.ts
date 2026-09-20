@@ -887,6 +887,11 @@ export const swDict = {
   'mat.store.label.reason': 'Sababu',
   'mat.store.lineOption': '{name} — {location} (kilichobaki {qty} {unit})',
   'mat.store.selectedLine': '{name} @ {location} — kilichobaki {qty} {unit}',
+  // #203 — uhusiani wa matumizi (uchaguzi wa mstari wa ombi wa chanzo)
+  'mat.store.label.requestLine': 'Mstari wa ombi la chanzo (si lazima)',
+  'mat.store.requestLineNone': 'Hakuna mstari wa chanzo (bila uhusiano)',
+  'mat.store.requestLineOption': '{code} — {name} ({qty} {unit})',
+  'mat.store.requestLineHint': 'Kuweka uhusiani wa matumizi na mstari wake wa ombi hurudisha tumizi hadi BOQ (mtazamo wa BOQ dhidi ya halisi).',
 
   // stock reconciliation (issue #194) — count → variance → count-linked
   // adjustment, on the Site Store card
@@ -3124,6 +3129,20 @@ export const swDict = {
   'finder.boq.col.qty': 'Idadi',
   'finder.boq.col.estUnit': 'Makadirio/kipimo',
   'finder.boq.col.estTotal': 'Makadirio ya jumla',
+  // #203 — mtazamo wa BOQ dhidi ya halisi (finder.boq.progress.*)
+  'finder.boq.progress.caption': 'BOQ dhidi ya halisi kwa {name} — inafuatwa kwa uhusiani wa mistari',
+  'finder.boq.progress.col.material': 'Kipengele',
+  'finder.boq.progress.col.estimated': 'Makadirio',
+  'finder.boq.progress.col.requested': 'Iliombwa',
+  'finder.boq.progress.col.ordered': 'Imeagizwa',
+  'finder.boq.progress.col.delivered': 'Imefika',
+  'finder.boq.progress.col.consumed': 'Imetumika',
+  'finder.boq.progress.col.remaining': 'Imebaki',
+  'finder.boq.progress.overrun': 'Kupita kiasi',
+  'finder.boq.progress.desc': 'Inafuatwa kwa viungo vya ombi → agizo → utoaji na tumizi yenye uhusiani — si kwa kulinganisha majina. Kilichobaki = makadirio − yaliyotumika; hasi ni kupita kiasi kwa makadirio yaliyoidhinishwa.',
+  'finder.boq.progress.unlinkedTitle': 'Mistari ya maombi bila uhusiani wa BOQ ({count})',
+  'finder.boq.progress.unlinkedMore': '+{count} zaidi',
+  'finder.boq.progress.unlinkedDesc': 'Mistari ya zamani au iliyoandikwa kwa mkono — inashughulikiwa na jedi la BOQ-lite hapa chini, haijatabiriwa kwa majina.',
   'finder.boq.createTitle': 'BOQ mpya',
   'finder.boq.createDesc': 'Jedi la vipimo lenye idadi na bei makadirio (spec §28). Mistari hugeuka kuwa ombi la vifaa BOQ ikisha idhinishwa.',
   'finder.boq.nameLabel': 'Jina la BOQ',

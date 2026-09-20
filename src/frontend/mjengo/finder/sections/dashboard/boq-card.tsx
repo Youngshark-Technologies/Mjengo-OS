@@ -7,6 +7,14 @@
 // toast shows the requestCode + points to the Requests section). The DERIVED
 // per-material required-vs-purchased view ("BOQ-lite") stays below it in the
 // dashboard — both views are useful and labeled separately.
+//
+// #203: under each BOQ's estimates table, the LINEAGE "BOQ vs actual" table
+// (progress prop — dashboard-section computes it with the pure
+// supply/insights boqProgress): estimated / requested / ordered / delivered /
+// consumed / remaining per BOQ line, walked over the FK stamps
+// (boqLineId/requestLineId) — never name matching. It renders only when a
+// line of THIS BOQ has actual activity; unlinked (legacy/name-only) request
+// lines are listed separately at the bottom with the BOQ-lite honesty.
 
 import { useState } from 'react'
 import { useMjengo } from '@/frontend/hooks/use-mjengo'
@@ -19,8 +27,9 @@ import { Label } from '@/frontend/ui/label'
 import { Check, ClipboardList, FileStack, Loader2, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useT } from '@/frontend/i18n/provider'
-import { formatKes } from '../requests/bits'
+import { fmtQty, formatKes } from '../requests/bits'
 import type { BoqRow } from '@/backend/modules/inventory/types'
+import type { BoqProgressResult, BoqProgressRow } from '@/backend/modules/supply/types'
 
 interface DraftLine {
   key: number
@@ -48,7 +57,26 @@ function BoqStatusBadge({ status }: { status: string }) {
   return <Badge className="border-0 gap-1 bg-amber-100 text-amber-900 hover:bg-amber-100">{t('finder.boq.status.draft')}</Badge>
 }
 
-export function BoqCard({ canManage }: { canManage: boolean }) {
+/**
+ * #203: one lineage row's remaining cell — SIGNED (negative = overrun of the
+ * estimate-of-record), with the overrun surfaced as a badge instead of being
+ * floored away (the BOQ-lite display floor is deliberately NOT applied here:
+ * quantity-overrun visibility is the point of the lineage view).
+ */
+function ProgressRemaining({ row }: { row: BoqProgressRow }) {
+  const t = useT()
+  if (row.remaining < 0) {
+    return (
+      <span className="flex items-center justify-end gap-1.5 font-semibold tabular-nums text-orange-700">
+        {fmtQty(row.remaining)}
+        <Badge className="border-0 bg-orange-100 text-[9px] font-normal text-orange-800 hover:bg-orange-100">{t('finder.boq.progress.overrun')}</Badge>
+      </span>
+    )
+  }
+  return <span className="font-semibold tabular-nums text-stone-900">{fmtQty(row.remaining)}</span>
+}
+
+export function BoqCard({ canManage, progress }: { canManage: boolean; progress: BoqProgressResult }) {
   const { data, dispatch, online, outbox, actionBusy } = useMjengo()
   const t = useT()
   const [createOpen, setCreateOpen] = useState(false)
@@ -226,8 +254,72 @@ export function BoqCard({ canManage }: { canManage: boolean }) {
                     </table>
                   </div>
                 )}
+                {/* #203: the lineage BOQ-vs-actual table — per line, traced
+                    through the request/PO/delivery links (not names). Rendered
+                    only when this BOQ has actual downstream activity, so a
+                    fresh estimate list stays clean. */}
+                {(() => {
+                  const rows = progress.rows.filter((r) => r.boqId === boq.id)
+                  const active = rows.some((r) => r.requested > 0 || r.ordered > 0 || r.delivered > 0 || r.consumed > 0)
+                  if (!active) return null
+                  return (
+                    <div className="overflow-x-auto border-t border-stone-100">
+                      <table className="w-full min-w-[560px] text-xs">
+                        <caption className="sr-only">{t('finder.boq.progress.caption', { name: boq.name })}</caption>
+                        <thead>
+                          <tr className="bg-stone-50/70 text-left text-[10px] uppercase tracking-wide text-stone-400">
+                            <th scope="col" className="px-3 py-1.5 font-medium">{t('finder.boq.progress.col.material')}</th>
+                            <th scope="col" className="px-2 py-1.5 text-right font-medium">{t('finder.boq.progress.col.estimated')}</th>
+                            <th scope="col" className="px-2 py-1.5 text-right font-medium">{t('finder.boq.progress.col.requested')}</th>
+                            <th scope="col" className="px-2 py-1.5 text-right font-medium">{t('finder.boq.progress.col.ordered')}</th>
+                            <th scope="col" className="px-2 py-1.5 text-right font-medium">{t('finder.boq.progress.col.delivered')}</th>
+                            <th scope="col" className="px-2 py-1.5 text-right font-medium">{t('finder.boq.progress.col.consumed')}</th>
+                            <th scope="col" className="px-3 py-1.5 text-right font-medium">{t('finder.boq.progress.col.remaining')}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((row) => (
+                            <tr key={row.boqLineId} className="border-t border-stone-100">
+                              <td className="px-3 py-1.5 text-stone-700">
+                                {row.materialName} <span className="text-[10px] text-stone-400">{row.unit}</span>
+                              </td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-stone-700">{fmtQty(row.estimated)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-stone-700">{fmtQty(row.requested)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-stone-700">{fmtQty(row.ordered)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-stone-700">{fmtQty(row.delivered)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-stone-700">{fmtQty(row.consumed)}</td>
+                              <td className="px-3 py-1.5 text-right"><ProgressRemaining row={row} /></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="px-3 pb-2 pt-1 text-[10px] leading-snug text-stone-400">{t('finder.boq.progress.desc')}</p>
+                    </div>
+                  )
+                })()}
               </div>
             ))}
+          </div>
+        )}
+        {/* #203: live request lines with NO BOQ lineage (legacy or manually
+            created) — listed honestly instead of being name-matched onto BOQ
+            lines. The BOQ-lite table below stays their view. */}
+        {progress.unlinked.length > 0 && (
+          <div className="mt-3 rounded-lg border border-dashed border-stone-300 bg-stone-50/50 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-stone-400">
+              {t('finder.boq.progress.unlinkedTitle', { count: progress.unlinked.length })}
+            </p>
+            <ul className="mt-1 space-y-0.5">
+              {progress.unlinked.slice(0, 5).map((l) => (
+                <li key={`${l.requestId}:${l.materialName}`} className="text-[11px] text-stone-500">
+                  <span className="font-mono">{l.requestCode}</span> — {l.materialName} · {fmtQty(l.qty)} {l.unit}
+                </li>
+              ))}
+            </ul>
+            {progress.unlinked.length > 5 && (
+              <p className="mt-1 text-[10px] text-stone-400">{t('finder.boq.progress.unlinkedMore', { count: progress.unlinked.length - 5 })}</p>
+            )}
+            <p className="mt-1.5 text-[10px] leading-snug text-stone-400">{t('finder.boq.progress.unlinkedDesc')}</p>
           </div>
         )}
       </CardContent>

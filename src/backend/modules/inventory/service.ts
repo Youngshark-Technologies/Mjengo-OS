@@ -201,9 +201,13 @@ async function appendMovement(
   reference: string | null,
   note: string | null,
   recordedBy: string,
+  // #203: structured consumption attribution — set ONLY by consumeStock (the
+  // operator's source-request-line pick). Every other movement type leaves it
+  // null: receipts are attributed through the delivery chain, not the ledger.
+  requestLineId: string | null = null,
 ) {
   return tx.stockMovement.create({
-    data: { projectId, inventoryItemId, type, quantity, unitCost, reference, note, recordedBy },
+    data: { projectId, inventoryItemId, type, quantity, unitCost, reference, note, recordedBy, requestLineId },
   })
 }
 
@@ -257,13 +261,29 @@ export async function consumeStock(projectId: string, p: any): Promise<MovementR
   const result = await db.$transaction(async (tx) => {
     const qty = parseMovementQty('inventory.consume', p.qty)
     const item = await findItem(tx, projectId, String(p.inventoryItemId))
+    // #203: structured consumption attribution — the optional source request
+    // line this draw is booked against (the BOQ-vs-actual "consumed" column
+    // joins on it; the free-text `reference` stays for humans). Scope-guarded
+    // like findItem: the line must belong to a request in THIS project —
+    // unknown/foreign ids are refused with nothing persisted (guards inside
+    // the transaction, the file's DB-2 discipline). Absent/empty =
+    // unattributed consumption, the pre-#203 shape.
+    let requestLineId: string | null = null
+    const rawRequestLineId = p.requestLineId
+    if (rawRequestLineId !== undefined && rawRequestLineId !== null && rawRequestLineId !== '') {
+      const line = await tx.materialRequestLine.findFirst({
+        where: { id: String(rawRequestLineId), request: { projectId } },
+      })
+      if (!line) throw new Error('Request line not found in this project')
+      requestLineId = line.id
+    }
     // DB-2: project the closing balance from the movements that ALREADY exist
     // before touching the database — over-consumption must throw without
     // persisting a row (the old code appended first and only then checked).
     if (derivedClosingQty(item.movements) - qty < 0) {
       throw new Error('Cannot consume more than closing stock')
     }
-    const movement = await appendMovement(tx, projectId, item.id, 'consumed', qty, null, p.reference ?? null, p.note ?? null, p.recordedBy ?? 'Site Manager')
+    const movement = await appendMovement(tx, projectId, item.id, 'consumed', qty, null, p.reference ?? null, p.note ?? null, p.recordedBy ?? 'Site Manager', requestLineId)
     const closing = derivedClosingQty(item.movements.concat([movement]))
     return {
       inventoryItemId: item.id, materialName: item.materialName, unit: item.unit, movementId: movement.id, type: movement.type, quantity: movement.quantity, closingQty: closing,
@@ -697,6 +717,16 @@ export async function approveBoq(projectId: string, p: any) {
   return db.boq.update({ where: { id: boq.id }, data: { status: 'approved' } })
 }
 
+/**
+ * Generate a MaterialRequest from a BOQ's lines (spec §28 "generate material
+ * requirement"). #203: every created request line carries STRUCTURED lineage —
+ * `boqLineId` names the exact BoqLine it was generated from (one request line
+ * per selected BOQ line), so the BOQ-vs-actual view walks FKs instead of
+ * fuzzy-matching material names. The request's notes string (`From BOQ …`)
+ * stays as the human-readable echo, and the generated-request toast still
+ * finds the draft by it — legacy rows (boqLineId null) fall back to the
+ * BOQ-lite name-matching view, documented in ADR 0011.
+ */
 export async function boqToRequest(projectId: string, p: any) {
   const boq = await db.boq.findFirst({
     where: { id: String(p.id), projectId },
@@ -716,7 +746,9 @@ export async function boqToRequest(projectId: string, p: any) {
       notes: `From BOQ "${boq.name}" v${boq.version}`,
       status: 'draft',
       lines: {
-        create: lines.map((l) => ({ materialName: l.materialName, unit: l.unit, qty: l.qty })),
+        // #203: boqLineId is the lineage stamp — the request line's material
+        // name may be edited later without losing its BOQ attribution.
+        create: lines.map((l) => ({ materialName: l.materialName, unit: l.unit, qty: l.qty, boqLineId: l.id })),
       },
     },
   })

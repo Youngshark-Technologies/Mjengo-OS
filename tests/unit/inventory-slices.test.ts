@@ -122,6 +122,7 @@ interface SeedMovement {
   quantity: number
   unitCost?: bigint | null
   reference?: string | null
+  requestLineId?: string | null
   note?: string | null
   recordedBy?: string
   at: Date
@@ -154,6 +155,8 @@ function seedItem(
       // Integer CENTS in the column (#282 normalized) — KSh 750 → 75,000n.
       unitCost: m.unitCost === undefined ? null : m.unitCost,
       reference: m.reference ?? null,
+      // #203: consumption attribution — null = unattributed/legacy.
+      requestLineId: m.requestLineId ?? null,
       note: m.note ?? null,
       recordedBy: m.recordedBy ?? 'Site Manager',
       createdAt: m.at,
@@ -320,6 +323,26 @@ describe('loadInventorySlice — newest-first movement flattening', () => {
     expect(oldest.note).toBe('initial')
     expect(oldest.recordedBy).toBe('Otieno')
     expect(new Date(oldest.createdAt).toISOString()).toBe(oldest.createdAt) // ISO round-trips
+  })
+
+  it('#203: serves the structured consumption attribution (requestLineId) on the movement DTO', async () => {
+    seedItem(P, { materialName: 'Cement' }, [
+      { type: 'opening', quantity: 100, at: T(1) },
+      { type: 'consumed', quantity: 30, at: T(2), requestLineId: 'mrl_cement' },
+      { type: 'consumed', quantity: 10, at: T(3) }, // unattributed — the legacy shape
+      { type: 'received', quantity: 5, at: T(4), requestLineId: 'mrl_cement' }, // non-consume types carry it through unmapped
+    ])
+    const slice = await loadInventorySlice(P)
+    // The DTO is the BOQ-vs-actual view's contract: the consumed column
+    // joins on requestLineId, so the field must ride the payload exactly as
+    // stored (attributed row keeps it; legacy row reads null — never
+    // undefined, which would break { requestLineId: null } consumers).
+    const attributed = slice.movements.find((m) => m.type === 'consumed' && m.quantity === 30)!
+    expect(attributed.requestLineId).toBe('mrl_cement')
+    const legacy = slice.movements.find((m) => m.type === 'consumed' && m.quantity === 10)!
+    expect(legacy.requestLineId).toBeNull()
+    const passthrough = slice.movements.find((m) => m.type === 'received')!
+    expect(passthrough.requestLineId).toBe('mrl_cement')
   })
 })
 

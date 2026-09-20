@@ -80,6 +80,10 @@ export async function loadInventorySlice(projectId: string): Promise<InventorySl
       quantity: m.quantity,
       unitCost: m.unitCost === null ? null : centsToKes(m.unitCost),
       reference: m.reference,
+      // #203: consumption attribution rides the payload — the BOQ-vs-actual
+      // "consumed" column joins on it client-side (supply/insights.ts
+      // boqProgress), same pure-shared-math pattern as the rest of the slice.
+      requestLineId: m.requestLineId,
       note: m.note,
       recordedBy: m.recordedBy,
       createdAt: m.createdAt.toISOString(),

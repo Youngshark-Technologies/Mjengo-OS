@@ -406,7 +406,7 @@ export const ACTION_PAYLOAD_SCHEMAS = {
   // ---- inventory (actions/inventory.ts) — documented ----
   'inventory.open': documentedPayload, // { materialName, unit, qty, unitCost?, location?, supplierId?, reorderLevel? }
   'inventory.receive': documentedPayload, // { inventoryItemId | materialName+unit+location, qty, unitCost?, reference?, note?, reorderLevel? }
-  'inventory.consume': documentedPayload, // { inventoryItemId, qty, reference?, note? }
+  'inventory.consume': documentedPayload, // { inventoryItemId, qty, reference?, note?, requestLineId? } — requestLineId (#203): optional structured consumption attribution (source request line)
   'inventory.transfer': documentedPayload, // { inventoryItemId, qty, toLocation, note? }
   'inventory.return': documentedPayload, // { inventoryItemId, qty, note? }
   'inventory.damage': documentedPayload, // { inventoryItemId, qty, damageNote }

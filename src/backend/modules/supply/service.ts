@@ -838,8 +838,12 @@ export async function createOrder(projectId: string, payload: Record<string, unk
     }
   }
 
-  // Price every request line: supplier catalog first, quote price fallback
-  const lineData: Array<{ name: string; unit: string; qty: number; unitPrice: Cents; lineTotal: Cents }> = []
+  // Price every request line: supplier catalog first, quote price fallback.
+  // #203: lineData carries the request line's id — the PO line keeps STRUCTURED
+  // lineage back to the request line (one PO line per request line by
+  // construction), so the BOQ-vs-actual "ordered/delivered" columns walk FKs
+  // instead of name matching.
+  const lineData: Array<{ name: string; unit: string; qty: number; unitPrice: Cents; lineTotal: Cents; requestLineId: string }> = []
   for (const line of request.lines) {
     let unitPrice: Cents | null = null
     const exact = supplier.catalogItems.find((c) => materialKey(c.name) === materialKey(line.materialName))
@@ -855,7 +859,7 @@ export async function createOrder(projectId: string, payload: Record<string, unk
       )
     }
     const lineTotal = mulQtyCents(line.qty, unitPrice)
-    lineData.push({ name: line.materialName, unit: line.unit, qty: line.qty, unitPrice, lineTotal })
+    lineData.push({ name: line.materialName, unit: line.unit, qty: line.qty, unitPrice, lineTotal, requestLineId: line.id })
   }
 
   const subtotal = sumCents(lineData.map((l) => l.lineTotal))

@@ -16,7 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import {
   AlertTriangle, Boxes, ClipboardList, Hourglass, Landmark, LayoutDashboard, Lock, PackageSearch, ShoppingCart, Truck, Warehouse,
 } from 'lucide-react'
-import { boqRows, procurementTotals } from '@/backend/modules/supply/insights'
+import { boqProgress, boqRows, procurementTotals } from '@/backend/modules/supply/insights'
 import { useT } from '@/frontend/i18n/provider'
 import { useFinderLink } from './requests/finder-link'
 import { fmtQty, formatKes } from './requests/bits'
@@ -76,6 +76,30 @@ export function DashboardSection() {
       })),
     })),
   ), [requests, orders])
+
+  // #203: the LINEAGE BOQ-vs-actual view — per BOQ line, estimated/requested/
+  // ordered/delivered/consumed/remaining walked over the FK stamps
+  // (boqLineId / requestLineId), never over material names. The movements
+  // input is the inventory slice's flattened movement log (only
+  // type/quantity/requestLineId are read).
+  const progress = useMemo(() => boqProgress(
+    data?.boq.boqs ?? [],
+    requests.map((r) => ({
+      id: r.id,
+      requestCode: r.requestCode,
+      status: r.status,
+      lines: r.lines.map((l) => ({ id: l.id, boqLineId: l.boqLineId, materialName: l.materialName, unit: l.unit, qty: l.qty })),
+    })),
+    orders.map((o) => ({
+      status: o.status,
+      lines: o.lines.map((l) => ({ id: l.id, requestLineId: l.requestLineId, qty: l.qty })),
+      deliveries: o.deliveries.map((d) => ({
+        status: d.status,
+        lines: d.lines.map((dl) => ({ orderLineId: dl.orderLineId, qtyReceived: dl.qtyReceived })),
+      })),
+    })),
+    data?.inventory.movements ?? [],
+  ), [data, requests, orders])
 
   if (!data) return null
 
@@ -166,7 +190,7 @@ export function DashboardSection() {
 
           {/* BOQ entities (spec §28) — versioned estimates, approve → generate MR.
               The DERIVED required-vs-purchased view ("BOQ-lite") stays below. */}
-          <BoqCard canManage={isSiteTeam} />
+          <BoqCard canManage={isSiteTeam} progress={progress} />
 
           {/* BOQ-lite table */}
           <div className="space-y-2">
