@@ -516,8 +516,8 @@ describe('#123: posture banner key family exists in both dictionaries', () => {
 // shell cards, and the report/CSV artifacts. Same conventions as the blocks
 // above (literal-key sampling, enum-family pinning, raw-toast bans) — plus
 // the regression guard the issue itself asks for: every file the 2026-09-16
-// baseline listed as EN-only must now import useT. The USSD tab body is
-// deliberately absent (FE-9 / #140 owns it).
+// baseline listed as EN-only must now import useT. The USSD tab body was
+// deliberately absent until #140 closed FE-9 (see the #140 blocks below).
 // ---------------------------------------------------------------------------
 
 describe('#125: every baseline EN-only surface now imports useT (regression guard)', () => {
@@ -565,6 +565,9 @@ describe('#125: every baseline EN-only surface now imports useT (regression guar
     'src/frontend/mjengo/photo-comments.tsx',
     'src/frontend/mjengo/site-map-card.tsx',
     'src/frontend/mjengo/timelapse-card.tsx',
+    // #140 closed FE-9: the USSD tab body (LCD script, keypad aria-labels,
+    // explainer, demo-PIN list) — pinned by the #140 blocks below.
+    'src/frontend/mjengo/ussd-tab.tsx',
   ] as const
 
   it.each(BASELINE_EN_ONLY_FILES)('%s wires useT()', (file) => {
@@ -572,7 +575,7 @@ describe('#125: every baseline EN-only surface now imports useT (regression guar
   })
 
   it('the guard list itself stays wired (no silently dropped entries)', () => {
-    expect(BASELINE_EN_ONLY_FILES.length).toBeGreaterThanOrEqual(32)
+    expect(BASELINE_EN_ONLY_FILES.length).toBeGreaterThanOrEqual(34)
   })
 })
 
@@ -756,6 +759,135 @@ describe('#125: report + CSV artifacts honor the active locale', () => {
     expect(translate(swDict, 'report.daily.movements')).toContain('SITE STORE') // stored proper noun stays
     expect(translate(swDict, 'report.daily.crewLine', { today: 4, expected: 5, wages: 3000, alerts: 1 }))
       .toBe('Wafanyakazi 4/5 leo · mishahara 3000 KES · tahadhari 1 hazijakubaliwa')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #140 (audit FE-9): the USSD simulation body is bilingual. The tab shipped
+// #107 with chrome-only translation (5 keys); this block pins the completion:
+// every literal t() key the tab calls resolves in both dictionaries, the
+// lcd/input/keypad/net/explainer/pin/toast/dispatch families exist EN+SW,
+// the raw English that used to be hardcoded (BOOT_LINES, menu script,
+// toasts, explainer) is gone, and the dial syntax (*384#, menu digit
+// prefixes, ITU E.161 keypad letters) stays data — assembled around the
+// translated copy, never inside it.
+// ---------------------------------------------------------------------------
+
+describe('#140: USSD tab body — every literal t() key resolves in both dictionaries', () => {
+  const literalKeysIn = (src: string) => [
+    ...src.matchAll(/\bt\(\s*'([a-zA-Z0-9_.]+)'/g),
+    ...src.matchAll(/\bt\(\s*"([a-zA-Z0-9_.]+)"/g),
+  ].map((m) => m[1])
+
+  it('the tab samples enough keys (wiring guard — the chrome-only regression would fail this)', () => {
+    const keys = new Set(literalKeysIn(readSrc('src/frontend/mjengo/ussd-tab.tsx')))
+    expect(keys.size, 'ussd-tab sampled too few keys').toBeGreaterThan(70)
+  })
+
+  it('every sampled key exists in both dictionaries', () => {
+    for (const key of new Set(literalKeysIn(readSrc('src/frontend/mjengo/ussd-tab.tsx')))) {
+      expect(enKeys.has(key), `en.ts is missing "${key}" (used by ussd-tab)`).toBe(true)
+      expect(swKeys.has(key), `sw.ts is missing "${key}" (used by ussd-tab)`).toBe(true)
+    }
+  })
+
+  it('no raw English toast literals on the USSD path', () => {
+    const RAW_TOAST = /toast\.(?:success|error|info|warning)\(\s*(?:['"]|`(?!\$\{t\())/g
+    const offending = [...readSrc('src/frontend/mjengo/ussd-tab.tsx').matchAll(RAW_TOAST)]
+    expect(offending, 'ussd-tab still fires raw-literal toasts').toEqual([])
+  })
+})
+
+describe('#140: the ussd.* body families exist in both dictionaries', () => {
+  const FAMILIES: Record<string, string[]> = {
+    lcd: [
+      'ussd.lcd.bootReady', 'ussd.lcd.bootDial', 'ussd.lcd.dialing', 'ussd.lcd.welcome',
+      'ussd.lcd.muster', 'ussd.lcd.mark', 'ussd.lcd.exit', 'ussd.lcd.invalid',
+      'ussd.lcd.callEnded', 'ussd.lcd.name', 'ussd.lcd.role', 'ussd.lcd.alreadyToday',
+      'ussd.lcd.pinPrompt', 'ussd.lcd.tooMany', 'ussd.lcd.endedKwaheri', 'ussd.lcd.pinBadA',
+      'ussd.lcd.pinBadB', 'ussd.lcd.readonlyA', 'ussd.lcd.readonlyB', 'ussd.lcd.readonlyC',
+      'ussd.lcd.recording', 'ussd.lcd.recorded', 'ussd.lcd.asante', 'ussd.lcd.queuedA',
+      'ussd.lcd.queuedB', 'ussd.lcd.sessionEnded', 'ussd.lcd.failA', 'ussd.lcd.failB',
+      'ussd.lcd.bye', 'ussd.lcd.confirm', 'ussd.lcd.yes', 'ussd.lcd.no', 'ussd.lcd.cancelled',
+      'ussd.lcd.screenAria',
+    ],
+    input: [
+      'ussd.input.aria', 'ussd.input.calling', 'ussd.input.pin', 'ussd.input.reply',
+      'ussd.input.sending', 'ussd.input.ended', 'ussd.input.dialAgain',
+    ],
+    keypad: [
+      'ussd.keypad.key', 'ussd.keypad.keyWithSub', 'ussd.keypad.delete', 'ussd.keypad.call',
+      'ussd.keypad.callAria', 'ussd.keypad.callNew', 'ussd.keypad.end',
+    ],
+    net: [
+      'ussd.net.srOnline', 'ussd.net.srOffline', 'ussd.net.onlineNote',
+      'ussd.net.offlineNote', 'ussd.net.offlinePending',
+    ],
+    explainer: [
+      'ussd.explainer.title', 'ussd.explainer.anyPhone', 'ussd.explainer.anyPhoneRest',
+      'ussd.explainer.pin', 'ussd.explainer.muster', 'ussd.explainer.offline',
+    ],
+    pin: [
+      'ussd.pin.title', 'ussd.pin.empty', 'ussd.pin.kiosk', 'ussd.pin.phone',
+      'ussd.pin.more', 'ussd.pin.note',
+    ],
+    honesty: ['ussd.honesty'],
+    toast: ['ussd.toast.checkedIn', 'ussd.toast.absent', 'ussd.toast.queued'],
+    dispatch: ['ussd.dispatch.checkIn', 'ussd.dispatch.absent'],
+  }
+
+  it('every family key resolves in both dictionaries', () => {
+    for (const keys of Object.values(FAMILIES)) {
+      for (const key of keys) {
+        expect(enKeys.has(key), `en.ts is missing "${key}"`).toBe(true)
+        expect(swKeys.has(key), `sw.ts is missing "${key}"`).toBe(true)
+      }
+    }
+  })
+
+  it('spot Kiswahili values render through the real translate()', () => {
+    expect(translate(enDict, 'ussd.lcd.bootReady')).toBe('MjengoOS sim ready.')
+    expect(translate(swDict, 'ussd.lcd.bootReady')).toBe('Uigaji wa MjengoOS uko tayari.')
+    expect(translate(swDict, 'ussd.lcd.bootDial')).toBe('Bonyeza *384# kisha Piga.')
+    expect(translate(swDict, 'ussd.lcd.mark')).toBe('Rekodi mahudhurio')
+    expect(translate(swDict, 'ussd.lcd.name', { name: 'Otieno' })).toBe('Jina: Otieno')
+    expect(translate(swDict, 'ussd.lcd.alreadyToday', { status: 'Yupo' })).toBe('Tayari leo: Yupo')
+    expect(translate(swDict, 'ussd.lcd.pinBadB', { n: 2 })).toBe('jaribu tena. (majaribio 2 yamebaki)')
+    expect(translate(swDict, 'ussd.lcd.confirm', { status: 'YUPO' })).toBe('Rekodi kama YUPO?')
+    expect(translate(swDict, 'ussd.keypad.end')).toBe('Kata simu')
+    expect(translate(swDict, 'ussd.keypad.keyWithSub', { main: '2', sub: 'ABC' })).toBe('Kitufe 2, ABC')
+    expect(translate(swDict, 'ussd.explainer.title')).toBe('Mstari halisi unafanyaje kazi')
+    expect(translate(swDict, 'ussd.pin.note')).toContain('PIN ya kioski')
+    expect(translate(swDict, 'ussd.net.offlinePending', { n: 3 }))
+      .toBe('Mtandao wa sim hauko mtandaoni (umezimwa kwenye hifadhi) — rekodi zinasubiri kwenye kifaa (3 zinazosubiri).')
+    expect(translate(swDict, 'ussd.toast.checkedIn', { name: 'Otieno' })).toBe('*384# — Otieno ameingia kazi')
+  })
+
+  it('the LCD reuses the fundis status labels (worker menu + already-today line)', () => {
+    for (const s of ['present', 'half_day', 'absent', 'excused']) {
+      expect(enKeys.has(`fundis.status.${s}`), `en.ts is missing fundis.status.${s}`).toBe(true)
+      expect(swKeys.has(`fundis.status.${s}`), `sw.ts is missing fundis.status.${s}`).toBe(true)
+    }
+    expect(readSrc('src/frontend/mjengo/ussd-tab.tsx')).toContain('`fundis.status.${')
+  })
+
+  it('dial syntax stays data: *384#, menu digits and the stored recordedBy never live in the dicts', () => {
+    const src = readSrc('src/frontend/mjengo/ussd-tab.tsx')
+    // menu digit prefixes are assembled around the translated option
+    expect(src).toContain("`1. ${t('ussd.lcd.mark')}`")
+    expect(src).toContain("`2. ${t('ussd.lcd.exit')}`")
+    expect(src).toContain("`1. ${t('ussd.lcd.yes')}`")
+    // the raw English that shipped pre-#140 is gone
+    expect(src).not.toContain('BOOT_LINES')
+    expect(src).not.toContain("'Welcome to MjengoOS'")
+    expect(src).not.toContain("'1. Mark attendance'")
+    expect(src).not.toContain("'How the real line works'")
+    expect(src).not.toContain('Demo PINs')
+    // the attendance record's stored recordedBy stays locale-independent data
+    expect(src).toContain("recordedBy: 'USSD *384#'")
+    // the real dispatch behavior is untouched (the #140 hard line)
+    expect(src).toContain("'attendance.checkin'")
+    expect(src).toContain("'attendance.record'")
   })
 })
 
