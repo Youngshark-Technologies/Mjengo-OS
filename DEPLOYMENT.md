@@ -604,6 +604,148 @@ succeeds — it just says so), and it stays **silent** for the integrated
 zero-override default and for local dev, so `docker compose up` builds
 without noise. The decision is pinned by `tests/unit/website-siteurl-gate.test.ts`.
 
+### 6.8 Staging stack — `docker-compose.staging.yml` (issue #208)
+
+The deployment ladder used to be two rungs — local dev (`bun run dev`) and
+the single production node — so migrations, image rebuilds, seed chains and
+restore drills had no rehearsal space that resembled prod.
+`docker-compose.staging.yml` is the middle rung: **the same three services
+(app, website, jobs-tick) on the same production image, with the same
+migrate-on-boot CMD and healthchecks** — but its own compose project
+(`name: mjengo-staging` → own network + volume prefix), container names
+(`mjengo-staging-*`), volumes (`staging-*`), host ports (**3100** for the
+app, 3101 for the website's own origin) and its own env file
+(`.env.staging`), so it can coexist with a prod stack on one host or stand
+alone on a rehearsal box.
+
+**Honest scope:** staging ≈ prod shape on ONE box. It is not HA, not a
+second region, and not the Supabase target state (#96 — closed — is that
+design). Anything single-box SQLite cannot survive (host loss), staging
+cannot either; what it buys is a place where the *mechanical* prod path
+fails first.
+
+**When to deploy to staging:**
+
+- **Before every promote to prod** — rehearse the exact §8 update path
+  (`git pull && docker compose up -d --build`): migrations apply on boot
+  here first, where a bad migration bricks staging, not prod (the bug
+  class of issue #73).
+- **Before restore drills** — §7.2.2's runbook wants a rehearsal target
+  that is not prod data (#199).
+- **When trying a seed chain or a demo-data refresh** (below).
+- **When validating compose/env changes** (new services, log caps,
+  healthchecks — the `tests/unit/compose-log-rotation.test.ts` fence
+  auto-discovers the staging file and pins the §6.3 log caps on its
+  services too).
+
+**Boot:**
+
+```bash
+cp .env.staging.example .env.staging
+# edit .env.staging — REQUIRED / recommended:
+#   NEXTAUTH_SECRET=$(openssl rand -hex 32)   # a NEW one — never prod's
+#   NEXTAUTH_URL=http://<where-your-team-browses-staging>:3100
+#   JOBS_RUN_TOKEN=$(openssl rand -hex 32)    # optional, also never prod's
+docker compose --env-file .env.staging -f docker-compose.staging.yml up -d --build
+```
+
+The `--env-file` flag is load-bearing, twice: the fail-closed
+`${NEXTAUTH_SECRET:?}` **interpolation** and the app service's `env_file`
+both read `.env.staging`. Without the flag, compose falls back to the
+project directory's `.env` — if prod's `.env` sits there, staging silently
+boots on **prod's** secret (and prod's `JOBS_RUN_TOKEN`). Treat the full
+command line as the one true incantation; the compose file's header says
+the same.
+
+**Why staging runs `NODE_ENV=production` (the SEC-2 sharp edge).** In a
+non-production runtime a missing/short `NEXTAUTH_SECRET` degrades to the
+publicly-derivable dev fallback secret — forgeable admin sessions (issue
+#168, audit SEC-2). A naively-created staging node running "not quite prod"
+is exactly where that hole would live. The staging stack pins
+`NODE_ENV=production` (the image ENV plus an explicit re-assert in the
+compose file) so the hole **cannot exist there by construction**: the boot
+guard fails closed on a missing/short secret, `WEBHOOK_OPEN_POSTURE` is
+ignored (§3.1), the JSON log format is the production one (§10.1), and the
+seed guard below stands. A custom value like `NODE_ENV=staging` would also
+fail closed for the secret itself (`tests/unit/nextauth-fallback-secret.test.ts`
+pins that non-dev runtimes get no fallback candidates) — but it would drift
+from prod in every other `NODE_ENV`-keyed behavior, so staging deliberately
+ships the identical runtime posture, different data.
+
+**Seeding staging — an explicit step, never in a boot CMD (the §6.4
+invariant, kept).** Staging is the ONE environment where seeded demo data
+MAY live (prod never). The seed chain is still a deliberate operator step —
+no boot CMD, no compose service runs it — using §6.4's option-2 pattern
+(the runner image ships node, not bun, so bun is layered onto a derived
+image just for the seed):
+
+```bash
+# 1) one-off seeder image: the staging app image + bun + the seed scripts
+docker build -t mjengo-staging-seed -f- . <<'EOF'
+FROM mjengo-staging
+COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
+COPY --chown=node:node tsconfig.json ./
+COPY --chown=node:node prisma/seed.ts prisma/seed-all.ts prisma/seed-guard.ts ./prisma/
+COPY --chown=node:node prisma/seed-extras ./prisma/seed-extras
+COPY --chown=node:node src ./src
+EOF
+
+# 2) run the chain in a one-off container against the staging DB volume
+#    (verify the volume name with: docker volume ls | grep mjengo-staging).
+#    The image ENV is NODE_ENV=production, so the #126/#180 guard demands
+#    its explicit acknowledgment — deliberately: the image cannot tell
+#    staging data from prod data, so "seed by accident" stays a two-flag
+#    operation no matter which volume the command points at.
+docker run --rm \
+  -v mjengo-staging_staging-app-db:/app/db \
+  -e DATABASE_URL="file:/app/db/custom.db" \
+  -e I_HAVE_BACKED_UP_AND_WANT_TO_SEED_PRODUCTION=1 \
+  -e SEED_DEMO_ADMIN=1 \
+  mjengo-staging-seed \
+  bun prisma/seed-all.ts
+```
+
+**Demo-credentials posture.** The seeded accounts
+(`contractor@mjengo.os` / `mjengo2026` … — listed in README.md) have
+public passwords. On staging that is the point: the full role matrix is
+explorable, which is what staging is for. On prod it is never acceptable,
+and two layers keep it that way (§6.4): the guard refuses
+`NODE_ENV=production` without `I_HAVE_BACKED_UP_AND_WANT_TO_SEED_PRODUCTION=1`
+(and only ever against a local SQLite `file:` URL), and the `admin@mjengo.os`
+account additionally needs `SEED_DEMO_ADMIN=1`. Staging's convenience
+weakens neither — the same guard runs there, answered deliberately.
+
+**What to verify on staging (the checklist):**
+
+1. **Health** — `curl -fsS http://localhost:3100/api/health` → 200
+   `{"ok":true,"db":"up",…}` (the §7.2 probe minimum).
+2. **Migrations applied** —
+   `docker compose --env-file .env.staging -f docker-compose.staging.yml logs app`
+   shows prisma's success line (`successfully applied` /
+   `No pending migrations to apply`) — the same assertion the CI smoke
+   test makes of the prod boot log.
+3. **A seeded login works** — sign in as `contractor@mjengo.os` in a
+   browser, or run §5's curl cookie-jar auth smoke against `:3100`.
+4. **The website paths** — `http://localhost:3100/website` through the
+   app's rewrite (the integration path prod uses) and
+   `http://localhost:3101/website` directly (the staging-only publish).
+5. **jobs-tick** (if `JOBS_RUN_TOKEN` is set) —
+   `docker compose --env-file .env.staging -f docker-compose.staging.yml
+   logs jobs-tick`: silence is health; every line is a failed drain.
+
+**Promote to prod.** When the checklist is green on staging, run the SAME
+mechanical path on the prod host (§8) — the release gates (lint / tsc /
+`bun run test:finance` / the full suite) ran at merge; staging rehearsed
+the pull → rebuild → migrate-on-boot → verify sequence. Promoting is NOT a
+data copy: prod's volumes and secrets are never touched by staging
+(separate names, separate secrets — and staging's seeded demo data never
+leaves the staging volumes). After promoting, re-verify §7.2's health probe
+on prod.
+
+**Teardown:** `docker compose --env-file .env.staging -f
+docker-compose.staging.yml down` — add `-v` to also destroy the staging
+volumes (staging data is disposable by definition; that is the point).
+
 ## 7. Production self-host (without Docker)
 
 ```bash

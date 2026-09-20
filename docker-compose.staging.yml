@@ -1,0 +1,190 @@
+# MjengoOS — STAGING stack (issue #208, audit §8.2): the SAME three services
+# as docker-compose.yml on the SAME production image, namespaced so it can
+# coexist with a prod stack on one host or stand alone on a rehearsal box.
+# Staging is the middle rung of the deployment ladder (local dev → staging →
+# the single prod node): the place to rehearse migrations, image rebuilds,
+# seed chains and backup/restore drills on a prod-shaped stack BEFORE they
+# touch production — the repo's own update path (`git pull && docker compose
+# up -d --build`, DEPLOYMENT.md §8) is exactly the operation to rehearse
+# here. Full runbook (when to deploy, the explicit seed step, the
+# verification checklist, promote-to-prod): DEPLOYMENT.md §6.8.
+#
+#   cp .env.staging.example .env.staging   # generate NEW secrets — never prod's
+#   docker compose --env-file .env.staging -f docker-compose.staging.yml up -d --build
+#   → http://localhost:3100           (staging app; migrations apply on boot)
+#   → http://localhost:3100/website   (marketing site via the app's rewrite,
+#                                      same integrated-mode build as prod)
+#
+# Differences from docker-compose.yml, all deliberate:
+#   · top-level `name: mjengo-staging` → its own compose PROJECT: its own
+#     default network (mjengo-staging_default) and its own volume prefix, so
+#     staging's `app`/`website` service DNS never collides with a prod stack
+#     started from the same clone directory;
+#   · container names mjengo-staging-* and volumes staging-* — coexistence;
+#   · host ports 3100 (app) / 3101 (website direct). Prod publishes 3000 and
+#     keeps the website internal (reached through the app's /website/*
+#     rewrite); staging ALSO publishes the website's own origin so the site
+#     can be verified directly, without the rewrite in front of it;
+#   · env comes from .env.staging, NOT .env: pass --env-file .env.staging on
+#     EVERY command so both the fail-closed ${NEXTAUTH_SECRET:?}
+#     interpolation and the app's env_file read the STAGING file. Forgetting
+#     --env-file makes compose fall back to the project dir's `.env` — if
+#     prod's .env sits there, staging silently boots on prod's secret (and
+#     prod's JOBS_RUN_TOKEN). The command line above is the one to copy.
+#
+# NODE_ENV=production (SEC-2, issues #168/#208 — the sharp edge): staging
+# runs the same production image, and the production runtime is pinned here
+# AND baked into the image ENV. A non-production runtime with an unset
+# NEXTAUTH_SECRET degrades to the publicly-derivable dev fallback secret
+# (forgeable admin sessions); production fails closed at boot
+# (src/backend/lib/next-auth-guard.ts). Staging is deliberately ALWAYS in
+# the second camp — the fallback-secret hole cannot exist here by
+# construction, and staging exercises the same NODE_ENV-keyed behaviors as
+# prod (JSON log format §10.1, the §3.1 webhook fail-closed posture, the
+# §6.4 seed guard).
+#
+# Seeding: NEVER in a boot CMD (the §6.4 invariant staging must not break) —
+# an explicit one-off operator step (derived seeder image + one-off
+# container), exact commands in DEPLOYMENT.md §6.8.
+
+name: mjengo-staging
+
+services:
+  app:
+    build: .
+    image: mjengo-staging
+    container_name: mjengo-staging-app
+    restart: unless-stopped
+    # Same bounded json-file caps as prod (issue #214 — a crash-looping
+    # service must not eat the host's disk; the compose-log-rotation test
+    # fences this file's every service too).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Staging host port 3100 → the image's baked PORT=3000 (prod publishes
+    # 3000; 3100 keeps a same-host prod stack and staging from colliding).
+    ports:
+      - "3100:3000"
+    env_file:
+      - .env.staging          # NEXTAUTH_URL / JOBS_RUN_TOKEN / optional
+                              #   hardening reach the app from HERE — one
+                              #   file, both sides (the prod pattern).
+    environment:
+      DATABASE_URL: "file:/app/db/custom.db"
+      # Auth session secret — the SAME fail-closed interpolation as prod's
+      # docker-compose.yml: compose aborts when the env file (via
+      # --env-file .env.staging) carries no NEXTAUTH_SECRET. Generate a NEW
+      # one for staging — never reuse prod's (a shared secret would let a
+      # session minted on one box count on the other):
+      #   openssl rand -hex 32     (or: openssl rand -base64 32)
+      NEXTAUTH_SECRET: "${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in .env.staging (generate a NEW one: openssl rand -hex 32) and run compose with --env-file .env.staging}"
+      # SEC-2 pin (see the header note): the image already sets this; the
+      # explicit re-assert documents that staging is NEVER a dev runtime.
+      NODE_ENV: "production"
+      # /website/* rewrite target: the website service on THIS compose
+      # project's network (staging's own `website` DNS — never prod's).
+      WEBSITE_ORIGIN: "http://website:3001"
+    volumes:
+      - staging-app-db:/app/db                 # SQLite database (staging's own)
+      - staging-app-photos:/app/public/photos  # POST /api/upload photo uploads
+    healthcheck:
+      # node:20-slim has no curl/wget — node's global fetch does the probe
+      # (container-internal port 3000, unchanged by the host port remap).
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  website:
+    build:
+      context: ./mjengoos-website
+      # Same default integrated-mode build as prod (basePath /website,
+      # NEXT_PUBLIC_APP_URL=/). Do NOT pass NEXT_PUBLIC_SITE_URL here:
+      # staging must never be an indexed site (the §6.7 launch gate — the
+      # dev-fallback origin is the correct canonical URL for staging).
+    image: mjengo-staging-website
+    container_name: mjengo-staging-website
+    restart: unless-stopped
+    # Same bounded json-file caps as prod (issue #214).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Staging-only deviation from prod: the site's own origin is published
+    # (host 3101) so it can be verified directly. The integration path prod
+    # uses — the app's /website/* rewrite — stays the primary check
+    # (http://localhost:3100/website).
+    ports:
+      - "3101:3001"
+    volumes:
+      - staging-website-data:/app/data   # contact-form submissions (staging's own)
+    healthcheck:
+      # node:20-slim has no curl/wget — node's global fetch does the probe.
+      # /website matches the default integrated build (basePath baked at
+      # build time).
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/website').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # Background-job scheduler sidecar — the staging twin of prod's jobs-tick:
+  # POSTs the drain endpoint every 5 minutes over THIS project's network
+  # (staging's `app` DNS), with the STAGING JOBS_RUN_TOKEN from .env.staging.
+  # No healthcheck by design: the loop itself is the liveness —
+  # `docker compose --env-file .env.staging -f docker-compose.staging.yml
+  # logs jobs-tick` shows every failed drain (successful ones are silent).
+  jobs-tick:
+    image: busybox:1.37
+    container_name: mjengo-staging-jobs-tick
+    restart: unless-stopped
+    # Same bounded json-file caps as prod (issue #214) — the failed-drain
+    # lines below are this sidecar's health signal and must not grow
+    # unbounded either.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      JOBS_RUN_TOKEN: "${JOBS_RUN_TOKEN:-}"
+    # busybox wget syntax verified against busybox 1.35 (same as prod's
+    # sidecar): multiple --header flags accumulate, --post-data sets the
+    # body, -T is the timeout, a non-2xx response exits non-zero.
+    command:
+      - /bin/sh
+      - -c
+      - |
+        if [ -z "$$JOBS_RUN_TOKEN" ]; then
+          echo "jobs-tick: JOBS_RUN_TOKEN is not set - the app will reject every drain (401)."
+          echo "jobs-tick: generate one (openssl rand -hex 32), add JOBS_RUN_TOKEN=<it> to .env.staging,"
+          echo "jobs-tick: then: docker compose --env-file .env.staging -f docker-compose.staging.yml up -d app jobs-tick"
+        fi
+        echo "jobs-tick: draining http://app:3000/api/jobs/run every 300s (5 min)"
+        while true; do
+          wget -q -O - -T 90 \
+            --header "Authorization: Bearer $$JOBS_RUN_TOKEN" \
+            --header "Content-Type: application/json" \
+            --post-data '{}' \
+            http://app:3000/api/jobs/run \
+            >/dev/null 2>&1 \
+            || echo "$$(date -u '+%Y-%m-%dT%H:%M:%SZ') jobs-tick: drain failed (app down, booting, or token rejected) - next tick in 300s"
+          sleep 300
+        done
+
+volumes:
+  staging-app-db:
+  staging-app-photos:
+  staging-website-data:
