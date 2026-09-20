@@ -33,6 +33,9 @@ import { Button } from '@/frontend/ui/button'
 import { toast } from 'sonner'
 import { useT } from '@/frontend/i18n/provider'
 import { AUTH_LOADING_TIMEOUT_MS, shouldOfflineBoot } from '@/frontend/mjengo/offline-boot'
+// #193: the SW's Background Sync drain ask lands on the service-worker
+// container — this guard is the canonical, unit-tested shape check.
+import { isDrainRequestMessage } from '@/frontend/sw-handlers'
 import { usePermissions, tabsForRole, landingForRole } from '@/shared/permissions'
 import { tabsVisibleForFlags } from '@/frontend/mjengo/nav/tab-meta'
 
@@ -236,6 +239,26 @@ export function MjengoApp() {
       window.removeEventListener('offline', onOffline)
       window.removeEventListener('online', onOnline)
     }
+  }, [])
+
+  // ---------------- SW drain requests (issue #193 — Background Sync) ------
+  // When Chromium fires the one-shot 'mjengoos-outbox' sync tag (registered
+  // at outbox-enqueue time; the browser re-launches the SW when connectivity
+  // returns), sw.js posts { type: 'mjengoos:drain' } at its window clients
+  // and this container listener turns the ask into a syncNow() drain. The
+  // store's own guards make it safe: a drain already in flight returns
+  // immediately, an empty queue is a no-op, and a flapped-again network
+  // re-queues everything (nothing is ever dropped). Browsers without
+  // Background Sync never receive the ask and keep today's behavior.
+  useEffect(() => {
+    const sw = typeof navigator !== 'undefined' ? navigator.serviceWorker : undefined
+    if (!sw) return
+    const onMessage = (e: MessageEvent) => {
+      if (!isDrainRequestMessage(e.data)) return
+      void useMjengo.getState().syncNow()
+    }
+    sw.addEventListener('message', onMessage)
+    return () => sw.removeEventListener('message', onMessage)
   }, [])
 
   // ---------------- Auth-gate timeout (issue #78 / FE-1) ----------------
