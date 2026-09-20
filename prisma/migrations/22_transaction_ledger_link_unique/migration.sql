@@ -1,0 +1,36 @@
+-- 22_transaction_ledger_link_unique (issue #127 / audit DB-9 — the soft-FK
+-- sweep's one CONSTRAIN decision): Transaction.ledgerTxnId gets the unique
+-- index its schema comment has claimed since the column was born.
+--
+-- BEFORE: `ledgerTxnId String? // link to the double-entry LedgerTransaction
+-- (unique per txn)` — a comment asserting an invariant the schema did not
+-- hold. Nothing stopped two Transaction rows from naming the same
+-- LedgerTransaction: a future contributor reading the comment could rely on
+-- uniqueness that wasn't there (the audit's "landmine" framing), and a
+-- duplicate would double-count in any ledger→money reconciliation join.
+--
+-- AFTER: UNIQUE INDEX. The current writers are verified 1:1 — every
+-- tx.transaction.create that stamps ledgerTxnId passes a LedgerTransaction
+-- minted in the SAME Prisma transaction (wallet service ×4, daraja-callback,
+-- invoices, mjengo.ts ×2: each posting creates its own ledger txn and stamps
+-- it), so the index enforces what the writers already guarantee and turns
+-- any future drift into a loud P2002 at the write site, not a silent dupe.
+--
+-- NULLS: multiple NULLs remain legal (SQLite unique indexes ignore NULL
+-- rows) — legacy/local-money rows with no ledger link are unaffected, and
+-- the money view treats them exactly as before.
+--
+-- PRE-EXISTING DUPLICATES: this CREATE fails loudly if any exist (the
+-- 10_integrity_constraints precedent — "fails loudly on pre-existing
+-- duplicates (that is the point)"). No production database exists (the
+-- documented posture); a duplicate found in the wild would itself be the
+-- finding this index exists to surface.
+--
+-- THE REST OF THE SWEEP (issue #127) is DOCUMENTED, not constrained: the
+-- full soft-FK registry — every remaining soft column, its guard location,
+-- its failure mode, and the per-column keep-soft rationale — is
+-- docs/adr/0010-soft-fk-registry.md. The other columns stay soft by
+-- explicit decision (polymorphic targets, optional catalog links,
+-- append-only audit trails), each with its reasoning recorded there.
+
+CREATE UNIQUE INDEX "Transaction_ledgerTxnId_key" ON "Transaction"("ledgerTxnId");

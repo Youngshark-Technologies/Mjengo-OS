@@ -338,7 +338,13 @@ model Transaction {
   // is an attribution dimension, amounts/ledger/balances are byte-identical.
   phaseId     String?
   phase       Phase?   @relation("TransactionPhase", fields: [phaseId], references: [id], onDelete: SetNull)
-  ledgerTxnId String? // link to the double-entry LedgerTransaction (unique per txn)
+  // Soft FK → LedgerTransaction, now CONSTRAINED (issue #127 / DB-9: the
+  // comment's uniqueness claim is finally held by the schema). Every writer
+  // stamps a ledger txn minted in the same Prisma transaction (1:1); a
+  // second Transaction naming the same ledger txn now fails P2002 at the
+  // write site. NULL = local-money rows with no ledger link (legal, many).
+  // The rest of the soft-link inventory: docs/adr/0010-soft-fk-registry.md.
+  ledgerTxnId String? @unique
   note        String?
   date        DateTime
   createdAt   DateTime @default(now())
