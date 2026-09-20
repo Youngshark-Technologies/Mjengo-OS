@@ -694,6 +694,34 @@ export const enDict = {
   'outbox.autoRetryNote': 'Auto-retry attempt {attempts} of {max} — next try {when}',
   'outbox.autoRetryExhausted': 'Auto-retried {max} time(s) without success — use “Retry failed” below.',
 
+  // #150 — "Waiting for network" worklist (pending-network-panel.tsx + the
+  // use-mjengo reconnect toast). REMINDERS for online-only flows refused
+  // offline — money keeps its hard stop, AI inputs are ephemeral, nothing
+  // auto-executes (the remind-only decision, use-mjengo.ts #150 section).
+  'sync.backOnlineWaiting': 'Back online — {count} action(s) are waiting for a connection',
+  'netlist.trigger': 'Waiting',
+  'netlist.aria.trigger': 'Waiting for network — {count} action(s)',
+  'netlist.title': 'Waiting for network',
+  'netlist.meta': '{count} action(s) you tried offline need a connection',
+  'netlist.listAria': 'Actions waiting for a connection',
+  'netlist.queuedAgo': 'tried {when}',
+  'netlist.hint': 'These are reminders, not a queue — open the flow and take the action yourself once online.',
+  'netlist.retryNow': 'Retry now',
+  'netlist.retryOfflineNote': 'Retry becomes available once you are back online',
+  'netlist.discard': 'Discard',
+  'netlist.allCleared': 'Nothing is waiting — discarded reminders are gone for good.',
+  'netlist.kind.moneyPay': 'Pay payment request {code}',
+  'netlist.kind.aiReview': 'AI review of draw “{name}”',
+  'netlist.kind.payroll': 'Run payroll for {period}',
+  'netlist.kind.analyze': 'Analyze a site photo',
+  'netlist.kind.voice': 'Voice-log a delivery',
+  'netlist.kind.voiceParse': 'Parse a typed delivery note',
+  'netlist.kind.scan': 'Scan the project for anomalies',
+  'netlist.kind.docs': 'Extract a draft from “{file}”',
+  'netlist.kind.docsReview': 'Decide on the draft from “{file}”',
+  'netlist.kind.trustDigest': 'Generate the weekly trust digest',
+  'netlist.kind.trustAudio': 'Play the digest voice note',
+
   // materials tab — toasts + dialog placeholders (labels/buttons are a later
   // per-tab wave; data-mirroring placeholders like 'Site Store' stay as-is)
   'mat.error.nameUnit': 'Material name and unit are required',

@@ -224,7 +224,7 @@ interface PayrollResult {
 // ---------------- main tab ----------------
 
 export function FundisTab() {
-  const { data, dispatch, online, outbox, viewMode, load } = useMjengo()
+  const { data, dispatch, online, outbox, viewMode, load, enqueuePendingNetwork } = useMjengo()
   const t = useT()
   const [addOpen, setAddOpen] = useState(false)
   const [addBusy, setAddBusy] = useState(false)
@@ -366,6 +366,11 @@ export function FundisTab() {
     if (!data) return
     if (!online) {
       toast.error(t('fundis.payrollNeedsOnline'))
+      // #150: the hard stop keeps its honesty; the worklist keeps the memory
+      // (a "remind me" entry, NOT a queued payroll — the remind-only call;
+      // the period is the EAT day the payout would cover, same today rule
+      // the server's payroll window uses).
+      enqueuePendingNetwork({ kind: 'wages.pay', labelKey: 'netlist.kind.payroll', context: { period: todayEAT() }, tab: 'fundis' })
       return
     }
     setPayrollBusy(true)

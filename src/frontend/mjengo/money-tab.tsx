@@ -214,7 +214,7 @@ function EscrowConsistencyChip({ escrow }: { escrow: NonNullable<ProjectPayload[
 const MAX_SINGLE_MONEY_KES = 1_000_000_000
 
 export function MoneyTab() {
-  const { data, dispatch, online, outbox, viewMode, actionBusy, clientRole, shareToken } = useMjengo()
+  const { data, dispatch, online, outbox, viewMode, actionBusy, clientRole, shareToken, enqueuePendingNetwork } = useMjengo()
   const { data: session } = useSession()
   const t = useT()
   const sessionRole = String(session?.user?.role ?? '')
@@ -478,6 +478,9 @@ export function MoneyTab() {
     if (!pack) return
     if (!online) {
       toast.error(t('aiReview.needsOnline'))
+      // #150: remember the intent — the refusal keeps its hard stop, the
+      // worklist carries the reminder (remind-only; see use-mjengo #150).
+      enqueuePendingNetwork({ kind: 'ai.drawReview', labelKey: 'netlist.kind.aiReview', context: { name: m.name }, tab: 'money' })
       return
     }
     const live = useMjengo.getState().data
@@ -524,6 +527,9 @@ export function MoneyTab() {
     // ledger ref for the honest toast.
     if (!online) {
       toast.error(t('money.payNeedsOnline'))
+      // #150: the hard stop keeps its honesty; the worklist keeps the memory
+      // (a "remind me" entry, NOT a queued payment — the remind-only call).
+      enqueuePendingNetwork({ kind: 'payment.pay', labelKey: 'netlist.kind.moneyPay', context: { code: pr.requestCode }, tab: 'money' })
       return
     }
     const ok = await dispatch('payment.pay', { id: pr.id }, `Pay ${pr.requestCode}`)
