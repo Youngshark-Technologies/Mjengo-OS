@@ -21,6 +21,16 @@
 // W4-3: this tab is the FIELD CHANNELS surface — the WhatsApp panel
 // (whatsapp-panel.tsx) renders below the USSD card: the other honest
 // out-of-app capture line, exercised through the public webhook seam.
+//
+// #140 (audit FE-9): the whole simulation body renders through the ussd.*
+// dict family (EN+SW) — LCD script, input-line status, keypad aria-labels,
+// network notes, explainer, demo-PIN list, toasts and the client-only
+// dispatch labels. Dial SYNTAX stays data, never copy: *384#, menu digit
+// prefixes ("1. "), ITU E.161 keypad letters and the stored
+// recordedBy: 'USSD *384#' value are identical in both locales. The LCD is
+// a session transcript — pushed lines snapshot the locale at push time
+// (same semantics as the WhatsApp chat); a locale flip re-renders the boot
+// lines only while the sim still sits on the idle screen.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMjengo } from '@/frontend/hooks/use-mjengo'
@@ -75,10 +85,9 @@ const KEYS: Array<{ main: string; sub?: string }> = [
   { main: '#', sub: '⌗' },
 ]
 
-const BOOT_LINES: LcdLine[] = [
-  { text: 'MjengoOS sim ready.' },
-  { text: 'Dial *384# then Call.', tone: 'dim' },
-]
+// Known stored attendance statuses (mirrors fundis-tab's STATUS_LABELS
+// guard): a rogue stored value must not leak a raw dict key onto the LCD.
+const KNOWN_STATUSES = new Set(['present', 'half_day', 'absent', 'excused'])
 
 // ---------------- component ----------------
 
@@ -92,7 +101,19 @@ export function UssdTab() {
   const [pinTries, setPinTries] = useState(0)
   const [worker, setWorker] = useState<WorkerWithAttendance | null>(null)
   const [choice, setChoice] = useState<'present' | 'absent' | null>(null)
-  const [log, setLog] = useState<LcdLine[]>(BOOT_LINES)
+
+  // t()-aware boot lines (#140): the idle LCD renders in the active locale.
+  const bootLines = useMemo<LcdLine[]>(
+    () => [
+      { text: t('ussd.lcd.bootReady') },
+      { text: t('ussd.lcd.bootDial'), tone: 'dim' },
+    ],
+    [t],
+  )
+
+  // Session transcript only — the idle screen's boot lines are DERIVED
+  // (lcdLines below), so the state starts empty and holds pushed lines.
+  const [log, setLog] = useState<LcdLine[]>([])
 
   const lcdRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<number | null>(null)
@@ -116,6 +137,13 @@ export function UssdTab() {
     if (timerRef.current !== null) window.clearTimeout(timerRef.current)
   }, [])
 
+  // A locale flip while the sim still sits on the idle screen re-renders the
+  // boot lines in the new language (#140) — DERIVED, not synced: the idle
+  // screen always renders the current-locale boot lines; a session in
+  // progress keeps its pushed transcript (the LCD is a session log, not a
+  // live template), so the state only ever holds session lines.
+  const lcdLines = screen === 'dial' ? bootLines : log
+
   function pushLog(lines: LcdLine[]) {
     setLog((prev) => [...prev, ...lines])
   }
@@ -128,20 +156,20 @@ export function UssdTab() {
     setPinTries(0)
     setWorker(null)
     setChoice(null)
-    setLog(BOOT_LINES)
+    setLog([])
   }
 
   /** Begin the *384# dial sequence from the dial screen. */
   function beginDial() {
     setScreen('dialing')
-    pushLog([{ text: 'Dialing *384# …', tone: 'dim' }])
+    pushLog([{ text: t('ussd.lcd.dialing'), tone: 'dim' }])
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null
       pushLog([
-        { text: 'Welcome to MjengoOS' },
-        { text: 'Muster.' },
-        { text: '1. Mark attendance' },
-        { text: '2. Exit' },
+        { text: t('ussd.lcd.welcome') },
+        { text: t('ussd.lcd.muster') },
+        { text: `1. ${t('ussd.lcd.mark')}` },
+        { text: `2. ${t('ussd.lcd.exit')}` },
       ])
       setScreen('menu')
     }, 900)
@@ -158,7 +186,7 @@ export function UssdTab() {
     }
     if (screen === 'dial') {
       if (dialBuf.trim() !== '*384#') {
-        pushLog([{ text: 'Invalid code. Dial *384#.', tone: 'warn' }])
+        pushLog([{ text: t('ussd.lcd.invalid'), tone: 'warn' }])
         return
       }
       beginDial()
@@ -179,7 +207,7 @@ export function UssdTab() {
       return
     }
     if (timerRef.current !== null) window.clearTimeout(timerRef.current)
-    pushLog([{ text: 'Call ended.', tone: 'dim' }])
+    pushLog([{ text: t('ussd.lcd.callEnded'), tone: 'dim' }])
     setScreen('ended')
   }
 
@@ -198,13 +226,17 @@ export function UssdTab() {
       setWorker(found)
       setScreen('worker')
       const lines: LcdLine[] = [
-        { text: `Name: ${found.name}` },
-        { text: `Role: ${found.role}` },
+        { text: t('ussd.lcd.name', { name: found.name }) },
+        { text: t('ussd.lcd.role', { role: found.role }) },
       ]
-      if (found.todayStatus.status) {
-        lines.push({ text: `Already today: ${found.todayStatus.status}`, tone: 'dim' })
+      const st = found.todayStatus.status
+      if (st && KNOWN_STATUSES.has(st)) {
+        lines.push({ text: t('ussd.lcd.alreadyToday', { status: t(`fundis.status.${st}`) }), tone: 'dim' })
       }
-      lines.push({ text: '1. Present' }, { text: '2. Absent' })
+      lines.push(
+        { text: `1. ${t('fundis.status.present')}` },
+        { text: `2. ${t('fundis.status.absent')}` },
+      )
       pushLog(lines)
       return
     }
@@ -214,15 +246,15 @@ export function UssdTab() {
     setPinBuf('')
     if (tries >= MAX_PIN_TRIES) {
       pushLog([
-        { text: 'Too many attempts.', tone: 'err' },
-        { text: 'Session ended. Kwaheri.' },
+        { text: t('ussd.lcd.tooMany'), tone: 'err' },
+        { text: t('ussd.lcd.endedKwaheri') },
       ])
       setScreen('ended')
       return
     }
     pushLog([
-      { text: 'PIN not recognised — try', tone: 'warn' },
-      { text: `again. (${MAX_PIN_TRIES - tries} tries left)`, tone: 'warn' },
+      { text: t('ussd.lcd.pinBadA'), tone: 'warn' },
+      { text: t('ussd.lcd.pinBadB', { n: MAX_PIN_TRIES - tries }), tone: 'warn' },
     ])
   }
 
@@ -230,15 +262,15 @@ export function UssdTab() {
     if (!worker || !choice) return
     if (isClient) {
       pushLog([
-        { text: 'Read-only client view —', tone: 'err' },
-        { text: 'records only from the site' },
-        { text: 'team line.' },
+        { text: t('ussd.lcd.readonlyA'), tone: 'err' },
+        { text: t('ussd.lcd.readonlyB') },
+        { text: t('ussd.lcd.readonlyC') },
       ])
       setScreen('ended')
       return
     }
     setScreen('saving')
-    pushLog([{ text: 'Recording…', tone: 'dim' }])
+    pushLog([{ text: t('ussd.lcd.recording'), tone: 'dim' }])
 
     let ok = false
     if (choice === 'present') {
@@ -246,7 +278,7 @@ export function UssdTab() {
       ok = await dispatch(
         'attendance.checkin',
         { workerId: worker.id, toggle: 'in', method: 'ussd' },
-        `USSD check-in ${worker.name}`,
+        t('ussd.dispatch.checkIn', { name: worker.name }),
       )
     } else {
       // Absence is a reported statement from the line, not worker evidence.
@@ -255,9 +287,9 @@ export function UssdTab() {
         {
           records: JSON.stringify([{ workerId: worker.id, status: 'absent' }]),
           verification: 'reported',
-          recordedBy: 'USSD *384#',
+          recordedBy: 'USSD *384#', // stored data — identical in both locales
         },
-        `USSD absent ${worker.name}`,
+        t('ussd.dispatch.absent', { name: worker.name }),
       )
     }
 
@@ -265,23 +297,27 @@ export function UssdTab() {
     if (ok) {
       if (online) {
         pushLog([
-          { text: 'Attendance recorded.', tone: 'ok' },
-          { text: 'Asante!' },
+          { text: t('ussd.lcd.recorded'), tone: 'ok' },
+          { text: t('ussd.lcd.asante') },
         ])
-        toast.success(`*384# — ${worker.name} ${choice === 'present' ? 'checked in' : 'marked absent'}`)
+        toast.success(
+          choice === 'present'
+            ? t('ussd.toast.checkedIn', { name: worker.name })
+            : t('ussd.toast.absent', { name: worker.name }),
+        )
       } else {
         pushLog([
-          { text: 'Saved to device — will', tone: 'warn' },
-          { text: 'sync when network returns.', tone: 'warn' },
-          { text: 'Attendance recorded.' },
+          { text: t('ussd.lcd.queuedA'), tone: 'warn' },
+          { text: t('ussd.lcd.queuedB'), tone: 'warn' },
+          { text: t('ussd.lcd.recorded') },
         ])
-        toast.info('Saved to device — will sync when network returns')
+        toast.info(t('ussd.toast.queued'))
       }
-      pushLog([{ text: 'Session ended.', tone: 'dim' }])
+      pushLog([{ text: t('ussd.lcd.sessionEnded'), tone: 'dim' }])
     } else {
       pushLog([
-        { text: 'Could not record —', tone: 'err' },
-        { text: 'check network and dial again.', tone: 'err' },
+        { text: t('ussd.lcd.failA'), tone: 'err' },
+        { text: t('ussd.lcd.failB'), tone: 'err' },
       ])
     }
   }
@@ -296,9 +332,9 @@ export function UssdTab() {
       case 'menu': {
         if (key === '1') {
           setScreen('pin')
-          pushLog([{ text: 'Enter your PIN:' }])
+          pushLog([{ text: t('ussd.lcd.pinPrompt') }])
         } else if (key === '2') {
-          pushLog([{ text: 'Asante. Kwaheri.' }])
+          pushLog([{ text: t('ussd.lcd.bye') }])
           setScreen('ended')
         }
         break
@@ -321,17 +357,17 @@ export function UssdTab() {
           setChoice('present')
           setScreen('confirm')
           pushLog([
-            { text: `Record as PRESENT?` },
-            { text: '1. Yes, save' },
-            { text: '2. No, cancel' },
+            { text: t('ussd.lcd.confirm', { status: t('fundis.status.present').toUpperCase() }) },
+            { text: `1. ${t('ussd.lcd.yes')}` },
+            { text: `2. ${t('ussd.lcd.no')}` },
           ])
         } else if (key === '2') {
           setChoice('absent')
           setScreen('confirm')
           pushLog([
-            { text: `Record as ABSENT?` },
-            { text: '1. Yes, save' },
-            { text: '2. No, cancel' },
+            { text: t('ussd.lcd.confirm', { status: t('fundis.status.absent').toUpperCase() }) },
+            { text: `1. ${t('ussd.lcd.yes')}` },
+            { text: `2. ${t('ussd.lcd.no')}` },
           ])
         }
         break
@@ -339,12 +375,12 @@ export function UssdTab() {
       case 'confirm': {
         if (key === '1') void doRecord()
         else if (key === '2') {
-          pushLog([{ text: 'Cancelled. Back to menu.', tone: 'dim' }])
+          pushLog([{ text: t('ussd.lcd.cancelled'), tone: 'dim' }])
           setChoice(null)
           setScreen('menu')
           pushLog([
-            { text: '1. Mark attendance' },
-            { text: '2. Exit' },
+            { text: `1. ${t('ussd.lcd.mark')}` },
+            { text: `2. ${t('ussd.lcd.exit')}` },
           ])
         }
         break
@@ -361,21 +397,23 @@ export function UssdTab() {
       case 'dial':
         return dialBuf || '—'
       case 'dialing':
-        return 'calling…'
+        return t('ussd.input.calling')
       case 'pin':
-        return `PIN: ${'•'.repeat(pinBuf.length)}${'_'.repeat(4 - pinBuf.length)}`
+        return t('ussd.input.pin', {
+          mask: `${'•'.repeat(pinBuf.length)}${'_'.repeat(4 - pinBuf.length)}`,
+        })
       case 'menu':
-        return 'Reply 1 or 2'
+        return t('ussd.input.reply')
       case 'worker':
-        return 'Reply 1 or 2'
+        return t('ussd.input.reply')
       case 'confirm':
-        return 'Reply 1 or 2'
+        return t('ussd.input.reply')
       case 'saving':
-        return 'sending…'
+        return t('ussd.input.sending')
       case 'done':
-        return 'Session ended'
+        return t('ussd.input.ended')
       case 'ended':
-        return 'Press Call to dial again'
+        return t('ussd.input.dialAgain')
       default:
         return ''
     }
@@ -388,7 +426,8 @@ export function UssdTab() {
   const pinRows = activeWorkers.slice(0, 8).map((w) => ({
     name: w.name,
     pin: w.pin && /^\d{4}$/.test(w.pin) ? w.pin : phonePin(w.phone),
-    source: w.pin && /^\d{4}$/.test(w.pin) ? 'kiosk PIN' : 'phone',
+    // source is a discriminant; the display labels resolve via t() below.
+    source: w.pin && /^\d{4}$/.test(w.pin) ? ('kiosk' as const) : ('phone' as const),
   }))
 
   const callDisabled = busy
@@ -433,9 +472,7 @@ export function UssdTab() {
                       </span>
                     </div>
                     <p className="sr-only">
-                      {online
-                        ? 'Simulated network: online.'
-                        : 'Simulated network: offline — dispatches queue on-device.'}
+                      {online ? t('ussd.net.srOnline') : t('ussd.net.srOffline')}
                     </p>
 
                     {/* LCD log */}
@@ -443,10 +480,10 @@ export function UssdTab() {
                       ref={lcdRef}
                       role="log"
                       aria-live="polite"
-                      aria-label="USSD session screen"
+                      aria-label={t('ussd.lcd.screenAria')}
                       className="h-60 overflow-y-auto px-1.5 py-2 font-mono text-[11px] leading-relaxed break-words max-h-60 [scrollbar-width:thin]"
                     >
-                      {log.map((line, i) => (
+                      {lcdLines.map((line, i) => (
                         <p key={i} className={TONE_CLASS[line.tone ?? 'normal']}>
                           {line.text}
                         </p>
@@ -454,7 +491,7 @@ export function UssdTab() {
                     </div>
 
                     {/* input line */}
-                    <div className="mt-1 border-t border-stone-800 px-1.5 py-1.5 min-h-7 font-mono text-[11px] text-amber-200 truncate" aria-label="Current input">
+                    <div className="mt-1 border-t border-stone-800 px-1.5 py-1.5 min-h-7 font-mono text-[11px] text-amber-200 truncate" aria-label={t('ussd.input.aria')}>
                       {inputLine}
                     </div>
                   </div>
@@ -467,7 +504,11 @@ export function UssdTab() {
                         type="button"
                         onClick={() => pressKey(k.main)}
                         disabled={busy}
-                        aria-label={k.sub ? `Key ${k.main}, ${k.sub}` : `Key ${k.main}`}
+                        aria-label={
+                          k.sub
+                            ? t('ussd.keypad.keyWithSub', { main: k.main, sub: k.sub })
+                            : t('ussd.keypad.key', { main: k.main })
+                        }
                         className="h-11 rounded-lg bg-stone-800 hover:bg-stone-700 active:bg-stone-600 disabled:opacity-50 disabled:hover:bg-stone-800 text-stone-100 font-mono text-sm leading-none flex flex-col items-center justify-center gap-0.5 focus-visible:outline-2 focus-visible:outline-amber-400 focus-visible:-outline-offset-2"
                       >
                         <span aria-hidden>{k.main}</span>
@@ -478,7 +519,7 @@ export function UssdTab() {
                       type="button"
                       onClick={backspace}
                       disabled={busy || (screen !== 'dial' && screen !== 'pin')}
-                      aria-label="Delete last digit"
+                      aria-label={t('ussd.keypad.delete')}
                       className="h-11 rounded-lg bg-stone-800 hover:bg-stone-700 active:bg-stone-600 disabled:opacity-40 text-stone-400 flex items-center justify-center focus-visible:outline-2 focus-visible:outline-amber-400 focus-visible:-outline-offset-2"
                     >
                       <Delete className="w-4 h-4" aria-hidden />
@@ -487,16 +528,20 @@ export function UssdTab() {
                       type="button"
                       onClick={startDial}
                       disabled={callDisabled}
-                      aria-label={screen === 'done' || screen === 'ended' ? 'Call — start a new session' : 'Call, send or confirm'}
+                      aria-label={
+                        screen === 'done' || screen === 'ended'
+                          ? t('ussd.keypad.callNew')
+                          : t('ussd.keypad.callAria')
+                      }
                       className="h-11 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 text-white font-semibold text-xs flex items-center justify-center gap-1.5 focus-visible:outline-2 focus-visible:outline-emerald-300 focus-visible:-outline-offset-2"
                     >
                       <PhoneCall className="w-4 h-4" aria-hidden />
-                      Call
+                      {t('ussd.keypad.call')}
                     </button>
                     <button
                       type="button"
                       onClick={hangUp}
-                      aria-label="End call"
+                      aria-label={t('ussd.keypad.end')}
                       className="h-11 rounded-lg bg-red-600 hover:bg-red-500 active:bg-red-700 text-white flex items-center justify-center focus-visible:outline-2 focus-visible:outline-red-300 focus-visible:-outline-offset-2"
                     >
                       <PhoneOff className="w-4 h-4" aria-hidden />
@@ -509,13 +554,14 @@ export function UssdTab() {
                   {online ? (
                     <>
                       <Smartphone className="w-3.5 h-3.5" aria-hidden />
-                      Sim network online — records save straight to the project.
+                      {t('ussd.net.onlineNote')}
                     </>
                   ) : (
                     <>
                       <WifiOff className="w-3.5 h-3.5" aria-hidden />
-                      Sim network offline (store toggle) — records queue on-device
-                      {outbox.length > 0 && ` (${outbox.length} pending)`}.
+                      {outbox.length > 0
+                        ? t('ussd.net.offlinePending', { n: outbox.length })
+                        : t('ussd.net.offlineNote')}
                     </>
                   )}
                 </p>
@@ -524,33 +570,26 @@ export function UssdTab() {
               {/* ---------- explainer + demo PIN reference ---------- */}
               <div className="w-full space-y-4">
                 <div className="rounded-lg border border-stone-200 bg-stone-50 p-4">
-                  <h3 className="text-sm font-semibold text-stone-900 mb-2">How the real line works</h3>
+                  <h3 className="text-sm font-semibold text-stone-900 mb-2">{t('ussd.explainer.title')}</h3>
                   <ul className="list-disc pl-4 space-y-1.5 text-xs text-stone-600 leading-relaxed">
                     <li>
-                      Any phone dials <code className="font-mono text-[11px] bg-stone-100 px-1 rounded">*384#</code> —
-                      no smartphone, no data bundle, no app install.
+                      {t('ussd.explainer.anyPhone')}{' '}
+                      <code className="font-mono text-[11px] bg-stone-100 px-1 rounded">*384#</code>
+                      {t('ussd.explainer.anyPhoneRest')}
                     </li>
-                    <li>The worker keys their 4-digit PIN; the line resolves it to their crew record.</li>
-                    <li>
-                      Attendance lands in the same muster as the app — a <em>Present</em> reply is worker
-                      evidence (USSD), not a manager&apos;s word.
-                    </li>
-                    <li>
-                      Offline-first: with no network the record queues on-device and syncs when the
-                      signal returns.
-                    </li>
+                    <li>{t('ussd.explainer.pin')}</li>
+                    <li>{t('ussd.explainer.muster')}</li>
+                    <li>{t('ussd.explainer.offline')}</li>
                   </ul>
                 </div>
 
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
                   <h3 className="text-sm font-semibold text-amber-900 mb-2 flex items-center gap-1.5">
                     <Info className="w-4 h-4" aria-hidden />
-                    Demo PINs — {data.project.name}
+                    {t('ussd.pin.title')} — {data.project.name}
                   </h3>
                   {pinRows.length === 0 ? (
-                    <p className="text-xs text-amber-800">
-                      No crew on this project yet — add fundis in the Fundis tab first.
-                    </p>
+                    <p className="text-xs text-amber-800">{t('ussd.pin.empty')}</p>
                   ) : (
                     <>
                       <div className="flex flex-wrap gap-1.5">
@@ -559,35 +598,27 @@ export function UssdTab() {
                             key={`${r.pin}-${r.name}`}
                             variant="outline"
                             className={`text-[10px] font-mono ${
-                              r.source === 'kiosk PIN'
+                              r.source === 'kiosk'
                                 ? 'bg-white text-amber-900 border-amber-300'
                                 : 'bg-amber-100/60 text-amber-800 border-amber-200'
                             }`}
-                            title={r.source === 'kiosk PIN' ? 'Kiosk PIN' : 'Last 4 digits of phone'}
+                            title={r.source === 'kiosk' ? t('ussd.pin.kiosk') : t('ussd.pin.phone')}
                           >
                             {r.pin} · {r.name}
                           </Badge>
                         ))}
                         {activeWorkers.length > 8 && (
                           <Badge variant="outline" className="text-[10px] bg-amber-100/60 text-amber-800 border-amber-200">
-                            +{activeWorkers.length - 8} more
+                            {t('ussd.pin.more', { n: activeWorkers.length - 8 })}
                           </Badge>
                         )}
                       </div>
-                      <p className="mt-2 text-xs text-amber-800">
-                        PIN = the worker&apos;s kiosk PIN when set, otherwise the last 4 digits of their
-                        phone (both work for workers with a PIN). Wrong PIN retries 3 times, then the
-                        line ends the session politely.
-                      </p>
+                      <p className="mt-2 text-xs text-amber-800">{t('ussd.pin.note')}</p>
                     </>
                   )}
                 </div>
 
-                <p className="text-xs text-stone-400 leading-relaxed">
-                  This is a faithful simulation of the session flow, not a live carrier line: MjengoOS
-                  would provision *384# with a Kenyan network operator. Attendance recorded here is
-                  real project data — check today&apos;s muster in the Fundis tab.
-                </p>
+                <p className="text-xs text-stone-400 leading-relaxed">{t('ussd.honesty')}</p>
               </div>
             </div>
           </CardContent>
