@@ -862,3 +862,37 @@ describe('status-ladder CHECK constraints (migration 19 — #129 / DB-10)', () =
     old.close()
   })
 })
+
+describe('Transaction.ledgerTxnId uniqueness (migration 22 — #127 / DB-9)', () => {
+  const insert = (id: string, ledgerTxnId: string | null) =>
+    db
+      .prepare(
+        `INSERT INTO "Transaction" (id, projectId, type, amount, method, ledgerTxnId, date)
+         VALUES (?, 'p-1', 'material', 4500000, 'cash', ?, '2026-09-20 10:00:00')`,
+      )
+      .run(id, ledgerTxnId)
+
+  it('migration 22_transaction_ledger_link_unique is part of the chain', () => {
+    expect(migrationDirs()).toContain('22_transaction_ledger_link_unique')
+  })
+
+  it('the schema comment\'s uniqueness claim is now HELD: a second Transaction naming the same ledger txn fails', () => {
+    insert('txn-a', 'ledger-1')
+    expect(() => insert('txn-b', 'ledger-1')).toThrow(
+      /UNIQUE constraint failed: Transaction.ledgerTxnId/,
+    )
+  })
+
+  it('NULL ledgerTxnId rows never collide — local-money rows (no ledger link) are untouched', () => {
+    // The documented posture: NULL = pre-ledger/local money rows; SQLite
+    // unique indexes skip NULLs, so the constraint is additive over the
+    // whole legacy corpus (no dedupe pass — migration 22's header).
+    insert('txn-legacy-1', null)
+    expect(() => insert('txn-legacy-2', null)).not.toThrow()
+  })
+
+  it('distinct ledgerTxnIds coexist — the 1:1 writer contract keeps working exactly as today', () => {
+    insert('txn-c', 'ledger-2')
+    expect(() => insert('txn-d', 'ledger-3')).not.toThrow()
+  })
+})
