@@ -58,9 +58,11 @@ Type=oneshot
 # root: it only READS the app's data and writes the backup dir.
 User=mjengo
 Group=mjengo
-# Paths + retention + opt-outs. No secrets in this file by design
-# (unlike jobs.env) — 0644 root:root is fine; the manager reads it
-# either way.
+# Paths + retention + opt-outs (+ the optional dead-man ping URL, issue
+# #217). Secret-free by default — 0644 root:root is fine — EXCEPT when
+# BACKUP_HEALTHCHECK_URL is set (it is a bearer capability: anyone holding
+# it can forge "backup ok" pings): then tighten the file to 0600 root:root.
+# The systemd manager reads EnvironmentFile= either way.
 EnvironmentFile=/etc/mjengo/backup.env
 SyslogIdentifier=mjengo-backup
 # Generous on purpose: a big photos volume tars slowly, and an online
@@ -75,8 +77,11 @@ ExecStart=/usr/local/bin/mjengo-backup.sh
 # MJENGO_BACKUP_DIR in the env file). Everything else is read-only:
 # docker volume mountpoints under /var/lib/docker stay READABLE under
 # ProtectSystem=strict (read-only ≠ invisible), so a compromised backup
-# run cannot modify app data. No network: the unit opens no sockets at
-# all, hence RestrictAddressFamilies=AF_UNIX only.
+# run cannot modify app data. Network: AF_INET/AF_INET6 are permitted for
+# the OPTIONAL dead-man ping only (issue #217 — BACKUP_HEALTHCHECK_URL in
+# the env file; with it unset the script never curls and this unit still
+# opens no sockets — the restriction exists so the ping is possible, not
+# so the unit chats). Everything else about the sandbox is unchanged.
 ReadWritePaths=/var/backups/mjengo
 NoNewPrivileges=true
 ProtectSystem=strict
@@ -90,7 +95,7 @@ ProtectKernelModules=true
 ProtectKernelLogs=true
 ProtectControlGroups=true
 ProtectProc=invisible
-RestrictAddressFamilies=AF_UNIX
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true

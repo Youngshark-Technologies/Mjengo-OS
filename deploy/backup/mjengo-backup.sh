@@ -38,6 +38,11 @@
 #      Known honest failure mode: a photo/submission written while tar
 #      reads the dir makes tar exit 1 ("file changed as we read it") —
 #      the run fails on purpose rather than ship a torn archive; re-run.
+#   6. (optional, off by default) Pings an external dead-man monitor once
+#      after a fully successful run: set BACKUP_HEALTHCHECK_URL (see the
+#      config block below and docs/runbooks/MONITORING.md §3 — issue #217).
+#      Fail-open in every direction: unset = no ping and nothing external
+#      is contacted; a failed ping never fails the run.
 #
 # Dry run: `mjengo-backup.sh --dry-run` prints the full plan (sources,
 # target names, weekly decision, prune candidates) and writes NOTHING.
@@ -95,10 +100,20 @@ umask 077   # backups contain PII (website leads) + business data: 0600 by defau
 # never optional. Useful on a dev box without a website dir.
 : "${MJENGO_BACKUP_PHOTOS:=1}"
 : "${MJENGO_BACKUP_WEBSITE:=1}"
+# Dead-man ping (issue #217 / audit §8.4): URL curled ONCE after a fully
+# successful run, so an external monitor (healthchecks.io / UptimeRobot
+# heartbeat class) can alert when backups STOP succeeding — missed run,
+# failed run, dead host: the ping stops either way. Empty (the default) =
+# no ping, nothing external is contacted (the ERROR_SINK_URL opt-in seam
+# pattern). SECRET-CLASS: anyone holding the URL can forge "backup ok"
+# pings — keep the env file it lives in root-only (0600 once set; see
+# mjengo-backup.env.example). Never logged by this script.
+: "${BACKUP_HEALTHCHECK_URL:=}"
 
 readonly MJENGO_DB_PATH MJENGO_PHOTOS_DIR MJENGO_WEBSITE_DIR MJENGO_DOCS_DIR
 readonly MJENGO_BACKUP_DIR MJENGO_RETAIN_DAILY_DAYS MJENGO_RETAIN_WEEKLY_DAYS
 readonly MJENGO_BACKUP_PHOTOS MJENGO_BACKUP_WEBSITE
+readonly BACKUP_HEALTHCHECK_URL
 
 # ---- helpers -----------------------------------------------------------
 log()  { printf '[mjengo-backup] %s\n' "$*"; }
@@ -201,6 +216,11 @@ if [ "$DRY_RUN" = "1" ]; then
     log "            → $docs_dest (tar+gzip + tar -tzf read-back)"
   fi
   log "excluded by construction: db/ratelimit.db (+ -wal/-shm) — cache-like, safe to lose"
+  if [ -n "$BACKUP_HEALTHCHECK_URL" ]; then
+    log "ping:     would send the dead-man ping after a successful run (BACKUP_HEALTHCHECK_URL is set)"
+  else
+    log "ping:     none (BACKUP_HEALTHCHECK_URL unset — the default; nothing external is contacted)"
+  fi
   log "weekly refresh this run: $([ "$weekly_due" = "1" ] && echo yes || echo 'no — a weekly set newer than 6 days exists')"
   log "retention: would prune from $daily_dir files older than $MJENGO_RETAIN_DAILY_DAYS days:"
   if [ -d "$daily_dir" ]; then
@@ -294,3 +314,30 @@ prune "$daily_dir" "$MJENGO_RETAIN_DAILY_DAYS"
 prune "$weekly_dir" "$MJENGO_RETAIN_WEEKLY_DAYS"
 
 log "run complete: ${#written[@]} file(s) under $daily_dir — verify with: sha256sum -c <artifact>.sha256"
+
+# ---- dead-man ping (issue #217) ----------------------------------------
+# ONE best-effort curl after a fully successful run, so an external dead-man
+# monitor (docs/runbooks/MONITORING.md §3) can alert when the ping stops
+# arriving. Deliberately:
+#   · UNSET = nothing here runs at all (fail-open, the opt-in seam);
+#   · a failed ping NEVER fails the run — the artifacts are already good,
+#     and the monitor's "ping overdue" alert is the dead-man doing its job;
+#   · the URL is never logged (a bearer capability — the ERROR_SINK_URL
+#     discipline); the journal line states only that a ping was attempted;
+#   · failure is signaled by the MISSING ping + the FAILED unit, not by an
+#     explicit /fail ping: no network call is made from any failure path
+#     (a failure ping was considered and declined for v1 — MONITORING.md §3
+#     records the tradeoff: tune the monitor's grace tight instead);
+#   · curl is NOT in the preflight tool check above — a missing curl must
+#     never break the backup itself.
+if [ -n "$BACKUP_HEALTHCHECK_URL" ]; then
+  if command -v curl >/dev/null 2>&1; then
+    if curl -fsS --max-time 10 -o /dev/null "$BACKUP_HEALTHCHECK_URL"; then
+      log "ping: dead-man ping sent"
+    else
+      log "ping: dead-man ping failed (monitor unreachable) - backup artifacts unaffected"
+    fi
+  else
+    log "ping: BACKUP_HEALTHCHECK_URL is set but curl is not installed - no ping sent"
+  fi
+fi
