@@ -180,13 +180,24 @@ async function upsertItem(
   supplierId?: string | null,
   reorderLevel?: number,
 ) {
+  // DB-9 (issue #127, ADR 0010): supplierId is a soft FK — validate it at this
+  // ONE write seam (open/receive/transfer all flow through here) instead of
+  // leaving dangling ids for readers. Suppliers have no delete path anywhere
+  // in the app, so a miss here is caller garbage, not a deletion race. Empty
+  // string normalizes to "no link" (it used to be stored as '' — a dangling-
+  // shaped value nothing could render).
+  const sid = supplierId ? String(supplierId) : null
+  if (sid) {
+    const supplier = await tx.supplier.findUnique({ where: { id: sid } })
+    if (!supplier) throw new Error(`Supplier not found: ${sid}`)
+  }
   return tx.inventoryItem.upsert({
     where: { projectId_materialName_location: { projectId, materialName, location } },
     // reorderLevel: undefined = payload didn't mention it → keep the stored
     // level; a number = set it (#207 — the upsert is the one existing seam
     // through which an operator can configure the threshold).
-    update: { unit, supplierId: supplierId ?? undefined, ...(reorderLevel !== undefined ? { reorderLevel } : {}) },
-    create: { projectId, materialName, unit, location, supplierId: supplierId ?? null, reorderLevel: reorderLevel ?? null },
+    update: { unit, supplierId: sid ?? undefined, ...(reorderLevel !== undefined ? { reorderLevel } : {}) },
+    create: { projectId, materialName, unit, location, supplierId: sid, reorderLevel: reorderLevel ?? null },
     include: { movements: true },
   })
 }

@@ -230,3 +230,51 @@ describe('movement posting + derived closing stock (real tables)', () => {
     expect(sliceA.items[0].closingQty).toBe(8)
   })
 })
+
+describe('InventoryItem.supplierId write-time validation (DB-9, issue #127)', () => {
+  // supplierId is a soft FK → Supplier. The registry decision (ADR 0010):
+  // validated at the ONE write seam (upsertItem — open/receive/transfer all
+  // flow through it), so a dangling id can never be stored going forward.
+  // Pre-existing rows are unswept (additive house rule — documented choice).
+
+  it('accepts a known supplier and stores the link', async () => {
+    const project = await seedProject(prisma)
+    const supplier = await prisma.supplier.create({ data: { businessName: 'Kamulu Builders', county: 'Nairobi' } })
+
+    const opened = await openStock(project.id, { materialName: 'Ballast', unit: 'tonne', qty: 10, unitCost: 1200, supplierId: supplier.id })
+    const item = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: opened.inventoryItemId } })
+    expect(item.supplierId).toBe(supplier.id)
+  })
+
+  it('rejects a dangling supplierId — nothing written (real rollback, movement log untouched)', async () => {
+    const project = await seedProject(prisma)
+    await expect(
+      openStock(project.id, { materialName: 'Sand', unit: 'tonne', qty: 5, unitCost: 900, supplierId: 'supplier-that-never-was' }),
+    ).rejects.toThrow('Supplier not found: supplier-that-never-was')
+    // The whole movement transaction rolled back — no item, no movement row.
+    expect(await prisma.inventoryItem.count({ where: { projectId: project.id } })).toBe(0)
+    expect(await prisma.stockMovement.count({ where: { projectId: project.id } })).toBe(0)
+  })
+
+  it('rejects a dangling supplierId on the receive path too (the same upsertItem seam)', async () => {
+    const project = await seedProject(prisma)
+    await expect(
+      receiveStock(project.id, { materialName: 'Cement', unit: 'bag', qty: 5, unitCost: 750, supplierId: 'ghost-supplier' }),
+    ).rejects.toThrow('Supplier not found: ghost-supplier')
+    expect(await prisma.inventoryItem.count({ where: { projectId: project.id } })).toBe(0)
+  })
+
+  it('an empty-string supplierId normalizes to no link (not a dangling empty id)', async () => {
+    const project = await seedProject(prisma)
+    const opened = await openStock(project.id, { materialName: 'Nails', unit: 'kg', qty: 2, unitCost: 200, supplierId: '' })
+    const item = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: opened.inventoryItemId } })
+    expect(item.supplierId).toBeNull()
+  })
+
+  it('omitting supplierId entirely stays legal (the optional-link contract)', async () => {
+    const project = await seedProject(prisma)
+    const opened = await openStock(project.id, { materialName: 'Timber', unit: 'm', qty: 3, unitCost: 500 })
+    const item = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: opened.inventoryItemId } })
+    expect(item.supplierId).toBeNull()
+  })
+})

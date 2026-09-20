@@ -26,6 +26,15 @@ generator client {
 // Notification.kind, JobRecord.type, Attachment.entityType (caller-supplied
 // provenance pointer), Material.unit, CatalogItem.category/unit,
 // BoqLine.category.
+//
+// SOFT FK REGISTRY (issue #127 / audit DB-9): a couple dozen columns are
+// deliberate soft foreign keys — plain String scalars documented as pointing
+// at another row, kept relation-free per the additive-migration house rule
+// (ALTER TABLE ADD COLUMN only) and the Supabase parity stance (ADR 0002).
+// The full registry — every column, its guard location, its failure mode and
+// its per-column decision (constrained / validated / documented-keep-soft) —
+// lives in docs/adr/0010-soft-fk-registry.md. The per-column comments below
+// are the quick reference; the ADR is the inventory of record.
 datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")
@@ -298,6 +307,9 @@ model SitePhoto {
   project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   phaseId     String?
   phase       Phase?         @relation(fields: [phaseId], references: [id], onDelete: SetNull)
+  // soft FK → SiteZone — VALIDATED at write time (actions/evidence.ts
+  // photo.zone: the zone must exist in-project) and zone.delete untags this
+  // column first (the manual cascade — no FK). ADR 0010.
   zoneId      String?
   url         String
   caption     String?
@@ -338,7 +350,13 @@ model Transaction {
   // is an attribution dimension, amounts/ledger/balances are byte-identical.
   phaseId     String?
   phase       Phase?   @relation("TransactionPhase", fields: [phaseId], references: [id], onDelete: SetNull)
-  ledgerTxnId String? // link to the double-entry LedgerTransaction (unique per txn)
+  // DB-9 (#127): the double-entry link — unique per txn, DB-ENFORCED since
+  // migration 21 (Transaction_ledgerTxnId_key). The claim used to be comment-
+  // only; the index makes it true. NULL = legacy pre-ledger rows (SQLite
+  // unique indexes skip NULLs, so any number of NULLs stays legal). Still a
+  // SOFT scalar, not a @relation, per the additive house rule and the
+  // Supabase parity stance — ADR 0010 has the decision.
+  ledgerTxnId String? @unique
   note        String?
   date        DateTime
   createdAt   DateTime @default(now())
@@ -389,7 +407,7 @@ model EscrowWallet {
   projectId       String   @unique
   project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   balance         BigInt   @default(0) // cents (issue #122) — KES held in escrow (ledger-derived projection)
-  ledgerAccountId String? // backing LedgerAccount (liability account)
+  ledgerAccountId String? // soft FK → LedgerAccount (liability) — stamped in the same $transaction that creates the account; ADR 0010
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
@@ -398,6 +416,9 @@ model Milestone {
   id               String    @id @default(cuid())
   projectId        String
   project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // soft FK → Phase — VALIDATED at write time (actions/money.ts resolvePhase:
+  // an unknown/foreign phase throws "Phase not found in this project").
+  // Kept scalar per the additive house rule — ADR 0010.
   phaseId          String?
   name             String
   amount           BigInt // cents (issue #122) — KES to release on completion
@@ -419,6 +440,8 @@ model VariationOrder {
   id           String    @id @default(cuid())
   projectId    String
   project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // soft FK → Phase — VALIDATED at write time (actions/money.ts resolvePhase,
+  // same as Milestone.phaseId). ADR 0010.
   phaseId      String?
   title        String
   description  String
@@ -802,7 +825,9 @@ model ApprovalRule {
 
 // A concrete approval decision (pending/approved/rejected) on any entity.
 // entityType/entityId are plain strings by design — no FK; the trail is audited
-// via the Bias-Free Ledger (AuditEvent) like every action.
+// via the Bias-Free Ledger (AuditEvent) like every action. ADR 0010 records
+// the soft-FK decision: polymorphic target (no single FK possible), writers
+// only ever stamp just-loaded row ids, settle paths query the pair.
 model Approval {
   id           String    @id @default(cuid())
   projectId    String
@@ -1187,7 +1212,7 @@ model WalletAccount {
   ownerId         String?
   currency        String   @default("KES")
   status          String   @default("active") // active, frozen, closed
-  ledgerAccountId String? // backing LedgerAccount — balance derived from entries
+  ledgerAccountId String? // soft FK → LedgerAccount (balance derived from entries) — stamped in the account-creating $transaction; readers fail closed to an empty txn list. ADR 0010
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
@@ -1212,7 +1237,7 @@ model PaymentRequest {
   decidedAt         DateTime?
   decisionNote      String?
   paidAt            DateTime?
-  paidTxnId         String? // Transaction id once paid
+  paidTxnId         String? // soft FK → Transaction — stamped from the row created in the SAME $transaction at pay time; ADR 0010
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 }
@@ -1227,8 +1252,10 @@ model InventoryItem {
   project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   materialName String
   unit         String
-  materialId   String? // optional link to the global Material catalog
+  materialId   String? // optional soft link to the global Material catalog — no writer exists today (ADR 0010: keep-soft, documented)
   location     String          @default("Site Store") // site store / zone name
+  // soft FK → Supplier — VALIDATED at the one write seam (inventory/service.ts
+  // upsertItem rejects unknown ids, #127); display-only on the read side.
   supplierId   String?
   // #207: explicit low-stock threshold — derived closing ≤ level ⇒ low. Null
   // falls back to the documented default (closing ≤ 10% of everything that
@@ -1533,8 +1560,8 @@ model AiInsight {
   projectId  String
   project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   targetType String // 'site_photo' | 'draw_pack'
-  targetId   String // the SitePhoto / DrawPack the finding is about
-  packId     String? // the pack context the finding was made in (null = on-demand run)
+  targetId   String // the SitePhoto / DrawPack the finding is about (soft, polymorphic pair — ADR 0010)
+  packId     String? // the pack context the finding was made in (null = on-demand run; soft — ADR 0010)
   kind       String // 'duplicate' | 'phase_mismatch' | 'render_suspect'
   source     String // 'dhash' (rule, deterministic) | 'vision' (model, confidence-labeled)
   severity   String    @default("warning") // info, warning, critical

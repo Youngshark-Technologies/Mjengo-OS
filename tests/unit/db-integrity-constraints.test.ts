@@ -17,6 +17,15 @@
  *    DIFFERENT project stays legal (the generators are per-project);
  *  · every hot-path index exists in sqlite_master.
  *
+ * Migration 21 (DB-9, issue #127) — the soft-FK sweep's one CONSTRAIN case,
+ * pinned the same way: Transaction.ledgerTxnId is UNIQUE (the schema comment
+ * claimed "unique per txn" for years while the DB enforced nothing):
+ *  · a second Transaction row with the same ledgerTxnId is REJECTED;
+ *  · NULL stays unconstrained (SQLite unique indexes skip NULLs — the legacy
+ *    pre-ledger rows are unaffected, any number of NULLs is legal);
+ *  · applying the migration over a pre-existing duplicate corpus fails
+ *    loudly — the 10_integrity_constraints precedent, that is the point.
+ *
  * Migration 14 (DB-3, issue #124) — ledger invariants, pinned the same way
  * (direct SQL, no Prisma in the loop, so the TRIGGERS are what's under
  * test — exactly the writer the issue worried about):
@@ -146,6 +155,69 @@ describe('business-code uniqueness (DB-8)', () => {
   it('allows the same invoiceCode in a different project (per-project generator)', () => {
     insertInvoice().run('inv-1', 'INV-2026-000031', 'p-1')
     expect(() => insertInvoice().run('inv-2', 'INV-2026-000031', 'p-2')).not.toThrow()
+  })
+})
+
+describe('Transaction.ledgerTxnId uniqueness (DB-9, migration 21)', () => {
+  const insertTxn = (id: string, ledgerTxnId: string | null) =>
+    db
+      .prepare(
+        `INSERT INTO "Transaction" (id, projectId, type, amount, method, ledgerTxnId, date)
+         VALUES (?, 'p-1', 'material', 100, 'mpesa', ?, '2026-09-16 10:00:00')`,
+      )
+      .run(id, ledgerTxnId)
+
+  it('migration 21_transaction_ledger_txn_unique is part of the chain', () => {
+    expect(migrationDirs()).toContain('21_transaction_ledger_txn_unique')
+  })
+
+  it('the unique index exists in sqlite_master', () => {
+    const row = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`).get('Transaction_ledgerTxnId_key')
+    expect(row).toEqual({ name: 'Transaction_ledgerTxnId_key' })
+  })
+
+  it('rejects a second Transaction row with the same ledgerTxnId', () => {
+    insertTxn('t-1', 'lt-uniq-1')
+    expect(() => insertTxn('t-2', 'lt-uniq-1')).toThrow(/UNIQUE constraint failed: Transaction.ledgerTxnId/)
+  })
+
+  it('different ledgerTxnIds stay legal (one money event each)', () => {
+    insertTxn('t-3', 'lt-uniq-2')
+    expect(() => insertTxn('t-4', 'lt-uniq-3')).not.toThrow()
+  })
+
+  it('NULL stays unconstrained — any number of legacy pre-ledger rows is legal', () => {
+    // SQLite unique indexes treat NULLs as distinct: the rows written before
+    // the double-entry ledger (and the delivery/payroll legacy rows that
+    // never carried a link) are untouched by the constraint.
+    insertTxn('t-legacy-1', null)
+    insertTxn('t-legacy-2', null)
+    insertTxn('t-legacy-3', null)
+    expect(
+      (db.prepare(`SELECT COUNT(*) AS n FROM "Transaction" WHERE ledgerTxnId IS NULL`).get() as { n: number }).n,
+    ).toBeGreaterThanOrEqual(3)
+  })
+
+  it('fails loudly on pre-existing duplicates — applying 21 over a dup corpus throws (the point)', () => {
+    // The 10_integrity_constraints precedent: the constraint creation is the
+    // tripwire. The findFirst-??-create writers cannot produce dupes except
+    // through a race; a race survivor set must be reconciled by hand.
+    const old = new Database(':memory:')
+    for (const dir of migrationDirs()) {
+      if (parseInt(dir, 10) > 20) break
+      old.exec(readFileSync(join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf8'))
+    }
+    old.exec(`
+      INSERT INTO Project (id, shareToken, name, client, location, budget, startDate, targetDate, createdAt, updatedAt)
+        VALUES ('p-dup', 'tok-dup', 'Dupes', 'C', 'N', 100, '2026-01-01', '2026-12-01', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+      INSERT INTO "Transaction" (id, projectId, type, amount, method, ledgerTxnId, date) VALUES
+        ('t-dup-1', 'p-dup', 'material', 100, 'mpesa', 'lt-race', '2026-09-16 10:00:00'),
+        ('t-dup-2', 'p-dup', 'material', 100, 'mpesa', 'lt-race', '2026-09-16 10:00:00');
+    `)
+    expect(() =>
+      old.exec(readFileSync(join(MIGRATIONS_DIR, '21_transaction_ledger_txn_unique', 'migration.sql'), 'utf8')),
+    ).toThrow(/UNIQUE constraint failed/)
+    old.close()
   })
 })
 

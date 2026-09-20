@@ -1,0 +1,42 @@
+-- 21_transaction_ledger_txn_unique (issue #127 / audit DB-9 — the soft-FK
+-- sweep's one CONSTRAIN case): Transaction.ledgerTxnId becomes unique.
+--
+-- BEFORE: the column's schema comment claimed "unique per txn" while the
+-- database enforced nothing — the claim was convention only. Every writer
+-- already treats the link as 1:1 with the findFirst({ ledgerTxnId }) ??
+-- create idiom (8 seams: lib/mjengo.ts postExpenseTransaction + wages.pay,
+-- modules/invoices/service.ts payInvoice, modules/wallet/service.ts
+-- releaseMilestoneAtomic + recordPayment's escrow/external spend + the two
+-- reversal paths, modules/wallet/daraja-callback.ts), and every reader joins
+-- 1:1 (modules/wallet/repository.ts builds ledgerRefByTxnId maps; the
+-- invoices UI finds the ledger txn by id; api/v1/milestone-detail surfaces
+-- it). A second Transaction row for one ledger txn would make findFirst pick
+-- a row arbitrarily and silently mis-report money provenance.
+--
+-- AFTER: at most one Transaction row per non-null ledgerTxnId, DB-enforced —
+-- the comment is now TRUE. Still a SOFT scalar (no @relation/FK): promoting
+-- to a real FK needs a table rebuild (not additive) and cascade semantics the
+-- ledger's append-only posture does not want. The Supabase design
+-- (0001_schema.sql) keeps transactions.ledger_txn_id plain with a non-unique
+-- index — that divergence is recorded in ADR 0010 §4 (the registry's parity
+-- note), the same place every other soft link's decision lives.
+--
+-- SQLite NULL semantics: unique indexes treat NULLs as distinct, so the
+-- legacy rows (ledgerTxnId NULL — every Transaction written before the
+-- double-entry ledger, plus the delivery/payroll legacy rows that never
+-- carried one) are unaffected; any number of NULLs stays legal.
+--
+-- Additive-only house rule (CREATE UNIQUE INDEX, zero data migration — the
+-- 10_integrity_constraints precedent): applying this to a database that
+-- ALREADY contains duplicate ledgerTxnIds fails loudly — that is the point.
+-- The findFirst-??-create writers cannot produce dupes except through a
+-- race, and a race survivor set must be reconciled by hand, not silently
+-- indexed around. Going forward the race itself fails loudly too: the second
+-- create hits P2002 instead of silently forking the provenance.
+--
+-- Drift verified before/after with:
+--   bunx prisma migrate diff --from-migrations prisma/migrations \
+--     --to-schema-datamodel prisma/schema.prisma --script   # → empty after
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Transaction_ledgerTxnId_key" ON "Transaction"("ledgerTxnId");

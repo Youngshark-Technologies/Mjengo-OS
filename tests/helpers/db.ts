@@ -10,7 +10,7 @@
  *
  *   · a FRESH SQLite database file per test file (vitest isolates module
  *     registries per file, so the lazily-created singleton below is per-file);
- *   · the FULL migration history (00→19; 21 folders — the #159/#207 merge
+ *   · the FULL migration history (00→21; 23 folders — the #159/#207 merge
  *     race left two 18_* migrations, both applied; names stay unique so
  *     deploy order is deterministic) applied by the REAL
  *     `prisma migrate deploy` CLI (not by replaying SQL text) — the
