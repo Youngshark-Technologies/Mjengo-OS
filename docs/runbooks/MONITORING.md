@@ -23,9 +23,10 @@ down, cron dead, box dead — one mechanism covers all of them, and the
 pattern fits every free tier.
 
 **Honest scope:** a single-box self-host is monitored by an external SaaS
-or a second box — not a k8s operator, not a Prometheus stack. When #205's
-`/api/metrics` endpoint lands, check C upgrades from JSON-sniffing to real
-alert rules (§4); the other two checks stay exactly this simple forever.
+or a second box — not a k8s operator, not a Prometheus stack. #205's
+`/api/metrics` endpoint has now landed (auth-gated Prometheus text,
+`METRICS_TOKEN`), so check C can upgrade from JSON-sniffing to real alert
+rules (§4); the other two checks stay exactly this simple forever.
 
 ## 1. The signal surface (what there is to watch)
 
@@ -36,6 +37,7 @@ alert rules (§4); the other two checks stay exactly this simple forever.
 | Scheduler liveness | `docker compose logs jobs-tick` (compose) / `journalctl -u mjengo-jobs` (systemd) | a `drain failed …` line per failed tick; **silence is health** (§7.3) |
 | Backup liveness | `journalctl -u mjengo-backup.service` | a FAILED unit per failed run; one `[mjengo-backup]` artifact list per success (§7.2.1) |
 | Error events | `ERROR_SINK_URL` (§10.2) | opt-in webhook POSTs per captured error — complementary (per-event detail, not liveness) |
+| Prometheus metrics | `GET /api/metrics` + `Authorization: Bearer $METRICS_TOKEN` | text-format gauges — `mjengo_db_up`, `mjengo_db_latency_ms`, `mjengo_jobs{status=…}`, `mjengo_uptime_seconds`, `mjengo_build_info` — from the SAME queries as the gated health detail (issue #205; DB down → 503 `mjengo_scrape_error 1`, a failed scrape, never zeros) |
 
 ## 2. Check A — external uptime poll of `/api/health`
 
@@ -130,7 +132,7 @@ The seam's contract (pinned by `tests/unit/backup-deadman-ping.test.ts`):
   the script simply never curls. Everything else about the sandbox is
   unchanged.
 
-## 4. Check C — the jobs-drain watch (v1: manual-until-#204/#205)
+## 4. Check C — the jobs-drain watch (v1: the cron script; #205's scrape upgrade path is open)
 
 The scheduler is opt-in (`JOBS_RUN_TOKEN` + sidecar/systemd install) and
 nothing verified the queue actually drains. v1 of the watch is
@@ -171,11 +173,18 @@ Honest v1 caveats (all deliberate, all upgradeable):
   legitimately spike during data imports; the grace absorbs one-window
   spikes, and the alert's triage path (§7.3: check the Intel "Background
   jobs" card, `GET /api/jobs/run`, the sidecar logs) distinguishes them.
-- **When #205's `/api/metrics` lands**, replace this script with a
-  Prometheus-style alert rule on the same underlying counters
-  (`jobs_queued` monotonic across scrape windows; drain-failure counter
-  rate > 0) — the script's signals were chosen so the rule is a
-  translation, not a redesign.
+- **#205's `/api/metrics` has landed — the upgrade path is open.** The
+  script above stays valid (zero new infrastructure), but an operator
+  running any Prometheus-shaped scraper can retire its JSON sniffing:
+  scrape `/api/metrics` with `METRICS_TOKEN` (DEPLOYMENT.md §7.2) and
+  translate the two signals into alert rules — `mjengo_jobs{status="queued"}`
+  monotonic across two scrape windows (the rising-queue signal), and the
+  scrape itself failing (`up{job} 0` — which also covers the DB-down 503,
+  `mjengo_db_up 0` / `mjengo_scrape_error 1`, and the app-down case in one
+  rule). The script's signals were chosen so the rule is a translation,
+  not a redesign; a drain-failure RATE alert (drain-failure counter
+  > 0) waits on the OTel/counters seam (ADR 0009) — today's gauges carry
+  no drain-attempt counter.
 
 ## 5. Who gets paged (response expectations)
 
@@ -235,7 +244,9 @@ is encouraged to append their transcript to this file's history.
 - Ping URLs and `HEALTH_DETAIL_TOKEN` are bearer capabilities: anyone
   holding them can forge "healthy" signals. Keep them in `0600` root-owned
   files (`/etc/mjengo/monitoring.env`, tightened `/etc/mjengo/backup.env`),
-  never in git, never in tickets or chats.
+  never in git, never in tickets or chats. `METRICS_TOKEN` (§4's scrape
+  credential) is the same class — read-only telemetry, but it still
+  belongs in the same `0600` files.
 - A monitor that can only see pings learns exactly one bit per interval —
   the health *body* (counts, versions) stays gated behind the token, and
   the public probe keeps answering the minimal shape (issue #164's split

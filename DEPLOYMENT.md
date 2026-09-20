@@ -55,6 +55,7 @@ Copy `.env.example` → `.env` (gitignored — **never commit real secrets**).
 | `JOBS_HANDLER_TIMEOUT_MS` | jobs: optional | Per-handler timeout for ONE background-job invocation during a `POST /api/jobs/run` drain — default `30000` (30 s: generous for the TTS/AI handlers, far below the route's own duration budget, so one hung handler fails its own `JobRecord` row instead of stalling the whole drain). Read at drain time, not import time — a change applies to the next drain without a restart. Invalid, zero or unset values fall back to the default (never 0 — a zero cap would fail every handler instantly). A handler that exceeds the cap is marked `failed` **terminally** (no retry — it already hung a full window and would re-hang; re-enqueue after investigating). |
 | `HEALTH_DETAIL_TOKEN` | health detail: optional | Shared secret (`openssl rand -hex 32`) that unlocks the GATED diagnostics on `GET /api/health` (issue #164 / audit API-13) for ops dashboards and curl: send `X-Health-Detail: <token>` and the full pre-split body (job-queue counts, entity counts, package version, uptime, DB latency — plus the error text when the DB is down) comes back; the public body stays the probe minimum `{"ok":true,"db":"up","timestamp":…}` that compose healthchecks and the CI smoke test assert on. Constant-time compare, same discipline as `JOBS_RUN_TOKEN`. **Unset = the header path is fully disabled** (fail closed). The in-app admin SystemHealthCard needs no token — an admin session is its own gate. See §7.2. |
 | `HEALTH_PUBLIC_DETAIL` | health detail: demo opt-in | Set to `1` (or `true`) to serve the FULL `/api/health` detail body to every unauthenticated caller — the explicit demo/trusted-intranet posture (issue #164). Deliberate opt-in only: anything else (unset, `0`, `yes`, `on`…) keeps the minimal public shape. Never set on an internet-fronted deployment — the counts/version are exactly what API-13 said not to hand to strangers. |
+| `METRICS_TOKEN` | metrics scrape: optional | The DEDICATED bearer secret for `GET /api/metrics` (issue #205 / audit OBS-3 — the Prometheus text endpoint): `Authorization: Bearer <token>`; content-type `text/plain; version=0.0.4`. Renders the SAME queries `/api/health` runs (`mjengo_db_up`, `mjengo_db_latency_ms`, `mjengo_jobs{status=queued\|retrying\|failed}`, `mjengo_uptime_seconds`, `mjengo_build_info{name,version}`) via the shared `src/backend/lib/health-queries.ts`; DB down → 503 with `mjengo_scrape_error 1` (a failed scrape — Prometheus records `up{job} 0` — never a misleading zero). Deliberately NOT `JOBS_RUN_TOKEN` (drain powers) and not `HEALTH_DETAIL_TOKEN` (health detail incl. DB error text): read-only telemetry, smaller blast radius, independent rotation. Constant-time compare, same discipline as `JOBS_RUN_TOKEN`. **Unset = every request 401s** (fail closed, no default token; a 401 runs no DB query). See §7.2 and §10.3. |
 | `RECONCILIATION_CHECK_INTERVAL_MIN` | jobs: optional | Cadence of the scheduled reconciliation check (A-1-lite debit backing + the escrow projection drift alarm, issue #212) — default `1440` (daily). The `POST /api/jobs/run` callee seeds a fresh `reconciliation` job row whenever the newest one is older than this, so whatever drains that endpoint (compose `jobs-tick`, systemd timer, cron) also maintains the cadence. Never stacks rows (a queued/retrying row blocks the seed — a manual run and the schedule cannot double-book). Invalid values warn once and fall back to the daily default. See §7.3. |
 | `ESCROW_DRIFT_ALERT_CENTS` | finance alarm: optional | Alert threshold for the escrow projection drift check, in **integer cents** — default `1` (the Money-tab chip's exact-equality convention, issue #122: a one-cent drift is a drift). `|derived ledger sum − EscrowWallet.balance| ≥ threshold` emits an `escrow.drift` domain event + in-app notifications to the **finance and contractor** audiences on the drifted project. Raise it only to tolerate a KNOWN projection quirk while it is being fixed — sub-threshold drift is still recorded (un-alerted) in the job's result JSON. Invalid (non-integer / < 1) values warn once and fall back to `1`. See §7.3. |
 | `ERROR_SINK_URL` | observability: optional | The error sink gate (issue #202, audit OBS-1): when set, every captured error (route-kit error path, job-handler failures, webhook catch blocks) additionally makes ONE fire-and-forget JSON POST to this endpoint — `{ ts, service, environment?, scope, requestId?, route?, method?, error: { class, message, stack?, internal }, context? }` — with a 5s abort bound, no retries, and Prisma/framework internals redacted before the wire (the `safeErrorMessage` discipline; stacks omitted on internal errors). **Unset (the default) = journal-only: nothing external is contacted and `captureError()` is a no-op that warns once per process** — exactly the behavior of every prior release. Secret-class (a bearer capability into your collector); `ERROR_SINK_TOKEN` adds an optional Authorization header; `ERROR_SINK_ENV` is a non-secret deployment tag (falls back to `NODE_ENV`). See §10. |
@@ -825,6 +826,35 @@ server {
   3. `HEALTH_PUBLIC_DETAIL=1` — the explicit demo/trusted-intranet opt-in
      that re-opens the detail for everyone (what a sandbox preview wants;
      never an internet-fronted deployment).
+- **Metrics — the Prometheus scrape endpoint (issue #205 / audit OBS-3):**
+  `GET /api/metrics` serves the same signals in standard scrape format
+  (`text/plain; version=0.0.4`): `mjengo_db_up`, `mjengo_db_latency_ms`,
+  `mjengo_jobs{status="queued"|"retrying"|"failed"}`,
+  `mjengo_uptime_seconds`, `mjengo_build_info{name,version}` — rendered
+  from the SAME queries the gated health detail runs
+  (`src/backend/lib/health-queries.ts`, so the two endpoints cannot
+  drift). Auth is a DEDICATED bearer token, deliberately not
+  `JOBS_RUN_TOKEN` (that credential grants background-job drain powers —
+  money-adjacent) and not `HEALTH_DETAIL_TOKEN` (that one unlocks health
+  detail including DB error text): metrics is read-only telemetry with a
+  smaller blast radius, and the scraper credential rotates independently
+  of the scheduler's. Set `METRICS_TOKEN` in `.env`
+  (`openssl rand -hex 32`), then:
+  ```bash
+  curl -H "Authorization: Bearer $METRICS_TOKEN" http://your-host/api/metrics
+  # validate the exposition (optional, on any box with Prometheus):
+  curl -fsS -H "Authorization: Bearer $METRICS_TOKEN" http://your-host/api/metrics | promtool check metrics
+  ```
+  A Prometheus scrape_config needs only `bearer_token` (or
+  `authorization: credentials`) + the target URL. **Unset token = every
+  request 401s, fail closed — and a 401 runs no database query.** DB down
+  → 503 with an honest text body (`mjengo_scrape_error 1`,
+  `mjengo_db_up 0`; latency/jobs omitted — unknown, not zero): the
+  scraper records a FAILED scrape (`up{job} 0`), which is the scrapeable
+  error signal; the JSON liveness probe on `/api/health` stays the
+  uptime-monitor path (the two never conflated). The tracing growth path
+  (OTel) is a recorded design decision, not an implementation — §10.4 /
+  `docs/adr/0009-observability-otel-seam.md`.
 - **SQLite integrity posture (issue #135 / audit DB-12):** foreign-key
   enforcement in SQLite is a PER-CONNECTION `PRAGMA foreign_keys` (OFF by
   default in raw SQLite — it is not stored in the file). The app asserts it
@@ -1713,3 +1743,47 @@ adapter can be built later behind the same seam. **Known limitation:** the
 v1 routes with custom error mappers (the `/api/v1/*` family) and the events
 service's notify-failure catches are not yet wired — they migrate
 mechanically (`captureError(e, { scope })` alongside their `log.error` line).
+
+### 10.3 Metrics — the `/api/metrics` scrape endpoint (issue #205 / audit OBS-3)
+
+`GET /api/metrics` is the app's Prometheus text exposition
+(`text/plain; version=0.0.4; charset=utf-8`), auth-gated with a DEDICATED
+`METRICS_TOKEN` bearer credential (the token decision — why not
+`JOBS_RUN_TOKEN`/`HEALTH_DETAIL_TOKEN` — is recorded in §7.2 and the route
+header). The full operator wiring (curl check, `promtool check metrics`,
+Prometheus `scrape_config`, the 503-on-DB-down semantics) lives in §7.2;
+what matters here is the SEAM design:
+
+- **Same queries as health, structurally.** The db probe (`SELECT 1`) and
+  the job-status `groupBy` live in ONE module —
+  `src/backend/lib/health-queries.ts` — consumed by both `/api/health`
+  (gated detail) and `/api/metrics`. A query change lands in both or
+  neither; the endpoints cannot drift apart (pinned by
+  `tests/unit/metrics-route.test.ts`'s shared-query contract).
+- **Gauges only, honestly scoped.** `mjengo_jobs` are point-in-time row
+  counts, not queue-depth gauges — the same honesty note `/api/health`
+  has always carried. No counters/histograms exist yet because no
+  instrumentation emits them; the families rendered are exactly the
+  signals the health probe already computes, nothing invented.
+- **Fail-closed auth, zero-cost 401s.** Unset/empty/wrong token → 401 with
+  NO database query (the gate precedes the probes — an unauthenticated
+  request must cost nothing). Constant-time compare via the same
+  `lib/jobs-token.ts` helpers as the jobs/run bearer path.
+- **DB down = failed scrape, not zeros.** 503 + `mjengo_scrape_error 1`
+  (latency/jobs omitted — unknown ≠ zero). The external uptime poll of
+  `/api/health` (MONITORING.md check A) and this scrape are complementary:
+  liveness vs. gauges, never conflated.
+
+### 10.4 Tracing — the OTel growth path (design note, deliberately NOT implemented)
+
+Phase 2 of #205 is **deferred until a real consumer exists** and recorded
+as a decision, not code: [`docs/adr/0009-observability-otel-seam.md`](./docs/adr/0009-observability-otel-seam.md).
+The shape, in one paragraph: an opt-in, env-gated seam —
+`OTEL_EXPORTER_OTLP_ENDPOINT` **unset = zero behavior change** (the exact
+posture of `ERROR_SINK_URL` and `METRICS_TOKEN`); when set,
+`src/instrumentation.ts` (the existing Next.js server-boot hook, already
+the FK-pragma assert point) becomes the registration point for the Node SDK,
+and spans wrap the wallet/webhook/job surfaces the audit named (OBS-5).
+No SDK dependency is added today; nothing imports, initializes or exports
+tracing data. The ADR is the contract that the eventual implementation
+starts from — revisit triggers included.

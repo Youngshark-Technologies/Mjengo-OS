@@ -1,11 +1,14 @@
 #!/bin/sh
 # MjengoOS — jobs-drain watch v1 (deploy/monitoring/; issue #217, audit
-# §8.10). MANUAL-UNTIL-#204/#205 by design: when #205's /api/metrics
-# lands, this check upgrades to a Prometheus alert rule on the same signal
-# (MONITORING.md §4 records the upgrade path); until then this script
-# pings a dead-man monitor while the background-job queue looks healthy
-# and goes silent (→ the monitor's "ping overdue" alert) when EITHER
-# stuck-signal fires:
+# §8.10). #205's /api/metrics HAS LANDED (auth-gated Prometheus text,
+# METRICS_TOKEN): an operator running a Prometheus-shaped scraper can
+# retire this script's JSON sniffing for the alert-rule translation
+# (MONITORING.md §4 records the exact mapping — mjengo_jobs{status="queued"}
+# monotonic + up{job} 0). The script stays shipped and valid: it needs zero
+# extra infrastructure (no scraper), and until someone runs one it remains
+# the whole of check C. It pings a dead-man monitor while the
+# background-job queue looks healthy and goes silent (→ the monitor's
+# "ping overdue" alert) when EITHER stuck-signal fires:
 #
 #   signal 1 — jobs.queued is strictly RISING across two consecutive
 #     probes. The drain ticks every 5 min (§7.3), so over a 30-60 min
