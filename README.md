@@ -617,7 +617,9 @@ docker compose up -d --build  # → http://localhost:3000 (migrations run on boo
 The image is two Debian stages (bun builder → `node:20-slim` runner,
 non-root, `prisma migrate deploy` on boot). Full guide — env vars, seed
 chain, self-host without Docker, reverse proxy (the PR #7 lessons in nginx
-form), health monitoring, scheduled backups + a drilled restore runbook
+form), health monitoring (the external uptime + backup dead-man +
+jobs-drain watch runbook: [`docs/runbooks/MONITORING.md`](./docs/runbooks/MONITORING.md)),
+scheduled backups + a drilled restore runbook
 (`deploy/backup/`), secrets handling — in
 [DEPLOYMENT.md](./DEPLOYMENT.md). Health probe: `GET /api/health`.
 

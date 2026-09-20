@@ -809,8 +809,11 @@ server {
   `GET /api/health` answers the probe minimum —
   `{"ok":true,"db":"up","timestamp":"…"}` (503 `{"ok":false,"db":"down",…}`
   when the DB is down; the error text does not leak to the public). Wire
-  uptime monitoring to exactly that (the compose healthcheck and the CI
-  smoke test already do — status + `ok`/`db`, nothing more). The full
+  uptime monitoring to exactly that — the shipped, provider-agnostic
+  wiring guide (external poll, backup dead-man, jobs-drain watch — issue
+  #217) is [`docs/runbooks/MONITORING.md`](./docs/runbooks/MONITORING.md);
+  the compose healthcheck and the CI smoke test assert the same probe
+  shape (status + `ok`/`db`, nothing more). The full
   diagnostics (job-queue counts, entity counts, version, uptime,
   `dbLatencyMs`) are GATED behind one of three credentials:
   1. an **admin session** — the in-app Overview SystemHealthCard, zero
@@ -969,9 +972,15 @@ Operating notes:
 - **Failure is observable by design:** any failure (unwritable target,
   missing source, integrity check not `ok`, a photo written mid-tar…)
   exits non-zero with one `[mjengo-backup] FAILED …` line to stderr —
-  under the timer that is a FAILED unit in the journal. Point an uptime
-  monitor at the unit (dead-man switch: alert when the last successful
-  run gets old) — nothing in-tree pages anyone yet.
+  under the timer that is a FAILED unit in the journal. Since issue #217
+  the script can also ping a dead-man monitor itself: set
+  `BACKUP_HEALTHCHECK_URL` in `/etc/mjengo/backup.env` (one curl after
+  every fully successful run; unset = nothing external is contacted;
+  the URL is secret-class — chmod the file 600 once set). Thresholds,
+  monitor-side grace tuning and the sandbox note live in
+  [`docs/runbooks/MONITORING.md`](./docs/runbooks/MONITORING.md) §3 —
+  what still does NOT exist in-tree is the decision of who gets paged
+  (the runbook's §5 states the response expectations honestly).
 - **Known honest failure mode:** `tar` exits 1 if a file changes while it
   is being read ("file changed as we read it") — an upload or a contact
   submission racing the run fails it ON PURPOSE rather than ship a torn
@@ -1606,6 +1615,11 @@ honestly means per-host shared state, not global state.
   two rows pointing at the same object.
 
 ## 10. Observability (logs and the error sink)
+
+This section is the app's own emission side (what it logs and where errors
+go). The outside-in complement — external uptime polling, the backup
+dead-man, the jobs-drain watch — is its own runbook:
+[`docs/runbooks/MONITORING.md`](./docs/runbooks/MONITORING.md) (issue #217).
 
 ### 10.1 Structured logs (`LOG_FORMAT`, issue #204)
 
