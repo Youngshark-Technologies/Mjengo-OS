@@ -4,8 +4,8 @@
 # MjengoOS marketing website (mjengoos-website/) production image —
 # multi-stage, mirroring the root Dockerfile's conventions.
 #
-#  bun:     oven/bun:1, pinned by image tag — only the bun binary is copied
-#           into the stages below (no curl|bash installer).
+#  bun:     oven/bun:1, digest-pinned (INF-3) — only the bun binary is
+#           copied into the stages below (no curl|bash installer).
 #  deps:    node:20-slim + bun. `bun install --frozen-lockfile` from the
 #           site's own package.json + bun.lock. The site is an independent
 #           app: no Prisma, no auth, no database — nothing to generate.
@@ -23,7 +23,9 @@
 #           root app performs in its build script happen here instead — this
 #           app's build script stays a plain `next build`). PORT=3001.
 #           The contact-form API appends to data/submissions.json, so
-#           /app/data is created writable for the non-root user.
+#           /app/data is created writable for the non-root user. A
+#           HEALTHCHECK (INF-2) probes the site's served route with node's
+#           global fetch — see the comment at the HEALTHCHECK itself.
 #
 #  BUILD-time env = the three NEXT_PUBLIC_* ARGs above (no secrets).
 #  RUNTIME env (docker run / compose): none required. PORT/HOSTNAME are
@@ -33,9 +35,11 @@
 #  when a real appending proxy fronts this container directly.
 # ---------------------------------------------------------------------------
 
-FROM oven/bun:1 AS bun
+# Digest-pinned 2026-09-21 (INF-3): manifest-list digest, multi-arch FROM. Refresh: curl -s https://hub.docker.com/v2/repositories/oven/bun/tags/1 | jq -r .digest
+FROM oven/bun:1@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS bun
 
-FROM node:20-slim AS deps
+# Digest-pinned 2026-09-21 (INF-3): manifest-list digest, multi-arch FROM. Refresh: curl -s https://hub.docker.com/v2/repositories/library/node/tags/20-slim | jq -r .digest
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS deps
 WORKDIR /app
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
@@ -89,7 +93,8 @@ RUN bun run build \
     && cp -r .next/static .next/standalone/.next/ \
     && cp -r public .next/standalone/
 
-FROM node:20-slim AS runner
+# Digest-pinned 2026-09-21 (INF-3): manifest-list digest, multi-arch FROM. Refresh: curl -s https://hub.docker.com/v2/repositories/library/node/tags/20-slim | jq -r .digest
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
     PORT=3001 \
@@ -105,5 +110,19 @@ RUN mkdir -p /app/data && chown -R node:node /app/data
 
 USER node
 EXPOSE 3001
+
+# INF-2: container-level liveness — the site's own served route, probed
+# with the runner's Node 20 global fetch (node:20-slim ships no
+# curl/wget). /website matches the DEFAULT integrated build
+# (NEXT_PUBLIC_BASE_PATH=/website is baked at build time) — the same route
+# docker-compose.yml's website healthcheck probes; a standalone-mode build
+# (empty base path) must switch the path to '/', exactly like the compose
+# comment says. Timing mirrors the compose healthcheck (interval 30s,
+# timeout 5s, start_period 30s, retries 3) so the image and the compose
+# service report health identically; PORT is read from the container env
+# (ENV PORT=3001 above) so a runtime override moves server and probe
+# together.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||'3001')+'/website').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
 CMD ["node", "server.js"]

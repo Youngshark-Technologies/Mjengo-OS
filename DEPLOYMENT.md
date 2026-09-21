@@ -291,7 +291,9 @@ PR runs cancel automatically when new commits land (`concurrency` guard).
 
 ### 6.1 What the image is
 
-`Dockerfile` = two Debian-bookworm stages:
+`Dockerfile` = two Debian-bookworm stages, both bases **digest-pinned**
+(INF-3: `node:20-slim` and `oven/bun:1` carry `@sha256:` of the multi-arch
+manifest list — tag kept for readability, refresh command above each FROM):
 
 - **builder** — `node:20-slim` + the bun binary copied from `oven/bun:1`:
   `bun install --frozen-lockfile`, `bunx prisma generate`,
@@ -304,6 +306,11 @@ PR runs cancel automatically when new commits land (`concurrency` guard).
   `prisma/migrations/`. **On start it runs `prisma migrate deploy` (offline —
   everything needed is inside the image) and then `node server.js`.**
   Skipping migrations for one run: `docker run … mjengoos node server.js`.
+  The stage also ships a **HEALTHCHECK** (INF-2): `node -e` + Node 20's
+  global fetch probing the #164 public liveness path
+  `GET /api/health` (`200 {ok,db:"up"}` vs `503` when SQLite is down) with
+  the same timing as the compose healthcheck (30s / 5s / 30s start / 3
+  retries) — the image reports health even outside compose.
 
 `.dockerignore` keeps the context secrets-free (`.env*`, `db/`, logs, agent
 artifacts, sibling projects are excluded — env reaches the image only via
@@ -509,7 +516,11 @@ out):
   root app): ships `.next/standalone` + `.next/static` + `public/` only —
   not the ~600 MB `node_modules` tree — with `PORT=3001`, EXPOSE 3001,
   `CMD ["node", "server.js"]`. `/app/data` is created writable for the
-  contact-form API.
+  contact-form API. Like the root image, both bases are digest-pinned
+  (INF-3) and the stage ships a **HEALTHCHECK** (INF-2) — a `node -e`
+  fetch probe of `/website` (the default integrated basePath; a
+  standalone-mode build probes `/` instead) with the compose healthcheck's
+  timing.
 
 The site's `.dockerignore` keeps its context clean: `.env*`,
 `node_modules`, `.next`, `data/` and logs never enter an image.
@@ -675,6 +686,7 @@ image just for the seed):
 # 1) one-off seeder image: the staging app image + bun + the seed scripts
 docker build -t mjengo-staging-seed -f- . <<'EOF'
 FROM mjengo-staging
+# bun donor — pin its digest like the repo's own Dockerfile does (INF-3)
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 COPY --chown=node:node tsconfig.json ./
 COPY --chown=node:node prisma/seed.ts prisma/seed-all.ts prisma/seed-guard.ts ./prisma/
