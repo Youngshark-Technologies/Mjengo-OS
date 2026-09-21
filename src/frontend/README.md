@@ -73,7 +73,8 @@ mounted once in `src/app/layout.tsx`.
   finance, escrow, evidence, audit events…), built server-side by
   `backend/lib/mjengo.ts`.
 - `dispatch(action)` writes mutations into a **persisted offline outbox**
-  (localStorage `mjengo-os-store`) with per-item sync lifecycle
+  (indexedDB record `mjengo-os-store` since #351 — localStorage before, with
+  read-through adoption of the legacy key) with per-item sync lifecycle
   (pending → syncing → synced | failed | conflict) and conflict rules.
 - The outbox drains via **`POST /api/sync`** — idempotent per item
   (`Idempotency-Key` + server-side dedupe), auto-drains on reconnect,

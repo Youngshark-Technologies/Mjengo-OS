@@ -278,8 +278,17 @@ describe('public/sw.js + wiring — Background Sync drain tag (#193)', () => {
     expect(SW_SOURCE).toContain('client.postMessage({ type: DRAIN_REQUEST_MESSAGE_TYPE })')
   })
 
-  it("sw.js documents the closed-app posture honestly (defers to the next app open)", () => {
-    expect(SW_SOURCE).toContain('defers honestly to the next app open')
+  it("sw.js drains the closed app from the indexedDB record — headless-safe kinds only, money refuses honestly (#351)", () => {
+    // The #193-era honest limit ("a closed app defers to the next app open")
+    // is GONE: the outbox now lives in indexedDB, which the worker reads on
+    // the same origin. With no client open it drains the headless-safe
+    // pending items itself.
+    expect(SW_SOURCE).toContain('drainOutboxHeadlessSw()')
+    expect(SW_SOURCE).toContain('// NO client open → the closed-app drain from the indexedDB record.')
+    // The refusal policy is documented in the worker itself (fail-closed
+    // allowlist — money/session-bound kinds wait for a tab).
+    expect(SW_SOURCE).toContain('WHAT STILL REFUSES HEADLESS')
+    expect(SW_SOURCE).toContain('never a money movement')
   })
 
   it('both enqueue seams in use-mjengo dispatch() register the tag', () => {
@@ -417,8 +426,10 @@ describe('app.tsx shell strings resolve in both dictionaries', () => {
     expect(APP_SRC).toContain('shouldOfflineBoot')
     expect(APP_SRC).toContain('AUTH_LOADING_TIMEOUT_MS')
     expect(APP_SRC).toContain("t('app.offline.banner')")
-    // The gates actually honor the short-circuit.
-    expect(APP_SRC).toContain('if (status === \'loading\' && !offlineBoot)')
+    // The gates actually honor the short-circuit — including the #351
+    // store-hydration hold (the indexedDB rehydrate is async; never flash
+    // the login screen before it lands).
+    expect(APP_SRC).toContain('if ((status === \'loading\' || !storeHydrated) && !offlineBoot)')
     expect(APP_SRC).toContain('!offlineBoot) {\n    return <LoginScreen />')
   })
 })

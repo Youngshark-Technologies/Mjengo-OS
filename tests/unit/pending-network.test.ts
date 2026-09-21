@@ -1,9 +1,9 @@
 /**
  * #150 — the "Waiting for network" worklist, pinned behaviorally on the REAL
  * use-mjengo store (outbox-persistence conventions: sonner mocked, a FAKE
- * localStorage stubbed BEFORE the dynamic import so the #192 guarded adapter
- * engages and persistence is testable at the storage level; in plain node the
- * typeof guard keeps the adapter inert).
+ * indexedDB stubbed BEFORE the dynamic import so the #192/#351 guarded
+ * adapter engages and persistence is testable at the storage level; in
+ * plain node the typeof guard keeps the adapter inert).
  *
  * The remind-only decision under test, end to end:
  *   · every enqueue seam records an intent (kind + labelKey + context + tab,
@@ -36,33 +36,22 @@ vi.mock('sonner', () => ({
 }))
 
 import { toast } from 'sonner'
+import { FakeIndexedDB } from './fake-indexeddb'
 import { enDict } from '@/frontend/i18n/dicts/en'
 import { swDict } from '@/frontend/i18n/dicts/sw'
 import { translate } from '@/frontend/i18n/provider'
 
-// ---------------- the fake localStorage (the #192 adapter engages) ----------------
+// ---------------- the fake media (the #351 indexedDB adapter engages) ----------------
 
-class FakeLocalStorage {
-  store = new Map<string, string>()
-  getItem(k: string): string | null {
-    return this.store.has(k) ? this.store.get(k)! : null
-  }
-  setItem(k: string, v: string): void {
-    this.store.set(k, String(v))
-  }
-  removeItem(k: string): void {
-    this.store.delete(k)
-  }
-}
-
-const fake = new FakeLocalStorage()
-vi.stubGlobal('localStorage', fake)
+const fakeIdb = new FakeIndexedDB()
+vi.stubGlobal('indexedDB', fakeIdb)
 
 const {
   useMjengo,
   MJENGO_STORE_KEY,
   PENDING_NETWORK_CAP,
 } = await import('@/frontend/hooks/use-mjengo')
+const { OUTBOX_DB_NAME, OUTBOX_DB_STORE } = await import('@/frontend/lib/outbox-idb')
 import type { PendingNetworkItem, OutboxItem } from '@/frontend/hooks/use-mjengo'
 
 // ---------------- helpers (outbox-persistence conventions) ----------------
@@ -102,13 +91,18 @@ function resetStore(overrides: Record<string, unknown> = {}) {
 const state = () => useMjengo.getState()
 const readSrc = (rel: string) =>
   readFileSync(fileURLToPath(new URL(`../../${rel}`, import.meta.url)), 'utf8')
-const persisted = () => JSON.parse(fake.getItem(MJENGO_STORE_KEY)!) as {
+const persisted = () => JSON.parse(fakeIdb.record(OUTBOX_DB_NAME, OUTBOX_DB_STORE, MJENGO_STORE_KEY)!) as {
   state: { pendingNetwork: PendingNetworkItem[]; outbox: OutboxItem[] } & Record<string, unknown>
   version?: number
 }
+/** Settle the async #351 medium (the serialized kv chain + the flag flips). */
+const flush = async () => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
 
 // Captured BEFORE any test stubs it — afterEach restores fetch to THIS so
-// per-test fetch doubles never leak (the localStorage stub must stay: the
+// per-test fetch doubles never leak (the indexedDB stub must stay: the
 // store module was created against it).
 const originalFetch = globalThis.fetch
 
@@ -122,10 +116,11 @@ function enqueuePay(code = 'PR-1001') {
   })
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
-  fake.store.clear()
+  fakeIdb.clearRecords()
   resetStore()
+  await flush()
 })
 
 afterEach(() => {
@@ -151,12 +146,13 @@ describe('#150: enqueue — the online-only refusal gets a memory', () => {
     expect(item.tab).toBe('money')
   })
 
-  it('never touches the outbox — reminders are not queued mutations', () => {
+  it('never touches the outbox — reminders are not queued mutations', async () => {
     enqueuePay()
+    await flush()
     expect(state().pendingNetwork).toHaveLength(1)
     expect(state().outbox).toEqual([])
     // And at the storage level: the persisted outbox stays empty while the
-    // reminder reaches disk in its OWN slice.
+    // reminder reaches the medium in its OWN slice.
     const onDisk = persisted()
     expect(onDisk.state.outbox).toHaveLength(0)
     expect(onDisk.state.pendingNetwork).toHaveLength(1)
@@ -283,22 +279,23 @@ describe('#150: reconnect surfaces the waiting worklist (mirrors the outbox toas
 // ---------------- persistence: the documented partialize decision ----------------
 
 describe('#150: persistence — the reminder survives a reload', () => {
-  it('entries are on disk and a rehydrate restores them (the "user must remember" failure mode stays dead)', async () => {
+  it('entries are on the medium and a rehydrate restores them (the "user must remember" failure mode stays dead)', async () => {
     enqueuePay('PR-42')
     state().enqueuePendingNetwork({
       kind: 'ai.trustDigest',
       labelKey: 'netlist.kind.trustDigest',
       tab: 'intel',
     })
+    await flush()
     const onDisk = persisted()
     expect(onDisk.state.pendingNetwork).toHaveLength(2)
-    expect(onDisk.version).toBe(1)
+    expect(onDisk.version).toBe(2)
 
-    // The relaunch: memory empty, key intact → rehydrate → reminders restored.
-    const bytes = fake.getItem(MJENGO_STORE_KEY)!
+    // The relaunch: memory empty, record intact → rehydrate → reminders restored.
+    const bytes = fakeIdb.record(OUTBOX_DB_NAME, OUTBOX_DB_STORE, MJENGO_STORE_KEY)!
     useMjengo.setState({ pendingNetwork: [] } as never)
-    expect(state().pendingNetwork).toHaveLength(0)
-    fake.store.set(MJENGO_STORE_KEY, bytes) // the app died AFTER this write
+    await flush() // the memory-reset's own (empty) write settles FIRST…
+    fakeIdb.setRecord(OUTBOX_DB_NAME, OUTBOX_DB_STORE, MJENGO_STORE_KEY, bytes) // …then the app died AFTER this write
     await useMjengo.persist.rehydrate()
 
     expect(state().pendingNetwork).toHaveLength(2)

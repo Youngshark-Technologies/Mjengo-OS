@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import { toast } from 'sonner'
 import { useLocalePrefs } from '@/frontend/i18n/store'
 import { translate } from '@/frontend/i18n/provider'
@@ -31,6 +31,12 @@ import {
   type SyncHistoryItem,
   type SyncItemResult,
 } from '@/frontend/lib/outbox'
+// #192/#351: the guarded-persistence policy (write-failure catch, queue-only
+// fallback, health reporting) and the indexedDB medium (kv seam + legacy
+// adoption) — extracted per-surface so the supplier portal (#352) runs the
+// same discipline on its own key.
+import { createGuardedStorage } from '@/frontend/lib/guarded-storage'
+import { createIndexedDbKvStore, createIndexedDbStateStorage } from '@/frontend/lib/outbox-idb'
 // #193: Background Sync registration — the feature-detected pure helper
 // (sw-handlers.ts, unit-tested) the enqueue seams below ride on.
 import { registerOutboxSync } from '@/frontend/sw-handlers'
@@ -187,7 +193,7 @@ function armAutoRetryTimer(): void {
   autoRetry.arm()
 }
 
-// ---------------- #193 — Background Sync registration at enqueue time ----------------
+// ---------------- #193/#351 — Background Sync registration at enqueue time ----------------
 //
 // Queuing an outbox item ALSO asks the browser to drain it when connectivity
 // returns, even if the app is closed by then (Chromium's Background Sync;
@@ -196,8 +202,10 @@ function armAutoRetryTimer(): void {
 // failure mode swallowed — a refused or unsupported registration must never
 // break the enqueue it rides on. The sw.js `sync` handler posts
 // { type: 'mjengoos:drain' } at any open client (app.tsx listens and runs
-// syncNow); a closed app defers honestly to the next app open (documented
-// limit — the SW cannot read the page's localStorage outbox).
+// syncNow); with NO client open it drains the headless-safe pending items
+// straight from the indexedDB record itself (#351 — the money/session-bound
+// kinds refuse honestly and wait for a tab; see sw-handlers.ts for the
+// policy and public/sw.js for the mirror).
 function registerOutboxBackgroundSync(): void {
   try {
     if (typeof navigator === 'undefined') return // SSR / node tests
@@ -291,10 +299,10 @@ export type PendingNetworkInput = Omit<PendingNetworkItem, 'id' | 'createdAt'>
  */
 export const PENDING_NETWORK_CAP = 20
 
-// ---------------- #192 — guarded persistence (quota / private mode) ----------------
+// ---------------- #192/#351 — guarded persistence (quota / private mode) on indexedDB ----------------
 //
 // The whole app state (ProjectPayload `data` + the outbox + syncHistory)
-// lives in ONE localStorage key. Before #192 a failed setItem
+// used to live in ONE localStorage key. Before #192 a failed setItem
 // (QuotaExceededError on a full low-storage Android, iOS private-window
 // PWA, security software) propagated straight out of `set()`: zustand's
 // persist middleware calls storage.setItem synchronously inside every
@@ -304,68 +312,44 @@ export const PENDING_NETWORK_CAP = 20
 // said so (the SW has a quota LRU for photos; the mutation queue had
 // nothing).
 //
-// The fix is a storage ADAPTER (the zustand createJSONStorage seam), not
-// a change to WHAT is persisted (see the partialize decision comment):
-//   · every write failure is CAUGHT — the triggering action never sees
-//     the exception; the in-memory store remains the source of truth;
-//   · a quota failure retries ONCE with the re-fetchable `data` slice
-//     dropped (queue-only fallback): the mutation queue is the only part
-//     of the payload that is NOT re-fetchable from the server, so a full
-//     device still banks the user's work;
-//   · the outcome flips the non-persisted persistDegraded/persistQueueOnly
-//     flags → the app.tsx banner — degradation is LOUD, never silent;
-//   · a later successful FULL write self-heals the flags.
+// #192 fixed that with a storage ADAPTER (the zustand createJSONStorage
+// seam), not a change to WHAT is persisted (see the partialize decision
+// comment). #351 keeps that seam and moves the MEDIUM localStorage →
+// indexedDB so the service worker can read the outbox and Background Sync
+// drains it with no tab open:
+//   · the medium: lib/outbox-idb.ts (plain indexedDB API, no deps) — one
+//     string record under this same key, with read-through adoption of the
+//     legacy localStorage snapshot on first run (no silent data loss; the
+//     legacy key is cleared only after the migrated write lands);
+//   · the policy: lib/guarded-storage.ts (the #192 write-failure contract,
+//     extracted and parameterized per surface — the supplier portal runs
+//     the same discipline on its own key, #352). Every write failure is
+//     CAUGHT (the triggering action never sees the exception; the in-memory
+//     store remains the source of truth), a quota failure retries ONCE
+//     with the re-fetchable `data` slice dropped (queue-only fallback: the
+//     mutation queue is the only part of the payload that is NOT
+//     re-fetchable from the server, so a full device still banks the
+//     user's work), and the outcome flips the non-persisted
+//     persistDegraded/persistQueueOnly flags → the app.tsx banner —
+//     degradation is LOUD, never silent; a later successful FULL write
+//     self-heals the flags.
 
-/** The ONE localStorage key the whole owner store persists to (spec §40). */
+/** The ONE key the whole owner store persists under (spec §40) — the localStorage key it always was, now the indexedDB record key. */
 export const MJENGO_STORE_KEY = 'mjengo-os-store'
 
 /**
- * The raw localStorage seam wrapped for createJSONStorage. Never touches
- * localStorage at module scope — the typeof guard in the persist options
- * below keeps node/SSR exactly as inert as the old default storage.
+ * The #351 medium: the indexedDB kv bridge (ordered ops + legacy adoption)
+ * wrapped in the guarded-write policy. Never touches indexedDB at module
+ * scope — the typeof guard in the persist options below keeps node/SSR
+ * exactly as inert as the old default storage (a browser without
+ * indexedDB gets the degraded in-memory posture, never a crash).
  */
-const guardedLocalStorage: StateStorage = {
-  getItem: (name) => localStorage.getItem(name),
-  setItem: (name, value) => {
-    try {
-      localStorage.setItem(name, value)
-      setPersistHealth('ok')
-      return
-    } catch (e) {
-      // QuotaExceededError / private-mode refusal. NEVER rethrow: this
-      // runs synchronously inside every setState, so an escaping exception
-      // would break the action that called set() — the exact silent-loss
-      // failure mode #192 exists to fix.
-      console.error(`[${MJENGO_STORE_KEY}] persistence write failed — surfacing degradation`, e)
-    }
-    // Queue-only fallback (the #192 bounding decision): drop `data` (the
-    // largest RE-FETCHABLE slice — a reload refills it from /api/project
-    // once connectivity returns) and retry once, so the irreplaceable part
-    // (the queued mutations + their §41 conflict state) still reaches disk.
-    try {
-      const parsed = JSON.parse(value) as { state?: Record<string, unknown> }
-      if (parsed && typeof parsed === 'object' && parsed.state && typeof parsed.state === 'object') {
-        localStorage.setItem(name, JSON.stringify({ ...parsed, state: { ...parsed.state, data: null } }))
-        setPersistHealth('queue-only')
-      } else {
-        // Not the shape we know how to slim (should never happen — the
-        // value is always createJSONStorage's { state, version }).
-        setPersistHealth('degraded')
-      }
-    } catch {
-      // Even the slimmed write does not fit (hard quota / private mode):
-      // nothing reaches disk — the loud banner is the only honest signal.
-      setPersistHealth('degraded')
-    }
-  },
-  removeItem: (name) => {
-    try {
-      localStorage.removeItem(name)
-    } catch {
-      // A failing removal never loses data the app still holds in memory.
-    }
-  },
-}
+const guardedOutboxIdbStorage = createGuardedStorage({
+  label: MJENGO_STORE_KEY,
+  storage: createIndexedDbStateStorage(createIndexedDbKvStore()),
+  droppableSlice: 'data',
+  onHealth: setPersistHealth,
+})
 
 /**
  * The adapter's write outcome → the store's non-persisted health flags.
@@ -1595,19 +1579,29 @@ export const useMjengo = create<MjengoState>()(
     }),
     {
       name: MJENGO_STORE_KEY,
-      version: 1,
-      // #192 — the guarded adapter: write failures (quota / private mode)
-      // are caught + surfaced, and a quota failure retries once with the
-      // re-fetchable data slice dropped so the mutation queue still banks.
-      // The typeof guard keeps node/SSR byte-identical to the old default
-      // storage (createJSONStorage returns undefined when getStorage
-      // throws → persist inert — no phantom localStorage in tests/server).
+      // v2 (#351): the medium moved localStorage → indexedDB. A v1 record
+      // reaches migrate ONLY via the read-through legacy adoption (the
+      // adapter hands the old localStorage snapshot back verbatim when the
+      // kv is empty — see lib/outbox-idb.ts); the migrated state is then
+      // re-written through the guarded adapter, and THAT successful write
+      // is what clears the legacy key. Steady-state v2 records skip
+      // migrate entirely.
+      version: 2,
+      // #192/#351 — the guarded adapter on the indexedDB medium: write
+      // failures (quota / private mode) are caught + surfaced, and a quota
+      // failure retries once with the re-fetchable data slice dropped so
+      // the mutation queue still banks. The typeof guard keeps node/SSR
+      // byte-identical to the old default storage (createJSONStorage
+      // returns undefined when getStorage throws → persist inert — no
+      // phantom indexedDB in tests/server).
       storage: createJSONStorage(() => {
-        if (typeof localStorage === 'undefined') throw new Error('localStorage unavailable')
-        return guardedLocalStorage
+        if (typeof indexedDB === 'undefined') throw new Error('indexedDB unavailable')
+        return guardedOutboxIdbStorage
       }),
       // v0 → v1: outbox items gain the §40 lifecycle fields; old items become
       // 'pending' so a pre-upgrade queue still drains exactly as before.
+      // v1 → v2 (#351): the indexedDB medium move — same normalization (the
+      // snapshot shape itself is unchanged; only WHERE it lives moved).
       migrate: (persisted: unknown) => {
         const s = (persisted ?? {}) as Partial<MjengoState> & { outbox?: OutboxItem[] }
         return {
@@ -1629,7 +1623,7 @@ export const useMjengo = create<MjengoState>()(
         // the writing surface (whose result snapshot carries the outcome) or
         // died with it. No drain owns it in THIS surface — without this it
         // strands forever showing “Syncing…” (syncNow only drains 'pending').
-        // The cross-tab rehydrate below rides the same normalization.
+        // The foreground cross-tab re-read below rides the same normalization.
         const orphaned = state?.outbox?.some((o) => o.syncStatus === 'syncing') ?? false
         // #132: restore the auto-retry schedule after a reload — the persisted
         // nextAttemptAt stamps survive, the timer itself does not. Deferred a
@@ -1687,46 +1681,57 @@ export const useMjengo = create<MjengoState>()(
 )
 
 /**
- * #192 — cross-tab rehydration (the browser `storage` event).
+ * #192/#351 — cross-tab rehydration (foreground re-read).
  *
- * zustand-persist does NOT listen for `storage`: with two surfaces open
- * (installed PWA window + browser tab) each surface's writes are invisible
- * to the other, and the stale surface's next write clobbers the newer
- * snapshot wholesale — an older outbox can wipe newer queued mutations.
+ * zustand-persist does NOT re-read storage on its own: with two surfaces
+ * open (installed PWA window + browser tab) each surface's writes are
+ * invisible to the other, and the stale surface's next write clobbers the
+ * newer snapshot wholesale — an older outbox can wipe newer queued
+ * mutations.
  *
  * v1 semantics (deliberate, documented): DEBOUNCED LAST-WRITER-WINS WITH
- * REHYDRATE. When another surface writes our key, this surface re-reads it
- * (persist.rehydrate() → shallow merge of the partialized keys) within a
+ * REHYDRATE. When another surface writes the record, this surface re-reads
+ * it (persist.rehydrate() → shallow merge of the partialized keys) within a
  * short trailing debounce (persist writes on every setState, so an active
  * peer emits bursts). A CRDT is explicitly NOT wanted: true conflicts are
  * already arbitrated server-side (§41 rules + per-row baseVersion
  * rejections — outbox-versions.test.ts); a client-side CRDT would duplicate
  * that machinery and still could not decide a semantic conflict.
- * Honest v1 limits: a rehydrate can momentarily revert an in-flight drain's
- * 'syncing' items to the peer's snapshot state (the orphan normalization in
- * onRehydrateStorage returns them to 'pending'; the server's versioned
- * appliers arbitrate any double-flush), and a key CLEARED by another tab
- * (storage event with key === null) is ignored — this surface keeps working
- * from memory and its next write re-creates the key.
+ *
+ * #351 MECHANISM CHOICE (documented, not faked): localStorage fired a
+ * `storage` event at every foreign write; indexedDB has NO equivalent
+ * storage-event, so this surface re-reads when it returns to the
+ * FOREGROUND — `visibilitychange` (became visible) and `focus`. Chosen
+ * over BroadcastChannel deliberately: it needs no channel support (every
+ * target browser has focus/visibility), and the staleness only matters
+ * when a human returns to THIS surface — the moment of return is exactly
+ * the trigger. Honest limits: a background surface stays stale until it is
+ * next focused/visible (fine — it cannot take user input in the
+ * background, and its writes are the clobber risk the debounce bounds),
+ * and the same #191-era orphan rules apply: a rehydrate can momentarily
+ * revert an in-flight drain's 'syncing' items to the peer's snapshot state
+ * (the orphan normalization in onRehydrateStorage returns them to
+ * 'pending'; the server's versioned appliers arbitrate any double-flush —
+ * the same backstop covers a service-worker headless drain that lands
+ * while this surface rehydrates, §57 item-id idempotency).
  */
 
 /** Debounce window for cross-tab rehydrates (#192). */
 export const CROSS_TAB_REHYDRATE_DEBOUNCE_MS = 250
 
 /**
- * Pure decision (#192): only writes to OUR key rehydrate. `key === null` is
- * a clear() from another surface — deliberately NOT ours to react to (see
- * the section comment).
+ * Pure decision (#351): does this document-state change warrant a re-read?
+ * Only a return to visibility does — a surface moving to the background
+ * (hidden) has nothing to re-read for.
  */
-export function shouldRehydrateFromStorageEvent(e: { key: string | null }): boolean {
-  return e.key === MJENGO_STORE_KEY
+export function shouldRehydrateFromForeground(visibilityState: string): boolean {
+  return visibilityState === 'visible'
 }
 
 let crossTabRehydrateTimer: ReturnType<typeof setTimeout> | null = null
 
-/** The storage-event entry point (#192): debounced rehydrate on our key's foreign writes. */
-export function handleCrossTabStorageEvent(e: { key: string | null }): void {
-  if (!shouldRehydrateFromStorageEvent(e)) return
+/** The foreground-signal entry point (#192/#351): debounced rehydrate of the newest snapshot. */
+export function handleCrossTabForegroundSignal(): void {
   if (crossTabRehydrateTimer !== null) clearTimeout(crossTabRehydrateTimer)
   crossTabRehydrateTimer = setTimeout(() => {
     crossTabRehydrateTimer = null
@@ -1740,9 +1745,14 @@ export function handleCrossTabStorageEvent(e: { key: string | null }): void {
 
 // Registered once per page load at module scope (the store is a singleton —
 // same home as the __MJENGO_DEBUG__ hook below; node/SSR have no window, so
-// tests call handleCrossTabStorageEvent directly).
+// tests call handleCrossTabForegroundSignal directly).
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-  window.addEventListener('storage', handleCrossTabStorageEvent)
+  window.addEventListener('focus', handleCrossTabForegroundSignal)
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', () => {
+      if (shouldRehydrateFromForeground(document.visibilityState)) handleCrossTabForegroundSignal()
+    })
+  }
 }
 
 /**

@@ -1,36 +1,42 @@
 /**
- * #192 — outbox persistence hardening, pinned behaviorally on the REAL
- * use-mjengo store running against a FAKE localStorage (the zustand
- * `createJSONStorage` seam is what production uses — the store module is
- * imported dynamically AFTER the global is stubbed so the #192 guarded
- * adapter actually engages; in plain node the same typeof guard keeps the
- * adapter inert, byte-identical to the pre-#192 default storage).
+ * #192/#337/#351 — outbox persistence hardening, pinned behaviorally on the
+ * REAL use-mjengo store running against a FAKE indexedDB (the #351 medium —
+ * the zustand `createJSONStorage` seam is what production uses; the store
+ * module is imported dynamically AFTER the globals are stubbed so the
+ * guarded adapter actually engages; in plain node the same typeof guard
+ * keeps the adapter inert, byte-identical to the pre-#192 default storage).
  *
  * The scenarios, end to end:
- *   · a QuotaExceededError on setItem used to propagate straight out of
- *     set() (persist calls storage.setItem synchronously inside every
- *     setState): the running action broke, the in-memory store kept
- *     queueing, and every mutation was silently one tab-close from loss.
- *     Pinned now: the adapter CATCHES it, the action completes fully, and
- *     the persistDegraded flag flips (the app.tsx banner's source);
+ *   · a QuotaExceededError on the medium's put used to propagate straight
+ *     out of set() (persist floats storage.setItem inside every setState):
+ *     the running action broke, the in-memory store kept queueing, and
+ *     every mutation was silently one tab-close from loss. Pinned now: the
+ *     adapter CATCHES it, the action completes fully, and the
+ *     persistDegraded flag flips (the app.tsx banner's source);
  *   · the queue-only fallback: when the full write does not fit but a
  *     data-less one does, the irreplaceable part (the mutation queue)
  *     still banks — `data` is re-fetchable, the queue is not;
  *   · recovery: a later successful full write self-heals the flags;
- *   · multi-tab: a storage event from another surface rehydrates this one
- *     (debounced last-writer-wins — a CRDT is deliberately NOT wanted, see
- *     the use-mjengo.ts section comment), and an orphaned 'syncing' item
- *     from a mid-drain snapshot returns to 'pending' instead of stranding
- *     forever;
- *   · restart: offline-queued items are on disk and a rehydrate restores
- *     them drainable;
+ *   · the #351 medium itself: offline-queued items are in the indexedDB
+ *     record the service worker reads, a relaunch rehydrates them
+ *     drainable, and an UNREADABLE medium (private-mode open refusal)
+ *     surfaces as degradation — never a crash, never silent;
+ *   · the #351 LEGACY ADOPTION: a pre-#351 install's localStorage snapshot
+ *     is read through on first run, migrated, and the legacy key cleared
+ *     only after the migrated write lands (a failed write keeps it — no
+ *     silent data loss); a kv record that already exists is never
+ *     re-adopted;
+ *   · cross-tab: #351 replaced the localStorage `storage` event (indexedDB
+ *     has none) with a foreground re-read (visibilitychange/focus) — the
+ *     debounced rehydrate is pinned, and an orphaned 'syncing' item from a
+ *     mid-drain snapshot returns to 'pending' instead of stranding forever;
  *   · the #192 bounding decision is pinned, not faked: `data` STAYS
  *     persisted (the offline boot serves it — issue #78), the payload is
  *     measured against a documented budget, and the outbox stays unbounded
  *     by design (spec §52: the live queue is never pruned);
- *   · wiring source pins (app.tsx banner, panel device-local note, the
- *     adapter + storage listener) + EN/SW dictionary parity for every new
- *     user-facing key.
+ *   · wiring source pins (app.tsx banner + hydration hold, panel
+ *     device-local note, the guarded adapter + foreground listeners) +
+ *     EN/SW dictionary parity for every new user-facing key.
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -41,50 +47,46 @@ vi.mock('sonner', () => ({
 }))
 
 import { toast } from 'sonner'
-import type { OutboxItem } from '@/frontend/hooks/use-mjengo'
+import { FakeIndexedDB } from './fake-indexeddb'
 import { enDict } from '@/frontend/i18n/dicts/en'
 import { swDict } from '@/frontend/i18n/dicts/sw'
 import { translate } from '@/frontend/i18n/provider'
+import type { OutboxItem } from '@/frontend/hooks/use-mjengo'
 
-// ---------------- the fake localStorage (quota-aware) ----------------
+// ---------------- the fake media (the #351 medium + the legacy one) ----------------
 
-/** What the browser gives us: getItem/removeItem + a setItem that can throw. */
+/** The indexedDB double the owner store now persists through (#351). */
+const fakeIdb = new FakeIndexedDB()
+
+/** The LEGACY localStorage double (pre-#351 installs adopt from it). */
 class FakeLocalStorage {
   store = new Map<string, string>()
-  /** Hard quota / private mode: every write throws. */
-  quotaExceeded = false
-  /** Soft quota boundary: writes LONGER than this throw (bytes ≈ chars). */
-  quotaBytes = Number.POSITIVE_INFINITY
 
   getItem(k: string): string | null {
     return this.store.has(k) ? this.store.get(k)! : null
   }
   setItem(k: string, v: string): void {
-    if (this.quotaExceeded || v.length > this.quotaBytes) {
-      const e = new Error('mock quota exceeded')
-      e.name = 'QuotaExceededError'
-      throw e
-    }
     this.store.set(k, String(v))
   }
   removeItem(k: string): void {
     this.store.delete(k)
   }
 }
+const legacy = new FakeLocalStorage()
 
-const fake = new FakeLocalStorage()
-
-// The store must be created AFTER the stub exists: the #192 adapter's
-// typeof guard decides at persist() creation whether storage is real.
-vi.stubGlobal('localStorage', fake)
+// Both media must exist BEFORE the store module is imported: the #192/#351
+// adapter's typeof guards decide at persist() creation whether storage is real.
+vi.stubGlobal('indexedDB', fakeIdb)
+vi.stubGlobal('localStorage', legacy)
 
 const {
   useMjengo,
   MJENGO_STORE_KEY,
-  shouldRehydrateFromStorageEvent,
-  handleCrossTabStorageEvent,
+  shouldRehydrateFromForeground,
+  handleCrossTabForegroundSignal,
   CROSS_TAB_REHYDRATE_DEBOUNCE_MS,
 } = await import('@/frontend/hooks/use-mjengo')
+const { OUTBOX_DB_NAME, OUTBOX_DB_STORE } = await import('@/frontend/lib/outbox-idb')
 
 // ---------------- helpers (outbox-auth-drain conventions) ----------------
 
@@ -134,7 +136,7 @@ function smallData(paddingTransactions = 60): unknown {
  * server's reads are take-capped, #105/#154/#155: the roster caps
  * phases/transactions/workers/photos at 200-500 and the detail payload's
  * lifetime scans are bounded by the project's own rows). This models the
- * biggest shape the key can honestly carry; the budget assertion below
+ * biggest shape the record can honestly carry; the budget assertion below
  * documents the measured ceiling.
  */
 function largeProjectPayload(): unknown {
@@ -228,43 +230,68 @@ function resetStore(overrides: Record<string, unknown> = {}) {
 const state = () => useMjengo.getState()
 const readSrc = (rel: string) =>
   readFileSync(fileURLToPath(new URL(`../../${rel}`, import.meta.url)), 'utf8')
-const persisted = () => JSON.parse(fake.getItem(MJENGO_STORE_KEY)!) as {
+/** The persisted record, as the service worker reads it (#351). */
+const persisted = () => JSON.parse(fakeIdb.record(OUTBOX_DB_NAME, OUTBOX_DB_STORE, MJENGO_STORE_KEY)!) as {
   state: { outbox: OutboxItem[]; data: unknown } & Record<string, unknown>
   version?: number
 }
+/**
+ * Settle the ASYNC medium: the serialized kv chain + the guarded fallback +
+ * the health-flag flip (which is itself a setState → one more write) all
+ * run as microtasks/macrotasks after the triggering action returned. Two
+ * macrotask rounds cover the deepest chain (including the TDZ-deferred
+ * health report from a module-init write).
+ */
+const flush = async () => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
+/** One macrotask — enough for a fresh module's hydration to finish. */
+const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+/** Real-time sleep — the debounce tests below deliberately avoid fake timers (an aborted fake-timer test would leave the setTimeout stub installed and poison every later hook). */
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
 // Captured BEFORE any test stubs it — afterEach restores fetch to THIS, so
 // per-test fetch doubles never leak (vi.unstubAllGlobals is NOT an option
-// here: it would also remove the module-scoped localStorage stub the store
-// was created against).
+// here: it would also remove the module-scoped media stubs the store was
+// created against).
 const originalFetch = globalThis.fetch
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
-  // A clean device before every scenario: quota off, boundary at infinity.
-  fake.quotaExceeded = false
-  fake.quotaBytes = Number.POSITIVE_INFINITY
-  fake.store.clear()
+  // A clean device before every scenario: quota off, boundary at infinity,
+  // no records, no legacy key. resetStore's own write is flushed so tests
+  // that place a quota boundary start from a known on-disk baseline.
+  fakeIdb.quotaExceeded = false
+  fakeIdb.quotaBytes = Number.POSITIVE_INFINITY
+  fakeIdb.openRefused = false
+  fakeIdb.clearRecords()
+  legacy.store.clear()
   resetStore()
+  await flush()
 })
 
 afterEach(() => {
+  vi.useRealTimers() // safety net: an aborted fake-timer test must not poison later hooks
   vi.restoreAllMocks()
   vi.stubGlobal('fetch', originalFetch)
 })
 
 // ---------------- quota / private-mode write failures ----------------
 
-describe('#192: a failing setItem is caught, the action survives, degradation is LOUD', () => {
+describe('#192/#351: a failing medium write is caught, the action survives, degradation is LOUD', () => {
   it('offline dispatch under a hard quota never throws, still queues optimistically, and flips persistDegraded', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     resetStore({ online: false, outbox: [] })
-    fake.quotaExceeded = true
+    await flush()
+    fakeIdb.quotaExceeded = true
 
-    // Before #192 this rejected: persist calls storage.setItem synchronously
-    // inside set(), so the QuotaExceededError broke the dispatch mid-flight.
+    // Before #192 this rejected: persist floats storage.setItem inside
+    // set(), so the QuotaExceededError broke the dispatch mid-flight.
     await expect(
       state().dispatch('attendance.setStatus', { workerId: 'w-1', status: 'present' }, 'Mark present'),
     ).resolves.toBe(true)
+    await flush()
 
     expect(state().outbox).toHaveLength(1) // queued in memory (the source of truth)
     expect(state().outbox[0].syncStatus).toBe('pending')
@@ -273,56 +300,85 @@ describe('#192: a failing setItem is caught, the action survives, degradation is
     expect(state().persistQueueOnly).toBe(false)
     // The failure is surfaced at the console seam too (never swallowed).
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('persistence write failed'), expect.any(Error))
+    // And nothing new reached the medium — it is still the last good write.
+    expect(persisted().state.outbox).toHaveLength(0)
   })
 
   it('the online-when-network-lies branch completes fully under quota (queued toast fires — the action ran to the end)', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     resetStore({ online: true, outbox: [] })
-    fake.quotaExceeded = true
+    await flush()
+    fakeIdb.quotaExceeded = true
     vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('ECONNREFUSED'))))
 
     await expect(
       state().dispatch('attendance.setStatus', { workerId: 'w-1', status: 'half_day' }, 'Mark half day'),
     ).resolves.toBe(true)
+    await flush()
 
     expect(state().outbox).toHaveLength(1)
     expect(toast.success).toHaveBeenCalledWith(translate(enDict, 'field.savedQueued', { count: 1 }))
     expect(state().persistDegraded).toBe(true)
   })
 
-  it('private-mode hard failure keeps the in-memory store fully functional across many writes', () => {
+  it('private-mode hard failure keeps the in-memory store fully functional across many writes', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
-    fake.quotaExceeded = true
+    fakeIdb.quotaExceeded = true
 
     for (let i = 0; i < 5; i++) {
       useMjengo.setState({ outbox: [...state().outbox, queuedItem(100 + i)] } as never)
     }
+    await flush()
     expect(state().outbox).toHaveLength(7)
     expect(state().persistDegraded).toBe(true)
     expect(state().persistQueueOnly).toBe(false)
-    // Nothing NEW reached disk — the key still holds the LAST GOOD snapshot
-    // (2 items from the pre-quota write), which is exactly what the banner
-    // announces: work after that point is memory-only.
+    // Nothing NEW reached the medium — the record still holds the LAST GOOD
+    // snapshot (2 items from the pre-quota write), which is exactly what the
+    // banner announces: work after that point is memory-only.
     expect(persisted().state.outbox).toHaveLength(2)
+  })
+
+  it('an unreadable medium (private-mode open refusal) surfaces as degradation — never a crash', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    // A fresh install whose medium refuses the open entirely: hydration
+    // fails (the #192 onRehydrateStorage error arm) AND every write fails
+    // (the guarded catch) — the app still boots and queues in memory.
+    vi.resetModules()
+    fakeIdb.clearRecords()
+    fakeIdb.openRefused = true
+    const { useMjengo: fresh } = await import('@/frontend/hooks/use-mjengo')
+    await tick()
+    await tick()
+
+    expect(fresh.getState().persistDegraded).toBe(true)
+    fresh.setState({ online: false, outbox: [] } as never)
+    await expect(
+      fresh.getState().dispatch('attendance.setStatus', { workerId: 'w-1', status: 'present' }, 'Mark present'),
+    ).resolves.toBe(true)
+    await tick()
+    expect(fresh.getState().outbox).toHaveLength(1) // the queue lives in memory
+    fakeIdb.openRefused = false
   })
 })
 
 // ---------------- the queue-only fallback (the bounding decision's teeth) ----------------
 
-describe('#192: the queue-only fallback banks the irreplaceable part', () => {
+describe('#192/#351: the queue-only fallback banks the irreplaceable part', () => {
   it('when the full write does not fit but a data-less one does, the queue reaches disk without data', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     // Baseline: a successful full write so we can place the quota boundary
     // BETWEEN the full and the slimmed serialized sizes.
     resetStore({ outbox: [queuedItem(1)] })
-    const full = fake.getItem(MJENGO_STORE_KEY)!
+    await flush()
+    const full = fakeIdb.record(OUTBOX_DB_NAME, OUTBOX_DB_STORE, MJENGO_STORE_KEY)!
     const slim = JSON.stringify({ ...JSON.parse(full), state: { ...JSON.parse(full).state, data: null } })
     expect(full.length).toBeGreaterThan(slim.length + 1_000) // data genuinely dominates
-    fake.quotaBytes = slim.length + Math.floor((full.length - slim.length) / 2)
+    fakeIdb.quotaBytes = slim.length + Math.floor((full.length - slim.length) / 2)
 
     // One more queued action under the boundary → full write throws, the
     // fallback (data dropped) fits.
     await state().dispatch('attendance.setStatus', { workerId: 'w-1', status: 'present' }, 'Mark present')
+    await flush()
 
     expect(state().outbox).toHaveLength(2)
     expect(state().persistQueueOnly).toBe(true)
@@ -332,137 +388,56 @@ describe('#192: the queue-only fallback banks the irreplaceable part', () => {
     expect(onDisk.state.data).toBeNull() // the re-fetchable slice dropped
   })
 
-  it('a later successful FULL write self-heals the flags (the banner clears)', () => {
+  it('a later successful FULL write self-heals the flags (the banner clears)', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
-    fake.quotaExceeded = true
+    fakeIdb.quotaExceeded = true
     useMjengo.setState({ online: true } as never)
+    await flush()
     expect(state().persistDegraded).toBe(true)
 
     // Storage freed up (or the private window ended).
-    fake.quotaExceeded = false
-    fake.quotaBytes = Number.POSITIVE_INFINITY
+    fakeIdb.quotaExceeded = false
+    fakeIdb.quotaBytes = Number.POSITIVE_INFINITY
     useMjengo.setState({ online: false } as never)
+    await flush()
 
     expect(state().persistDegraded).toBe(false)
     expect(state().persistQueueOnly).toBe(false)
-    expect(persisted().state.data).not.toBeNull() // the full payload is back on disk
+    expect(persisted().state.data).not.toBeNull() // the full payload is back on the medium
   })
 })
 
-// ---------------- multi-tab coordination (storage events) ----------------
+// ---------------- the #351 medium: ordering + restart durability ----------------
 
-describe('#192: cross-tab rehydration (debounced last-writer-wins)', () => {
-  it('shouldRehydrateFromStorageEvent: only our key rehydrates (null key = a clear — deliberately ignored)', () => {
-    expect(shouldRehydrateFromStorageEvent({ key: MJENGO_STORE_KEY })).toBe(true)
-    expect(shouldRehydrateFromStorageEvent({ key: 'mjengo-supplier-outbox' })).toBe(false)
-    expect(shouldRehydrateFromStorageEvent({ key: 'unrelated-key' })).toBe(false)
-    expect(shouldRehydrateFromStorageEvent({ key: null })).toBe(false)
-  })
-
-  it('a storage event on our key rehydrates after the debounce; foreign keys schedule nothing', async () => {
-    vi.useFakeTimers()
-    try {
-      const rehydrateSpy = vi.spyOn(useMjengo.persist, 'rehydrate')
-      resetStore({ outbox: [queuedItem(1)] })
-      const before = state().outbox.length
-
-      // The OTHER surface (PWA window vs browser tab) writes a newer
-      // snapshot: one extra queued item. Direct map write — same-tab writes
-      // never fire their own storage event.
-      fake.store.set(MJENGO_STORE_KEY, JSON.stringify({
-        state: {
-          online: true, outbox: [queuedItem(1), queuedItem(2)], syncHistory: [],
-          data: null, lastSyncAt: 456, activeProjectId: 'pl-1', shareToken: null, dataMode: 'normal',
-        },
-        version: 1,
-      }))
-
-      handleCrossTabStorageEvent({ key: 'unrelated-key' })
-      handleCrossTabStorageEvent({ key: null })
-      vi.advanceTimersByTime(CROSS_TAB_REHYDRATE_DEBOUNCE_MS)
-      expect(state().outbox).toHaveLength(before) // foreign keys: still our snapshot
-      expect(rehydrateSpy).not.toHaveBeenCalled()
-
-      handleCrossTabStorageEvent({ key: MJENGO_STORE_KEY })
-      expect(state().outbox).toHaveLength(before) // debounced: not yet
-      vi.advanceTimersByTime(CROSS_TAB_REHYDRATE_DEBOUNCE_MS)
-      await Promise.resolve()
-      expect(rehydrateSpy).toHaveBeenCalledTimes(1)
-      expect(state().outbox).toHaveLength(before + 1) // the peer's newer queue is ours now
-      rehydrateSpy.mockRestore()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('bursts of writes from an active peer coalesce into ONE rehydrate', async () => {
-    vi.useFakeTimers()
-    try {
-      const rehydrateSpy = vi.spyOn(useMjengo.persist, 'rehydrate')
-      resetStore({ outbox: [queuedItem(1)] })
-
-      handleCrossTabStorageEvent({ key: MJENGO_STORE_KEY })
-      handleCrossTabStorageEvent({ key: MJENGO_STORE_KEY })
-      handleCrossTabStorageEvent({ key: MJENGO_STORE_KEY })
-      vi.advanceTimersByTime(CROSS_TAB_REHYDRATE_DEBOUNCE_MS)
-      await Promise.resolve()
-
-      expect(rehydrateSpy).toHaveBeenCalledTimes(1)
-      rehydrateSpy.mockRestore()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('an orphaned syncing item from a peer mid-drain snapshot returns to pending (un-stranded, drainable)', async () => {
-    vi.useFakeTimers()
-    try {
-      resetStore({ outbox: [queuedItem(1)] })
-      // A snapshot written while the OTHER surface was mid-drain: the item
-      // is 'syncing' on disk, but no drain owns it here. Before #192 this
-      // item stranded forever — syncNow only drains 'pending'.
-      fake.store.set(MJENGO_STORE_KEY, JSON.stringify({
-        state: {
-          online: true,
-          outbox: [queuedItem(1), { ...queuedItem(9), syncStatus: 'syncing' }],
-          syncHistory: [], data: null, lastSyncAt: 789, activeProjectId: 'pl-1', shareToken: null, dataMode: 'normal',
-        },
-        version: 1,
-      }))
-
-      handleCrossTabStorageEvent({ key: MJENGO_STORE_KEY })
-      vi.advanceTimersByTime(CROSS_TAB_REHYDRATE_DEBOUNCE_MS)
-      await Promise.resolve()
-      expect(state().outbox).toHaveLength(2)
-      expect(state().outbox.find((o) => o.id === 'q-9')?.syncStatus).toBe('syncing') // as rehydrated
-
-      vi.advanceTimersByTime(1) // the deferred normalization tick
-      await Promise.resolve()
-      expect(state().outbox.find((o) => o.id === 'q-9')?.syncStatus).toBe('pending')
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-})
-
-// ---------------- restart + the documented size budget ----------------
-
-describe('#192: restart durability + the bounding decision', () => {
-  it('restart verification: offline-queued items are on disk and a rehydrate restores them drainable', async () => {
+describe('#351: the indexedDB record — ordering, restart durability, the size budget', () => {
+  it('dispatches persist in queue order (FIFO — the drain replays them in the order they happened)', async () => {
     resetStore({ online: false, outbox: [] })
+    await flush()
     await state().dispatch('attendance.setStatus', { workerId: 'w-1', status: 'present' }, 'Mark present')
     await state().dispatch('attendance.setStatus', { workerId: 'w-1', status: 'absent' }, 'Mark absent')
+    await flush()
+
+    expect(persisted().state.outbox.map((o) => o.payload.status)).toEqual(['present', 'absent'])
+  })
+
+  it('restart verification: offline-queued items are on the medium and a rehydrate restores them drainable', async () => {
+    resetStore({ online: false, outbox: [] })
+    await flush()
+    await state().dispatch('attendance.setStatus', { workerId: 'w-1', status: 'present' }, 'Mark present')
+    await state().dispatch('attendance.setStatus', { workerId: 'w-1', status: 'absent' }, 'Mark absent')
+    await flush()
 
     // What a relaunch boots from (the "kill the app" step, at the storage level).
     const onDisk = persisted()
     expect(onDisk.state.outbox).toHaveLength(2)
-    expect(onDisk.version).toBe(1)
+    expect(onDisk.version).toBe(2)
     expect(onDisk.state.data).not.toBeNull() // offline READS survive too (issue #78)
 
-    // The relaunch: memory empty, key intact → rehydrate → queue restored.
-    const bytes = fake.getItem(MJENGO_STORE_KEY)!
+    // The relaunch: memory empty, record intact → rehydrate → queue restored.
+    const bytes = fakeIdb.record(OUTBOX_DB_NAME, OUTBOX_DB_STORE, MJENGO_STORE_KEY)!
     useMjengo.setState({ outbox: [], data: null } as never)
-    fake.store.set(MJENGO_STORE_KEY, bytes) // the app died AFTER this write
+    await flush() // the memory-reset's own (empty) write settles FIRST…
+    fakeIdb.setRecord(OUTBOX_DB_NAME, OUTBOX_DB_STORE, MJENGO_STORE_KEY, bytes) // …then the app died AFTER this write
     await useMjengo.persist.rehydrate()
 
     expect(state().outbox).toHaveLength(2)
@@ -470,13 +445,14 @@ describe('#192: restart durability + the bounding decision', () => {
     expect(state().data).not.toBeNull()
   })
 
-  it('the persisted payload for a representative large project + 100 queued actions stays under the documented budget', () => {
-    // DOCUMENTED BUDGET (#192): 4 MB for the mjengo-os-store key — under
-    // half of the 5-10 MB origin quota browsers grant localStorage (iOS
-    // Safari ~5 MB, Chrome ~10 MB shared) so the key coexists with the
-    // supplier outbox + prefs keys and leaves growth headroom. The sample
-    // below measures ~2 MB; the floor assertion keeps the sample honest
-    // (a generator that silently shrinks cannot keep the budget vacuous).
+  it('the persisted payload for a representative large project + 100 queued actions stays under the documented budget', async () => {
+    // DOCUMENTED BUDGET (#192, unchanged by the #351 medium move —
+    // indexedDB origin quotas are far larger, but the budget is a payload
+    // bound, not a medium bound): 4 MB for the mjengo-os-store record, so
+    // the record stays in the honest upper-middle of what a low-storage
+    // device can hydrate quickly. The sample below measures ~2 MB; the
+    // floor assertion keeps the sample honest (a generator that silently
+    // shrinks cannot keep the budget vacuous).
     const MJENGO_PERSIST_BUDGET_BYTES = 4_000_000
     const SAMPLE_FLOOR_BYTES = 1_000_000
 
@@ -484,8 +460,9 @@ describe('#192: restart durability + the bounding decision', () => {
       data: largeProjectPayload() as never,
       outbox: Array.from({ length: 100 }, (_, i) => queuedItem(i + 1)),
     })
+    await flush()
 
-    const raw = fake.getItem(MJENGO_STORE_KEY)!
+    const raw = fakeIdb.record(OUTBOX_DB_NAME, OUTBOX_DB_STORE, MJENGO_STORE_KEY)!
     expect(raw).not.toBeNull()
     const bytes = Buffer.byteLength(raw, 'utf8')
     expect(bytes, `persisted payload ${bytes} bytes must stay under the 4 MB budget`).toBeLessThan(MJENGO_PERSIST_BUDGET_BYTES)
@@ -494,9 +471,9 @@ describe('#192: restart durability + the bounding decision', () => {
     expect(persisted().state.data).not.toBeNull()
   })
 
-  it('partialize keeps `data` in the persisted key — the documented bounding decision (offline boot serves it)', () => {
+  it('partialize keeps `data` in the persisted record — the documented bounding decision (offline boot serves it)', () => {
     const src = readSrc('src/frontend/hooks/use-mjengo.ts')
-    expect(src).toContain('export const MJENGO_STORE_KEY = \'mjengo-os-store\'')
+    expect(src).toContain("export const MJENGO_STORE_KEY = 'mjengo-os-store'")
     expect(src).toContain('storage: createJSONStorage(')
     // The decision pin: removing `data` from persistence (a tempting "fix")
     // would break every offline read (issue #78 shouldOfflineBoot) — this
@@ -505,9 +482,172 @@ describe('#192: restart durability + the bounding decision', () => {
   })
 })
 
+// ---------------- the #351 legacy adoption (localStorage → indexedDB) ----------------
+
+describe('#351: legacy localStorage adoption — read-through, migrate, clear only after the write lands', () => {
+  /** A pre-#351 (v1) localStorage snapshot: 2 queued items, version 1. */
+  const legacySnapshot = () => JSON.stringify({
+    state: {
+      online: false,
+      outbox: [queuedItem(1), { ...queuedItem(2), syncStatus: undefined as unknown as OutboxItem['syncStatus'] }],
+      syncHistory: [],
+      data: null,
+      lastSyncAt: 123,
+      activeProjectId: 'pl-1',
+      shareToken: null,
+      dataMode: 'normal',
+    },
+    version: 1,
+  })
+
+  it('first run with a legacy key and an empty kv: the snapshot is adopted, migrated to v2, and the legacy key cleared', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    vi.resetModules()
+    fakeIdb.clearRecords()
+    legacy.store.set(MJENGO_STORE_KEY, legacySnapshot())
+
+    const { useMjengo: fresh } = await import('@/frontend/hooks/use-mjengo')
+    await tick()
+    await tick()
+
+    // The queue survived the upgrade — migrated to the v2 §40 lifecycle.
+    expect(fresh.getState().outbox).toHaveLength(2)
+    expect(fresh.getState().outbox.every((o) => o.syncStatus === 'pending')).toBe(true)
+    // The record on the NEW medium is the migrated v2 snapshot.
+    const onDisk = persisted()
+    expect(onDisk.version).toBe(2)
+    expect(onDisk.state.outbox).toHaveLength(2)
+    // The legacy key did its job and is gone (cleared only AFTER the write).
+    expect(legacy.getItem(MJENGO_STORE_KEY)).toBeNull()
+    // Both adoption steps are logged (never silent).
+    expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('adopting the legacy localStorage outbox snapshot'))
+    expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('legacy localStorage key cleared'))
+  })
+
+  it('a failed adoption write keeps the legacy key — the on-disk fallback survives (no silent data loss)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    vi.resetModules()
+    fakeIdb.clearRecords()
+    legacy.store.set(MJENGO_STORE_KEY, legacySnapshot())
+    fakeIdb.quotaExceeded = true // even the slimmed write will not fit
+
+    const { useMjengo: fresh } = await import('@/frontend/hooks/use-mjengo')
+    await tick()
+    await tick()
+
+    // The session still runs on the adopted state (in-memory)…
+    expect(fresh.getState().outbox).toHaveLength(2)
+    expect(fresh.getState().persistDegraded).toBe(true) // …and says so loudly
+    // …but nothing reached the new medium, so the legacy key STAYS as the
+    // on-disk record — the next launch can adopt again.
+    expect(fakeIdb.record(OUTBOX_DB_NAME, OUTBOX_DB_STORE, MJENGO_STORE_KEY)).toBeNull()
+    expect(legacy.getItem(MJENGO_STORE_KEY)).not.toBeNull()
+  })
+
+  it('a kv record that already exists is never re-adopted (the legacy key is inert, not resurrected)', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    // Steady state: the kv holds a v2 record (written by a previous run)…
+    resetStore({ outbox: [queuedItem(7)] })
+    await flush()
+    expect(persisted().state.outbox).toHaveLength(1)
+    // …while a stale legacy key lingers (e.g. its removal was refused once).
+    legacy.store.set(MJENGO_STORE_KEY, legacySnapshot())
+
+    vi.resetModules()
+    const { useMjengo: fresh } = await import('@/frontend/hooks/use-mjengo')
+    await tick()
+    await tick()
+
+    // Hydration read the KV record, not the legacy snapshot…
+    expect(fresh.getState().outbox.map((o) => o.id)).toEqual(['q-7'])
+    // …and the legacy key was neither cleared nor adopted.
+    expect(legacy.getItem(MJENGO_STORE_KEY)).not.toBeNull()
+    expect(persisted().state.outbox).toHaveLength(1)
+  })
+})
+
+// ---------------- multi-surface coordination (the #351 foreground re-read) ----------------
+
+describe('#192/#351: cross-tab rehydration (debounced foreground re-read)', () => {
+  it('shouldRehydrateFromForeground: only a return to visibility re-reads (a background surface has nothing to re-read for)', () => {
+    expect(shouldRehydrateFromForeground('visible')).toBe(true)
+    expect(shouldRehydrateFromForeground('hidden')).toBe(false)
+    expect(shouldRehydrateFromForeground('prerender')).toBe(false)
+    expect(shouldRehydrateFromForeground('unloaded')).toBe(false)
+  })
+
+  it('a foreground signal rehydrates after the debounce — the peer snapshot becomes ours', async () => {
+    const rehydrateSpy = vi.spyOn(useMjengo.persist, 'rehydrate')
+    resetStore({ outbox: [queuedItem(1)] })
+    await flush()
+    const before = state().outbox.length
+
+    // The OTHER surface (PWA window vs browser tab) writes a newer
+    // snapshot: one extra queued item. Direct record write — same-surface
+    // writes never trigger their own foreground signal.
+    fakeIdb.setRecord(OUTBOX_DB_NAME, OUTBOX_DB_STORE, MJENGO_STORE_KEY, JSON.stringify({
+      state: {
+        online: true, outbox: [queuedItem(1), queuedItem(2)], syncHistory: [],
+        data: null, lastSyncAt: 456, activeProjectId: 'pl-1', shareToken: null, dataMode: 'normal',
+      },
+      version: 2,
+    }))
+
+    handleCrossTabForegroundSignal()
+    expect(state().outbox).toHaveLength(before) // debounced: not yet
+    await sleep(CROSS_TAB_REHYDRATE_DEBOUNCE_MS + 60)
+    expect(rehydrateSpy).toHaveBeenCalledTimes(1)
+    expect(state().outbox).toHaveLength(before + 1) // the peer's newer queue is ours now
+    rehydrateSpy.mockRestore()
+  })
+
+  it('bursts of foreground signals coalesce into ONE rehydrate', async () => {
+    const rehydrateSpy = vi.spyOn(useMjengo.persist, 'rehydrate')
+    resetStore({ outbox: [queuedItem(1)] })
+    await flush()
+
+    handleCrossTabForegroundSignal()
+    handleCrossTabForegroundSignal()
+    handleCrossTabForegroundSignal()
+    await sleep(CROSS_TAB_REHYDRATE_DEBOUNCE_MS + 60)
+
+    expect(rehydrateSpy).toHaveBeenCalledTimes(1)
+    rehydrateSpy.mockRestore()
+  })
+
+  it('an orphaned syncing item from a peer mid-drain snapshot returns to pending (un-stranded, drainable)', async () => {
+    resetStore({ outbox: [queuedItem(1)] })
+    await flush()
+    // A snapshot written while the OTHER surface was mid-drain: the item
+    // is 'syncing' on disk, but no drain owns it here. Before #192 this
+    // item stranded forever — syncNow only drains 'pending'. (The same
+    // rule covers a service-worker HEADLESS drain that lands while this
+    // surface rehydrates — the orphan normalization runs after every
+    // rehydrate.)
+    fakeIdb.setRecord(OUTBOX_DB_NAME, OUTBOX_DB_STORE, MJENGO_STORE_KEY, JSON.stringify({
+      state: {
+        online: true,
+        outbox: [queuedItem(1), { ...queuedItem(9), syncStatus: 'syncing' }],
+        syncHistory: [], data: null, lastSyncAt: 789, activeProjectId: 'pl-1', shareToken: null, dataMode: 'normal',
+      },
+      version: 2,
+    }))
+
+    handleCrossTabForegroundSignal()
+    // The debounce (250ms) plus the deferred orphan-normalization tick
+    // (0ms after the merge) both settle well inside this sleep — the
+    // assertion is the OUTCOME: the orphan is back to drainable 'pending'.
+    await sleep(CROSS_TAB_REHYDRATE_DEBOUNCE_MS + 60)
+
+    expect(state().outbox).toHaveLength(2)
+    expect(state().outbox.find((o) => o.id === 'q-9')?.syncStatus).toBe('pending')
+  })
+})
+
 // ---------------- wiring + copy (source pins, house style) ----------------
 
-describe('#192: wiring — the degradation is reachable end to end', () => {
+describe('#192/#351: wiring — the degradation is reachable end to end', () => {
   it('app.tsx renders the persistence banner from the health flags', () => {
     const src = readSrc('src/frontend/mjengo/app.tsx')
     expect(src).toContain('persistDegraded, persistQueueOnly,')
@@ -517,19 +657,32 @@ describe('#192: wiring — the degradation is reachable end to end', () => {
     expect(src).toContain("role={persistDegraded ? 'alert' : 'status'}")
   })
 
+  it('app.tsx holds the boot skeleton until the async indexedDB hydration finishes (never flashes login)', () => {
+    const src = readSrc('src/frontend/mjengo/app.tsx')
+    expect(src).toContain('const [storeHydrated, setStoreHydrated] = useState')
+    expect(src).toContain('onFinishHydration(() => setStoreHydrated(true))')
+    expect(src).toContain("if ((status === 'loading' || !storeHydrated) && !offlineBoot)")
+  })
+
   it('the outbox sheet states the device-local honesty line', () => {
     const src = readSrc('src/frontend/mjengo/sync-outbox-panel.tsx')
     expect(src).toContain("t('outbox.deviceLocal')")
   })
 
-  it('use-mjengo wires the guarded adapter and the storage-event listener', () => {
+  it('use-mjengo wires the guarded adapter on the indexedDB medium and the foreground re-read listeners', () => {
     const src = readSrc('src/frontend/hooks/use-mjengo.ts')
-    // The guarded seam (quota caught at the zustand storage adapter).
-    expect(src).toContain('const guardedLocalStorage: StateStorage = {')
-    // The queue-only fallback drops the re-fetchable slice.
-    expect(src).toContain("state: { ...parsed.state, data: null }")
-    // Multi-tab: the storage event rehydrates (debounced).
-    expect(src).toContain('window.addEventListener(\'storage\', handleCrossTabStorageEvent)')
+    // The guarded seam (quota caught at the zustand storage adapter) on the
+    // #351 medium, with the re-fetchable slice as the fallback's drop.
+    expect(src).toContain('const guardedOutboxIdbStorage = createGuardedStorage({')
+    expect(src).toContain('storage: createIndexedDbStateStorage(createIndexedDbKvStore())')
+    expect(src).toContain("droppableSlice: 'data'")
+    // The medium guard keeps node/SSR inert (no phantom indexedDB).
+    expect(src).toContain("if (typeof indexedDB === 'undefined') throw new Error('indexedDB unavailable')")
+    // The persist version moved to 2 (the medium migration).
+    expect(src).toContain('version: 2')
+    // Multi-surface: the foreground re-read rehydrates (debounced).
+    expect(src).toContain("window.addEventListener('focus', handleCrossTabForegroundSignal)")
+    expect(src).toContain("document.addEventListener('visibilitychange'")
     expect(src).toContain('void useMjengo.persist.rehydrate()')
     // The orphan normalization is wired at the rehydrate seam.
     expect(src).toMatch(/orphaned[^]*syncStatus === 'syncing' \? \{ \.\.\.o, syncStatus: 'pending' as const \} : o/)
