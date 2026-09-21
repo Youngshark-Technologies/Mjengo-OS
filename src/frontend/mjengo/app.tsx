@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useSession } from 'next-auth/react'
 import { useMjengo } from '@/frontend/hooks/use-mjengo'
 import { metaFor } from '@/frontend/mjengo/nav/tab-meta'
@@ -44,6 +44,45 @@ export type TabKey =
   | 'overview' | 'site' | 'materials' | 'finder' | 'fundis' | 'money'
   | 'land' | 'evidence' | 'intel' | 'copilot' | 'ussd' | 'audit' | 'settings'
   | 'supplier'
+
+/** The zustand persist API surface the hydration gate consumes (structural, #388). */
+export interface MjengoPersistApi {
+  hasHydrated(): boolean
+  onFinishHydration(cb: () => void): (() => void) | void
+}
+
+/**
+ * Store-hydration gate (#351, race fixed in #388): resolves to true only
+ * when the async (indexedDB-backed) rehydrate has finished — in ALL THREE
+ * orderings, BY CONSTRUCTION (no effect, no setState, no window):
+ *
+ *   1. finished BEFORE render — getSnapshot reads true immediately;
+ *   2. finished INSIDE any window — React re-checks the snapshot right
+ *      after subscribing and re-renders if it changed (the #388 bug was
+ *      exactly this window: an effect observed hasHydrated() already true
+ *      and early-returned without flipping its own state — the app stuck
+ *      on the boot skeleton forever; 6/7 E2E personas failed on fast
+ *      sign-ins);
+ *   3. finished AFTER subscribe — zustand's onFinishHydration fires the
+ *      subscription callback → re-render with the fresh snapshot.
+ *
+ * Inert media (node/SSR/no storage → no persist object) count as hydrated
+ * (getServerSnapshot true — there is nothing to wait for). Extracted as a
+ * hook so the runtime-DOM tier pins the ordering contract against the REAL
+ * gate logic (tests/dom/store-hydration-gate.test.ts).
+ */
+export function useStoreHydrationGate(persistApi: MjengoPersistApi | undefined): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      if (!persistApi) return () => {}
+      // zustand persist's onFinishHydration IS the subscribe contract:
+      // it returns the unsubscribe function.
+      return persistApi.onFinishHydration(onChange) ?? (() => {})
+    },
+    () => (persistApi ? persistApi.hasHydrated() : true),
+    () => true,
+  )
+}
 
 function BootSkeleton() {
   return (
@@ -201,18 +240,7 @@ export function MjengoApp() {
   // the auth gates hold the boot skeleton until then. Inert media (node /
   // SSR / no storage → zustand persist never engages) count as hydrated —
   // there is nothing to wait for.
-  const [storeHydrated, setStoreHydrated] = useState(() => {
-    try {
-      return (useMjengo as unknown as { persist?: { hasHydrated(): boolean } }).persist?.hasHydrated() ?? true
-    } catch {
-      return true
-    }
-  })
-  useEffect(() => {
-    const persist = (useMjengo as unknown as { persist?: { hasHydrated(): boolean; onFinishHydration(cb: () => void): () => void } }).persist
-    if (!persist || persist.hasHydrated()) return
-    return persist.onFinishHydration(() => setStoreHydrated(true))
-  }, [])
+  const storeHydrated = useStoreHydrationGate((useMjengo as unknown as { persist?: MjengoPersistApi }).persist)
 
   useEffect(() => {
     setOrigin(window.location.origin)

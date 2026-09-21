@@ -659,8 +659,21 @@ describe('#192/#351: wiring — the degradation is reachable end to end', () => 
 
   it('app.tsx holds the boot skeleton until the async indexedDB hydration finishes (never flashes login)', () => {
     const src = readSrc('src/frontend/mjengo/app.tsx')
-    expect(src).toContain('const [storeHydrated, setStoreHydrated] = useState')
-    expect(src).toContain('onFinishHydration(() => setStoreHydrated(true))')
+    // #388: the gate is the extracted useStoreHydrationGate hook — the
+    // THREE ordering contracts (finished-before-render / the race window /
+    // finished-after-effect) are behaviorally pinned by
+    // tests/dom/store-hydration-gate.test.ts; these source pins assert the
+    // APP'S wiring: the gate consumes the store's persist API and the boot
+    // hold consults it.
+    expect(src).toContain('useStoreHydrationGate((useMjengo as unknown as { persist?: MjengoPersistApi }).persist)')
+    expect(src).toContain('export function useStoreHydrationGate(persistApi: MjengoPersistApi | undefined): boolean')
+    // The #388 race fix itself: the gate reads the persist API through
+    // useSyncExternalStore — subscribe = onFinishHydration, snapshot =
+    // hasHydrated, SSR = inert-true. The three orderings are pinned
+    // behaviorally by tests/dom/store-hydration-gate.test.ts.
+    expect(src).toContain('useSyncExternalStore(')
+    expect(src).toContain('persistApi.onFinishHydration(onChange) ?? (() => {})')
+    expect(src).toContain('() => (persistApi ? persistApi.hasHydrated() : true)')
     expect(src).toContain("if ((status === 'loading' || !storeHydrated) && !offlineBoot)")
   })
 
