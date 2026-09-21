@@ -3,7 +3,7 @@ import { openTab, signIn } from './helpers'
 
 /**
  * Persona 6 — FINANCE OFFICER (Fatuma, the money surface).
- * Golden path (issue #182, from QA-REPORT-2026-09-16 §10): sign in → lands
+ * Golden path (issue #182, from the 2026-09-16 QA browser pass §10): sign in → lands
  * on Money → escrow wallet + payment requests → invoices (Finder) → the
  * "Ledger consistent" chip (derived = stored projection).
  *

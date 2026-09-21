@@ -9,7 +9,7 @@ import { defineConfig, devices } from '@playwright/test'
  * request/order codes), never just "the page loaded".
  *
  * REPO CONVENTION — running dev server, not a managed webServer:
- * The Mjengo-OS QA flow (docs/QA-REPORT-*.md §"Browser verification") always
+ * The Mjengo-OS QA flow (the browser-verification protocol — historical
  * runs against an already-running dev server, so the suite assumes one is up.
  * Start it yourself exactly like the repo does:
  *

@@ -3,7 +3,7 @@ import { expectActiveProject, expectTabHidden, openTab, SEEDED_PROJECT, signIn }
 
 /**
  * Persona 2 — CONTRACTOR (site manager, the full owner app).
- * Golden path (issue #182, mirroring QA-REPORT-2026-09-16 §10):
+ * Golden path (issue #182, mirroring the 2026-09-16 QA browser pass §10):
  * sign in → workspace loads (project switcher "Nyumba Yangu — 3BR Bungalow",
  * 12 tabs) → workforce (Fundis) → materials → progress & milestones.
  *

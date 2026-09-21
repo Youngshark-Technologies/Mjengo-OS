@@ -2,9 +2,8 @@
 
 External uptime, backup dead-man, and jobs-drain watch for a single-node
 self-host. This is the repo's first operator **runbook** (docs/runbooks/ —
-incident and ops procedures; the audit baselines live in docs/audit/), and
-it is cross-wired from DEPLOYMENT.md §7.2 (health) and §10 (observability)
-so it cannot rot into an orphan.
+incident and ops procedures), and it is cross-wired from DEPLOYMENT.md
+§7.2 (health) and §10 (observability) so it cannot rot into an orphan.
 
 ## 0. The honest starting point
 

@@ -51,8 +51,8 @@ Run the same gates CI runs:
 ```bash
 bun run lint          # eslint — 0 errors, 0 warnings
 bunx tsc --noEmit     # strict typecheck, 0 errors
-bun run test          # vitest — the full unit suite (3,328 tests /
-                      #   154 files — counts as of 2026-09-21; re-run
+bun run test          # vitest — the full unit suite (3,643 tests /
+                      #   166 files — counts as of 2026-09-21; re-run
                       #   vitest for the current number)
 bun run test:coverage # the same suite + coverage floors (issue #185) —
                       #   what CI runs; ~11% slower than the plain run
@@ -116,10 +116,17 @@ the config in `vitest.config.mts`.
 
 **Test-count convention:** living docs (README, CONTRIBUTING, DEPLOYMENT,
 RELEASE-NOTES) quote the suite size only with a date stamp ("counts as of
-2026-09-16 — re-run vitest for current"); dated reports and audit baselines
-(`docs/QA-REPORT-*.md`, `docs/audit/*.md`) keep the numbers that were true
-when they were written. If your PR adds tests, refresh the stamped counts
+2026-09-21 — re-run vitest for current"); the GitHub tracker is the record
+of what landed when. If your PR adds tests, refresh the stamped counts
 — `git grep 'counts as of'` finds every site.
+
+**Test baseline (the living counts home):** the suite is measured, not
+quoted — `bun run test` → `vitest run` (**166 files / 3,643 tests — counts
+as of 2026-09-21 @ `main`**), no DB/secrets/network needed (critical-path
+suites build a throwaway real SQLite file), `fileParallelism: false` by
+deliberate choice (4 GB CI box). The money-invariant core runs standalone:
+`bun run test:finance`. Coverage: `bun run test:coverage` enforces the
+per-module floors (issue #185) — what CI runs.
 
 CI runs the same gates on every push/PR:
 `ci.yml` re-runs lint and the strict typecheck (web app **and** marketing

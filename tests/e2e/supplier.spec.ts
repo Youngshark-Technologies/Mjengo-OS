@@ -3,7 +3,7 @@ import { signIn } from './helpers'
 
 /**
  * Persona 5 — SUPPLIER (Nairobi Hardware Centre).
- * Golden path (issue #182, from QA-REPORT-2026-09-16 §10): sign in → the
+ * Golden path (issue #182, from the 2026-09-16 QA browser pass §10): sign in → the
  * scoped supplier portal → quotes to answer → orders awaiting action.
  *
  * Seed contract: supplier@mjengo.os / supplier2026 (NOTE: its own password —

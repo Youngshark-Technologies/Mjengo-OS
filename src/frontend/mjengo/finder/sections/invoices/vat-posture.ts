@@ -2,7 +2,7 @@
  * Invoice VAT posture (issue #363 / audit MD-8) — PURE, unit-tested.
  *
  * Kenya VAT handling is deliberately deferred (a business decision —
- * docs/audit/MOCK_DEMO_BASELINE.md, finding MD-8): the platform models no
+ * audit register MD-8): the platform models no
  * VAT. An invoice can still carry a manually entered flat tax amount (the
  * create dialog's "Tax / VAT (KSh)" field — stored verbatim by the service,
  * never recomputed), but zero is the default and the honest rule. The
