@@ -36,6 +36,7 @@ import {
 } from '@/backend/modules/wallet/service'
 import { requireDeciderRole } from '@/backend/modules/wallet/session'
 import { createDrawPackForRelease } from '@/backend/modules/drawpack/service'
+import { autoPaymentReference } from '@/shared/ids'
 
 export const MONEY_ACTIONS = [
   'escrow.topup', // { amount>0, method? ('mpesa'|'bank'|'card'), reference? } — posts CASH→ESCROW ledger rows atomically
@@ -63,15 +64,6 @@ function parseEvidenceIds(raw: string): string[] {
   }
 }
 
-/** Auto reference like MPESA-7XK2P4QA when the client doesn't supply one. */
-function autoReference(method: string): string {
-  const prefix = method === 'bank' ? 'BANK' : method === 'card' ? 'CARD' : 'MPESA'
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  let suffix = ''
-  for (let i = 0; i < 8; i++) suffix += chars[Math.floor(Math.random() * chars.length)]
-  return `${prefix}-${suffix}`
-}
-
 async function resolvePhase(phaseId: unknown, projectId: string): Promise<string | null> {
   if (!phaseId || typeof phaseId !== 'string') return null
   const phase = await db.phase.findFirst({ where: { id: phaseId, projectId } })
@@ -87,10 +79,12 @@ export async function applyMoneyAction(type: string, payload: any, projectId: st
       const amount = parseMoneyCents(payload?.amount)
       if (amount === null) throw new Error(MONEY_AMOUNT_ERROR)
       const method = ['mpesa', 'bank', 'card'].includes(payload?.method) ? String(payload.method) : 'mpesa'
+      // MD-4 (#350): the auto reference is minted by the shared CSPRNG seam
+      // (src/shared/ids.ts) — never Math.random (was predictable).
       const reference =
         typeof payload?.reference === 'string' && payload.reference.trim()
           ? payload.reference.trim()
-          : autoReference(method)
+          : autoPaymentReference(method)
       // BE-2 (issue #103): escrow top-ups move client money into the project
       // ledger — a finance/admin action, gated at this service seam so BOTH
       // /api/actions and /api/sync (and any future caller) inherit it. The

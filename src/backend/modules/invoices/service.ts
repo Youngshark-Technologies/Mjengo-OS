@@ -38,26 +38,13 @@ import { currentActor } from './session'
 import { computeLedgerConsistency, matchThreeWay } from './three-way'
 import { resolvePostingPhaseId, spendEscrowInTx, spendExternalInTx } from '@/backend/modules/wallet/service'
 import { getProvider } from '@/backend/modules/wallet/providers'
+import { autoPaymentReference } from '@/shared/ids'
 import type { LedgerCheck, ThreeWayReport } from './types'
 
 // ---------------- helpers (money.ts house conventions) ----------------
 
 function kes(nCents: Cents): string {
   return fmtKes(nCents)
-}
-
-/** Auto reference like MPESA-7XK2P4QA when the client doesn't supply one (money.ts helper, extended). */
-function autoReference(method: string): string {
-  const prefix =
-    method === 'bank' ? 'BANK'
-    : method === 'card' ? 'CARD'
-    : method === 'wallet' ? 'WALLET'
-    : method === 'cash' ? 'CASH'
-    : 'MPESA'
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  let suffix = ''
-  for (let i = 0; i < 8; i++) suffix += chars[Math.floor(Math.random() * chars.length)]
-  return `${prefix}-${suffix}`
 }
 
 function posNumber(v: unknown): number | null {
@@ -453,10 +440,12 @@ export async function payInvoice(projectId: string, payload: Record<string, unkn
     )
   }
 
+  // MD-4 (#350): the auto reference is minted by the shared CSPRNG seam
+  // (src/shared/ids.ts) — never Math.random (was predictable).
   const reference =
     typeof payload.reference === 'string' && payload.reference.trim()
       ? payload.reference.trim()
-      : autoReference(method)
+      : autoPaymentReference(method)
 
   // ---- PaymentProvider seam (spec §40) — the simulated rail records an ----
   // honest result; a real provider plugs in here without touching the ledger.

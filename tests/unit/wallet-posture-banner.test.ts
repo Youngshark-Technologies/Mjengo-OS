@@ -178,7 +178,10 @@ describe('#123 banner wiring: Money tab surface + fundis gate reuse', () => {
   it('the honest inline notes are untouched (the banner is additive)', () => {
     expect(moneySrc).toContain("t('money.topup.note'")
     expect(moneySrc).toContain("t('money.pr.simulatedNote'")
-    expect(moneySrc).toContain('function previewReference(')
+    // MD-4 (#350): the top-up reference preview still exists — it now draws
+    // the shared CSPRNG seam instead of a local Math.random copy (was
+    // `function previewReference(`; pinned further in csprng-ids.test.ts).
+    expect(moneySrc).toContain('autoPaymentReference(tMethod)')
     expect(fundisSrc).toContain("t('fundis.payrollPaid'")
   })
 })

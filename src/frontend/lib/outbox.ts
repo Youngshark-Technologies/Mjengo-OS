@@ -14,6 +14,8 @@
 // use-mjengo.ts re-exports the item types + normalizeOutboxItem +
 // AUTO_RETRY_* so its long-standing public API (panels, tests) is unchanged.
 
+import { BASE36_CHARSET, randomChars } from '@/shared/ids'
+
 /** Per-item sync lifecycle (spec §40): pending → syncing → synced | failed | conflict. */
 export type OutboxSyncStatus = 'pending' | 'syncing' | 'synced' | 'failed' | 'conflict'
 
@@ -96,9 +98,15 @@ export type SyncItemResult =
       suggestion?: 'keep-server'
     }
 
-/** Fresh outbox item ids (both apps): timestamp + random suffix, unique per device. */
+/**
+ * Fresh outbox item ids (both apps): timestamp + random suffix, unique per
+ * device. MD-4 (#350): the suffix is drawn from the shared CSPRNG seam
+ * (src/shared/ids.ts) — the id shape is unchanged (<base36 ts>-<6 base36
+ * chars>) but the draw is no longer Math.random (predictable); the suffix is
+ * now always exactly 6 chars (Math.random().toString(36) could yield fewer).
+ */
 export function uid() {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  return `${Date.now().toString(36)}-${randomChars(6, BASE36_CHARSET)}`
 }
 
 /** Normalise a possibly-stale persisted outbox item to the v2 shape (migration-safe). */

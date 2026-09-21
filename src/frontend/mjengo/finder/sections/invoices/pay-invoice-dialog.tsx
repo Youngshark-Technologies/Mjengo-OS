@@ -20,16 +20,8 @@ import { RadioGroup, RadioGroupItem } from '@/frontend/ui/radio-group'
 import { AlertTriangle, Banknote, BookOpen, Check, ShieldCheck } from 'lucide-react'
 import { useT } from '@/frontend/i18n/provider'
 import type { InvoiceWithLines, ThreeWayReport } from '@/backend/modules/invoices/types'
+import { autoPaymentReference } from '@/shared/ids'
 import { paymentMethodLabels, formatKes } from './invoice-bits'
-
-/** Same auto-reference shape the server generates (money.ts helper). */
-function previewReference(method: string): string {
-  const prefix = method === 'bank' ? 'BANK' : method === 'card' ? 'CARD' : method === 'wallet' ? 'WALLET' : method === 'cash' ? 'CASH' : 'MPESA'
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  let suffix = ''
-  for (let i = 0; i < 8; i++) suffix += chars[Math.floor(Math.random() * chars.length)]
-  return `${prefix}-${suffix}`
-}
 
 interface Props {
   invoice: InvoiceWithLines | null
@@ -50,7 +42,10 @@ export function PayInvoiceDialog({ invoice, report, walletBalance, busy, onConfi
   const [ack, setAck] = useState(false)
   const [step, setStep] = useState<'form' | 'confirm'>('form')
 
-  const autoRef = useMemo(() => previewReference(method), [method])
+  // MD-4 (#350): the preview draws the SAME CSPRNG seam the server's
+  // invoice.pay auto reference uses (src/shared/ids.ts) — one shape, one
+  // source of truth (previously a drifting Math.random copy).
+  const autoRef = useMemo(() => autoPaymentReference(method), [method])
   const mismatches = report?.mismatches ?? []
   const hasMismatch = mismatches.length > 0
   const walletShort = method === 'wallet' && invoice ? walletBalance < invoice.total : false
