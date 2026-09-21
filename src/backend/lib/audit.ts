@@ -173,9 +173,10 @@ export function summarizeAction(type: string, payload: any, result: any): string
     case 'inventory.return': return `Stock returned to supplier: ${p.qty}× item ${p.inventoryItemId?.slice(-6)}`
     case 'inventory.damage': return `Damaged stock recorded: ${p.qty}× — ${p.damageNote ?? 'no note'}`
     case 'inventory.adjust': return `Stock count adjusted ${p.qty > 0 ? '+' : ''}${p.qty} — ${p.reason ?? 'correction'}`
-    // Stock reconciliation (issue #194)
-    case 'inventory.count': return `Physical stock count recorded (${p.counts?.length ?? result?.itemCount ?? '?'} lines) by ${p.countedBy ?? 'unknown'}${result?.countId ? ` — count ${result.countId.slice(-6)}` : ''}`
+    // Stock reconciliation (issue #194; blind REC-1 #359)
+    case 'inventory.count': return `Physical stock count recorded (${p.counts?.length ?? result?.itemCount ?? '?'} lines) by ${p.countedBy ?? 'unknown'}${p.blind === true ? ' (blind)' : ''}${result?.countId ? ` — count ${result.countId.slice(-6)}` : ''}`
     case 'inventory.count.post': return `Count-linked adjustments posted (${result?.movements?.filter((m: { movementId: string | null }) => m.movementId).length ?? '?'} movements)${result?.countId ? ` — count ${result.countId.slice(-6)}` : ''}`
+    case 'inventory.count.schedule': return `Stock count cadence ${result?.cleared ? 'cleared' : `set: every ${result?.intervalDays ?? '?'} day(s)`}`
     // BOQ module (v3)
     case 'boq.create': return `BOQ "${p.name}" created (${(p.lines ?? []).length} lines)`
     case 'boq.line.upsert': return `BOQ line ${p.id ? 'updated' : 'added'}: ${p.qty}× ${p.materialName}`

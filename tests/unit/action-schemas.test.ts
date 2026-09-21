@@ -291,10 +291,11 @@ describe('the registry is exhaustive over the dispatchable action surface', () =
     expect(stray, `registry rows that are not dispatchable action ids: ${stray.join(', ')}`).toEqual([])
   })
 
-  it('the surface total is pinned — 124 action types, 124 registry rows', () => {
-    expect(KNOWN_ACTIONS.size).toBe(124)
-    expect(REGISTRY_KEYS).toHaveLength(124)
-    expect(new Set(REGISTRY_KEYS).size).toBe(124) // no duplicate rows either
+  it('the surface total is pinned — 125 action types, 125 registry rows', () => {
+    // 124 → 125: inventory.count.schedule (REC-1 #359, the count cadence).
+    expect(KNOWN_ACTIONS.size).toBe(125)
+    expect(REGISTRY_KEYS).toHaveLength(125)
+    expect(new Set(REGISTRY_KEYS).size).toBe(125) // no duplicate rows either
   })
 
   it('a NEW action type without a registry row fails compilation (satisfies probe)', () => {

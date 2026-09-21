@@ -46,6 +46,7 @@ vi.mock('@/backend/lib/db', () => {
     movements: new Map<string, Record<string, unknown>>(),
     counts: new Map<string, Record<string, unknown>>(),
     countItems: new Map<string, Record<string, unknown>>(),
+    projects: new Map<string, Record<string, unknown>>(), // REC-1 (#359): countIntervalDays lives on the project row
     failOn: null as string | null, // 'stockCountItem.create' | 'stockCount.update' | …
     // Pin the movement clock for snapshot tests: when set, stockMovement.create
     // stamps createdAt = nowMs instead of Date.now() (backdated-count scenarios).
@@ -55,6 +56,7 @@ vi.mock('@/backend/lib/db', () => {
       state.movements.clear()
       state.counts.clear()
       state.countItems.clear()
+      state.projects.clear()
       state.seq = 0
       state.failOn = null
       state.nowMs = null
@@ -157,11 +159,25 @@ vi.mock('@/backend/lib/db', () => {
       return { ...updated }
     },
   }
+  const project = {
+    async findUnique({ where }: { where: { id: string } }) {
+      const p = state.projects.get(where.id)
+      return p ? { ...p } : null
+    },
+    async update({ where, data }: { where: { id: string }; data: Record<string, unknown> }) {
+      const p = state.projects.get(where.id)
+      if (!p) throw new Error('stub: project.update on missing row')
+      const updated = { ...p, ...data }
+      state.projects.set(where.id, updated)
+      return { ...updated }
+    },
+  }
   const db = {
     inventoryItem,
     stockMovement,
     stockCount,
     stockCountItem,
+    project,
     async $transaction(fn: (tx: typeof db) => unknown) {
       const snapshot = {
         items: new Map(state.items),
@@ -200,6 +216,7 @@ type StubState = {
   movements: Map<string, Record<string, unknown>>
   counts: Map<string, Record<string, unknown>>
   countItems: Map<string, Record<string, unknown>>
+  projects: Map<string, Record<string, unknown>>
   failOn: string | null
   nowMs: number | null
   reset: () => void
@@ -214,6 +231,8 @@ const OTHER = 'proj-2'
 
 /** Seed two stock lines in P (Cement 100 @ Site Store, Ballast 10 @ Site Store). */
 async function seed() {
+  state.projects.set(P, { id: P })
+  state.projects.set(OTHER, { id: OTHER })
   const cement = await openStock(P, { materialName: 'Cement', unit: 'bag', qty: 100, location: 'Site Store' })
   const ballast = await openStock(P, { materialName: 'Ballast', unit: 'tonne', qty: 10, location: 'Site Store' })
   return { cementId: cement.inventoryItemId, ballastId: ballast.inventoryItemId }
@@ -520,6 +539,97 @@ describe('actions surface — inventory.count / inventory.count.post', () => {
   })
 })
 
+// ------------------------------------------------- REC-1 (#359): blind counts
+
+describe('blind-count mode — the session flag (per-count, auditable)', () => {
+  it('blind: true records the session blind and echoes it in the result; the variance view still returns AFTER the write (that IS the submission)', async () => {
+    const { cementId } = await seed()
+    const r = await recordStockCount(P, {
+      countedBy: 'Otieno',
+      blind: true,
+      counts: [{ inventoryItemId: cementId, countedQty: 95 }],
+    })
+    expect(r.blind).toBe(true)
+    // The row carries the mode — the reconciliation history + CSV export read it.
+    expect(state.counts.get(r.countId)!.blind).toBe(true)
+    // The variances (with expectedQty) exist ONLY in the post-save result —
+    // the server has no pre-submission expected-qty surface to leak (the
+    // row is written inside the same transaction; the result IS submission).
+    expect(r.variances[0].expectedQty).toBe(100)
+    expect(r.variances[0].variance).toBe(5)
+  })
+
+  it('blind is opt-in per session: absent / false / truthy-but-not-true all record NOT blind', async () => {
+    const { cementId } = await seed()
+    const a = await recordStockCount(P, { countedBy: 'Otieno', counts: [{ inventoryItemId: cementId, countedQty: 95 }] })
+    expect(a.blind).toBe(false)
+    expect(state.counts.get(a.countId)!.blind).toBe(false)
+    const b = await recordStockCount(P, { countedBy: 'Otieno', blind: false, counts: [{ inventoryItemId: cementId, countedQty: 95 }] })
+    expect(b.blind).toBe(false)
+    // 'yes' is a string — only the literal boolean true claims blindness
+    // (an accidentally-truthy payload must not fabricate the stronger claim).
+    const c = await recordStockCount(P, { countedBy: 'Otieno', blind: 'yes', counts: [{ inventoryItemId: cementId, countedQty: 95 }] })
+    expect(c.blind).toBe(false)
+    expect(state.counts.get(c.countId)!.blind).toBe(false)
+  })
+
+  it('a blind session posts exactly like a visible one — the mode changes evidence, never the ledger math', async () => {
+    const { cementId } = await seed()
+    const r = await recordStockCount(P, { countedBy: 'Otieno', blind: true, counts: [{ inventoryItemId: cementId, countedQty: 95 }] })
+    const posted = await postCountAdjustments(P, { countId: r.countId })
+    const adjusted = movementRows().find((m) => m.type === 'adjusted')!
+    expect(adjusted.quantity).toBe(-5) // counted − expected, toward the count
+    expect(adjusted.reference).toBe(countReference(r.countId))
+    expect(posted.movements[0].closingQty).toBe(95)
+  })
+
+  it('applyInventoryAction routes the blind payload through unchanged (offline replay path)', async () => {
+    const { cementId } = await seed()
+    const r = await applyInventoryAction('inventory.count', {
+      countedBy: 'Otieno',
+      blind: true,
+      counts: [{ inventoryItemId: cementId, countedQty: 95 }],
+    }, P)
+    expect(r.blind).toBe(true)
+  })
+})
+
+// ------------------------------------------- REC-1 (#359): scheduled count cadence
+
+describe('inventory.count.schedule — the stored cadence interval', () => {
+  it('sets the interval on the session\'s own project row', async () => {
+    await seed()
+    const r = await applyInventoryAction('inventory.count.schedule', { intervalDays: 7 }, P)
+    expect(r).toEqual({ intervalDays: 7, cleared: false })
+    expect(state.projects.get(P)!.countIntervalDays).toBe(7)
+    // Project scoping is inherent: the OTHER project\'s row is untouched.
+    expect(state.projects.get(OTHER)!.countIntervalDays).toBeUndefined()
+  })
+
+  it('null clears the cadence (the honest off state — no fake zero)', async () => {
+    await seed()
+    await applyInventoryAction('inventory.count.schedule', { intervalDays: 7 }, P)
+    const r = await applyInventoryAction('inventory.count.schedule', { intervalDays: null }, P)
+    expect(r).toEqual({ intervalDays: null, cleared: true })
+    expect(state.projects.get(P)!.countIntervalDays).toBeNull()
+  })
+
+  it('refuses dishonest intervals: fractional, zero, negative, over-cap, garbage — writing NOTHING', async () => {
+    await seed()
+    for (const bad of [0, -3, 2.5, 366, 'weekly', true]) {
+      await expect(
+        applyInventoryAction('inventory.count.schedule', { intervalDays: bad }, P),
+        `intervalDays=${String(bad)}`,
+      ).rejects.toThrow(/inventory\.count\.schedule: intervalDays/)
+    }
+    expect(state.projects.get(P)!.countIntervalDays).toBeUndefined() // never written
+  })
+
+  it('INVENTORY_ACTIONS declares the schedule action (outbox replay + audit surface)', () => {
+    expect(INVENTORY_ACTIONS).toContain('inventory.count.schedule')
+  })
+})
+
 // ------------------------------------------------------ source pins (house style)
 
 describe('source pins — offline-first wiring + UI + export', () => {
@@ -530,12 +640,47 @@ describe('source pins — offline-first wiring + UI + export', () => {
     const src = read('src/frontend/mjengo/materials-tab.tsx')
     expect(src).toContain("dispatch('inventory.count'")
     expect(src).toContain("dispatch('inventory.count.post'")
+    expect(src).toContain("'inventory.count.schedule'") // the cadence action (multi-line dispatch)
     // countedAt is stamped client-side at count time (offline snapshot honesty).
     expect(src).toContain('countedAt: new Date().toISOString()')
     // The run-count dialog + the post-adjustment action + the CSV export exist.
     expect(src).toContain("t('mat.count.dialog.title')")
     expect(src).toContain("t('mat.count.post')")
     expect(src).toContain('reconciliationCSV(t, data)')
+  })
+
+  it('blind mode hides the book figures in the count dialog — the expected qty renders ONLY on the non-blind branch', () => {
+    const src = read('src/frontend/mjengo/materials-tab.tsx')
+    // The toggle exists and rides the dispatch payload (auditable per session).
+    expect(src).toContain('setCountBlind')
+    expect(src).toContain('blind: countBlind || undefined')
+    // THE LEAK FIX: the count line is a conditional — blind renders the
+    // qty-free label, visible renders the expected-qty label. The book
+    // figure (i.closingQty) appears ONLY inside the countLine branch.
+    expect(src).toContain("countBlind\n                        ? t('mat.count.blind.line', { name: i.materialName, location: i.location })")
+    expect(src).toContain("t('mat.count.countLine', { name: i.materialName, location: i.location, qty: i.closingQty, unit: i.unit })")
+    // The dialog description swaps to the blind variant while counting.
+    expect(src).toContain("countBlind ? t('mat.count.blind.desc') : t('mat.count.dialog.desc')")
+    // The toggle resets per session (an explicit choice, never sticky).
+    expect(src).toContain('setCountBlind(false)')
+  })
+
+  it('the cadence surface: the select dispatches the schedule action, the due note reads the derived slice', () => {
+    const src = read('src/frontend/mjengo/materials-tab.tsx')
+    // The control dispatches the action (off → null).
+    expect(src).toContain("days === null ? { intervalDays: null } : { intervalDays: days }")
+    // The due note reads ONLY the server-derived slice — no client recompute.
+    expect(src).toContain('countCadence.due')
+    expect(src).toContain('countCadence.intervalDays')
+    expect(src).toContain("t('mat.count.due.next'")
+    expect(src).toContain("t('mat.count.due.overdue'")
+    expect(src).toContain("t('mat.count.due.never'")
+    // The whole cadence surface is gated on the slice being present — a
+    // pre-#359 persisted payload (the #78 offline boot serves it verbatim)
+    // hides the schedule instead of crashing or guessing one.
+    expect(src).toContain('const countCadence = data.inventory.countCadence ?? null')
+    expect(src).toContain('!isClient && countCadence !== null && (')
+    expect(src).toContain('countCadence !== null && countCadence.intervalDays !== null && (')
   })
 
   it('export-utils carries reconciliationCSV over the payload count history', async () => {
@@ -545,6 +690,10 @@ describe('source pins — offline-first wiring + UI + export', () => {
     // #125: the header row flows through t() (csv.rec.*) so the export
     // honors the active locale — the EN value keeps the same wording.
     expect(src).toContain("t('csv.rec.variance')")
+    // REC-1 (#359): the blind mode rides the export (the evidential weight
+    // of each session's rows).
+    expect(src).toContain("t('csv.rec.blind')")
+    expect(src).toContain("c.blind ? t('csv.rec.blindYes') : t('csv.rec.blindNo')")
     const { enDict } = await import('@/frontend/i18n/dicts/en')
     const { swDict } = await import('@/frontend/i18n/dicts/sw')
     expect(enDict['csv.rec.variance' as keyof typeof enDict]).toBe('Variance (Expected − Counted)')
@@ -560,6 +709,13 @@ describe('source pins — offline-first wiring + UI + export', () => {
       'mat.count.historyTitle', 'mat.count.record', 'mat.count.post',
       'mat.count.export', 'mat.count.status.open', 'mat.count.status.posted',
       'mat.count.saved', 'mat.count.zeroVariance',
+      // REC-1 (#359) — blind mode + cadence families
+      'mat.count.blind.label', 'mat.count.blind.hint', 'mat.count.blind.desc',
+      'mat.count.blind.line', 'mat.count.blind.badge',
+      'mat.count.cadence.label', 'mat.count.cadence.off', 'mat.count.cadence.option',
+      'mat.count.cadence.saved', 'mat.count.cadence.cleared', 'mat.count.cadence.failed',
+      'mat.count.due.never', 'mat.count.due.overdue', 'mat.count.due.next',
+      'csv.rec.blind', 'csv.rec.blindYes', 'csv.rec.blindNo',
     ]
     for (const key of keys) {
       expect(enDict[key as keyof typeof enDict], `en missing ${key}`).toBeTruthy()
@@ -571,9 +727,16 @@ describe('source pins — offline-first wiring + UI + export', () => {
     const { summarizeAction, kindForAction } = await import('@/backend/lib/audit')
     expect(kindForAction('inventory.count')).toBe('inventory')
     expect(kindForAction('inventory.count.post')).toBe('inventory')
+    expect(kindForAction('inventory.count.schedule')).toBe('inventory')
     expect(summarizeAction('inventory.count', { counts: [{}, {}], countedBy: 'Otieno' }, {}))
       .toContain('Physical stock count recorded (2 lines) by Otieno')
+    expect(summarizeAction('inventory.count', { counts: [{}], countedBy: 'Otieno', blind: true }, {}))
+      .toContain('(blind)')
     expect(summarizeAction('inventory.count.post', {}, { countId: 'c123', movements: [{ movementId: 'm1' }] }))
       .toContain('Count-linked adjustments posted (1 movements)')
+    expect(summarizeAction('inventory.count.schedule', {}, { intervalDays: 7, cleared: false }))
+      .toContain('Stock count cadence set: every 7 day(s)')
+    expect(summarizeAction('inventory.count.schedule', {}, { intervalDays: null, cleared: true }))
+      .toContain('Stock count cadence cleared')
   })
 })

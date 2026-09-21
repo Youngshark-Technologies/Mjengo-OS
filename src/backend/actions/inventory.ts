@@ -15,6 +15,7 @@ import {
   adjustStock,
   recordStockCount,
   postCountAdjustments,
+  setCountCadence,
   createBoq,
   upsertBoqLine,
   deleteBoqLine,
@@ -33,8 +34,9 @@ export const INVENTORY_ACTIONS = [
   'inventory.return', // { inventoryItemId, qty, note? }
   'inventory.damage', // { inventoryItemId, qty, damageNote }
   'inventory.adjust', // { inventoryItemId, qty, reason } — count correction (±)
-  'inventory.count', // { countedBy, countedAt?, note?, counts: [{ inventoryItemId, countedQty }] } — record a physical stock count session (issue #194)
+  'inventory.count', // { countedBy, countedAt?, note?, blind?, counts: [{ inventoryItemId, countedQty }] } — record a physical stock count session (issue #194); blind: true (REC-1 #359) records that the counter never saw the book quantities until after saving
   'inventory.count.post', // { countId, postedBy? } — post the count-linked adjustments (`adjusted` movements referencing the count)
+  'inventory.count.schedule', // { intervalDays: number | null } — set/clear the store's recurring count cadence in whole days (REC-1 #359; null clears — "due" is derived on read from the last count + interval)
   'boq.create', // { name, lines?: [{ materialName, unit?, qty?, estUnitPrice?, category?, note? }] } — estUnitPrice is KSh, converted to cents at the write boundary (#285)
   'boq.line.upsert', // { boqId, id?, materialName, unit, qty, estUnitPrice? (KSh → cents at the boundary, #285), category?, note? } — when id is given it must name a line of boqId's BOQ in the caller's project; foreign/unknown ids are refused (#286)
   'boq.line.delete', // { id }
@@ -70,6 +72,8 @@ export async function applyInventoryAction(
       return recordStockCount(projectId, p)
     case 'inventory.count.post':
       return postCountAdjustments(projectId, p)
+    case 'inventory.count.schedule':
+      return setCountCadence(projectId, p)
     case 'boq.create':
       return createBoq(projectId, p)
     case 'boq.line.upsert':

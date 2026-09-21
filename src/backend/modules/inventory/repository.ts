@@ -4,6 +4,7 @@
 import { db } from '@/backend/lib/db'
 import { centsToKes, mulQtyCents, sumCents } from '@/backend/lib/money'
 import { isLowStock, movementInflowQty } from './low-stock'
+import { countCadenceState } from './count-cadence'
 import type { InventorySlice, BoqSlice, StockMovementRow, StockMovementType, StockCountRow, StockCountStatus } from './types'
 
 /**
@@ -40,7 +41,7 @@ export function countVariance(line: { expectedQty: number; countedQty: number })
 const COUNT_HISTORY_TAKE = 20
 
 export async function loadInventorySlice(projectId: string): Promise<InventorySlice> {
-  const [items, counts] = await Promise.all([
+  const [items, counts, lastCount, project] = await Promise.all([
     db.inventoryItem.findMany({
       where: { projectId },
       include: { movements: { orderBy: { createdAt: 'desc' } } },
@@ -53,6 +54,18 @@ export async function loadInventorySlice(projectId: string): Promise<InventorySl
       include: { items: { include: { inventoryItem: true } } },
       orderBy: { createdAt: 'desc' },
       take: COUNT_HISTORY_TAKE,
+    }),
+    // REC-1 (#359): the LATEST physical count by countedAt (not createdAt —
+    // a backdated count recorded late was still the last time bags were
+    // counted). One bounded read; the cadence derives from it on read.
+    db.stockCount.findFirst({
+      where: { projectId },
+      orderBy: { countedAt: 'desc' },
+      select: { countedAt: true },
+    }),
+    db.project.findUnique({
+      where: { id: projectId },
+      select: { countIntervalDays: true },
     }),
   ])
   const rows = items.map((item) => {
@@ -151,6 +164,7 @@ export async function loadInventorySlice(projectId: string): Promise<InventorySl
       countedBy: c.countedBy,
       countedAt: c.countedAt.toISOString(),
       note: c.note,
+      blind: c.blind,
       status: c.status as StockCountStatus,
       postedAt: c.postedAt ? c.postedAt.toISOString() : null,
       postedBy: c.postedBy,
@@ -171,7 +185,16 @@ export async function loadInventorySlice(projectId: string): Promise<InventorySl
     }
   })
 
-  return { items: itemsWithoutMovements, movements: allMovements, counts: countRows }
+  // REC-1 (#359): the derived count cadence — last physical count + the
+  // stored interval, computed HERE (one definition, count-cadence.ts) so
+  // the client never derives a schedule itself.
+  const countCadence = countCadenceState({
+    intervalDays: project?.countIntervalDays ?? null,
+    lastCountAt: lastCount?.countedAt ?? null,
+    now: new Date(),
+  })
+
+  return { items: itemsWithoutMovements, movements: allMovements, counts: countRows, countCadence }
 }
 
 export async function loadBoqSlice(projectId: string): Promise<BoqSlice> {

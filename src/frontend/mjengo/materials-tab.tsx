@@ -10,6 +10,7 @@ import { Input } from '@/frontend/ui/input'
 import { Label } from '@/frontend/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/frontend/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/frontend/ui/table'
+import { Checkbox } from '@/frontend/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/frontend/ui/tooltip'
 import { Boxes, Truck, PackageMinus, Mic, Camera, Hand, Phone, Plus, PackageSearch, Download, Warehouse, AlertTriangle, ArrowLeftRight, Flame, ClipboardList, ClipboardCheck } from 'lucide-react'
 import { toast } from 'sonner'
@@ -396,6 +397,17 @@ const MOVEMENT_TYPES: Array<{ value: string; key: string }> = [
   { value: 'adjust', key: 'mat.movement.adjust' },
 ]
 
+// REC-1 (#359): the recurring-count cadence choices the history header's
+// select offers ('off' maps to null — clears Project.countIntervalDays;
+// "due" itself is derived on read from the last count + interval).
+const COUNT_CADENCE_OPTIONS = [
+  { value: 'off', days: null },
+  { value: '7', days: 7 },
+  { value: '14', days: 14 },
+  { value: '30', days: 30 },
+  { value: '90', days: 90 },
+] as const
+
 // StockMovementType (the stored enum) → dict key for the badge label.
 const MOVEMENT_LABELS: Record<string, string> = {
   opening: 'mat.mtype.opening',
@@ -460,13 +472,27 @@ function SiteStoreCard() {
   const [countBy, setCountBy] = useState('')
   const [countNote, setCountNote] = useState('')
   const [countQtys, setCountQtys] = useState<Record<string, string>>({})
+  // REC-1 (#359): blind-count toggle for the session being entered — a
+  // PER-COUNT flag (decision documented in the commit body): the counter
+  // chooses discipline per session; the choice is pinned on the StockCount
+  // row and shown in the history. Resets to visible-mode each time the
+  // dialog opens (an explicit choice, never a sticky default).
+  const [countBlind, setCountBlind] = useState(false)
   const busy = actionBusy !== null
 
   if (!data) return null
   const isClient = viewMode === 'client'
   const items = data.inventory.items
   const movements = data.inventory.movements
-  const counts = data.inventory.counts
+  // #78 offline boot serves the LAST SYNCED payload verbatim (persisted
+  // `data`, no refetch) — a device that upgrades and relaunches offline can
+  // hold a snapshot from before a slice member existed. `counts` (#194) and
+  // `countCadence` (REC-1 #359) are the recent additions: normalize instead
+  // of crashing the card — no history rows, and the cadence surface simply
+  // stays hidden (unknown, never a guessed schedule) until the next sync
+  // lands the server-derived state.
+  const counts = data.inventory.counts ?? []
+  const countCadence = data.inventory.countCadence ?? null
   const suppliers = data.supply.suppliers
   const incoming = data.supply.orders.filter((o) => o.status === 'delivering')
   const consumedTotal = items.reduce((s, i) => s + i.consumedQty, 0)
@@ -516,6 +542,7 @@ function SiteStoreCard() {
     setCountBy('')
     setCountNote('')
     setCountQtys({})
+    setCountBlind(false)
     setCountOpen(true)
   }
 
@@ -535,12 +562,14 @@ function SiteStoreCard() {
     if (countsList.length === 0) { toast.error(t('mat.count.error.noLines')); return }
     // countedAt is stamped HERE (count time), not at flush time — an offline
     // count still snapshots the world the site saw when the bags were counted.
+    // blind rides the payload so the recorded session says HOW it was counted.
     const ok = await dispatch('inventory.count', {
       countedBy: countBy.trim(),
       countedAt: new Date().toISOString(),
       note: countNote.trim() || undefined,
+      blind: countBlind || undefined,
       counts: countsList,
-    }, `Physical stock count: ${countsList.length} lines by ${countBy.trim()}`)
+    }, `Physical stock count: ${countsList.length} lines by ${countBy.trim()}${countBlind ? ' (blind)' : ''}`)
     if (ok) {
       toast.success(online ? t('mat.count.saved', { count: countsList.length }) : t('field.savedQueued', { count: outbox.length }))
       setCountOpen(false)
@@ -569,6 +598,25 @@ function SiteStoreCard() {
       setCountDetailId(null)
     } else {
       toast.error(t('mat.count.postFailed'))
+    }
+  }
+
+  // REC-1 (#359): set/clear the recurring count cadence. 'off' maps to null
+  // (clears Project.countIntervalDays); the schedule itself is derived on
+  // read (last count + interval) — this only stores the promise.
+  async function setCountCadence(value: string) {
+    const days = COUNT_CADENCE_OPTIONS.find((o) => o.value === value)?.days ?? null
+    const ok = await dispatch(
+      'inventory.count.schedule',
+      days === null ? { intervalDays: null } : { intervalDays: days },
+      days === null ? 'Cleared the recurring stock count cadence' : `Set the recurring stock count cadence: every ${days} day(s)`,
+    )
+    if (ok) {
+      toast.success(online
+        ? (days === null ? t('mat.count.cadence.cleared') : t('mat.count.cadence.saved', { days }))
+        : t('field.savedQueued', { count: outbox.length }))
+    } else {
+      toast.error(t('mat.count.cadence.failed'))
     }
   }
 
@@ -770,16 +818,56 @@ function SiteStoreCard() {
           )}
         </div>
 
-        {/* stock counts — reconciliation history (issue #194) */}
+        {/* stock counts — reconciliation history (issue #194; cadence REC-1 #359) */}
         <div>
-          <div className="flex items-center justify-between pb-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-1.5">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-stone-400">{t('mat.count.historyTitle')}</p>
-            {counts.length > 0 && (
-              <Button size="sm" variant="ghost" className="h-7 gap-1.5 px-2 text-[11px] text-stone-500" onClick={exportReconciliation} aria-label={t('mat.count.exportAria')}>
-                <Download className="h-3.5 w-3.5" aria-hidden /> {t('mat.count.export')}
-              </Button>
-            )}
+            <div className="flex items-center gap-1.5">
+              {/* REC-1 (#359): the recurring-count cadence. "Due" is derived on
+                  read (server-side, one definition) — this control only stores
+                  the interval promise. Hidden while a pre-#359 persisted
+                  payload carries no cadence slice (see the hoist above). */}
+              {!isClient && countCadence !== null && (
+                <Select
+                  value={countCadence.intervalDays === null ? 'off' : String(countCadence.intervalDays)}
+                  onValueChange={(v) => void setCountCadence(v)}
+                >
+                  <SelectTrigger className="h-7 w-auto gap-1 border-stone-200 px-2 text-[11px] text-stone-500" aria-label={t('mat.count.cadence.label')}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COUNT_CADENCE_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{t(o.value === 'off' ? 'mat.count.cadence.off' : 'mat.count.cadence.option', o.value === 'off' ? undefined : { days: Number(o.value) })}</SelectItem>
+                    ))}
+                    {/* A non-preset interval (set through the API / another
+                        client — the action accepts any whole 1–365) still
+                        renders honestly instead of an empty trigger. */}
+                    {countCadence.intervalDays !== null
+                      && !COUNT_CADENCE_OPTIONS.some((o) => o.value === String(countCadence.intervalDays)) && (
+                      <SelectItem value={String(countCadence.intervalDays)}>
+                        {t('mat.count.cadence.option', { days: countCadence.intervalDays })}
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              )}
+              {counts.length > 0 && (
+                <Button size="sm" variant="ghost" className="h-7 gap-1.5 px-2 text-[11px] text-stone-500" onClick={exportReconciliation} aria-label={t('mat.count.exportAria')}>
+                  <Download className="h-3.5 w-3.5" aria-hidden /> {t('mat.count.export')}
+                </Button>
+              )}
+            </div>
           </div>
+          {countCadence !== null && countCadence.intervalDays !== null && (
+            <p className={`mb-1.5 flex items-center gap-1.5 rounded-lg border p-2 text-[11px] ${countCadence.due ? 'border-orange-200 bg-orange-50/70 text-orange-700' : 'border-stone-200 bg-stone-50/60 text-stone-500'}`}>
+              <ClipboardCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              {countCadence.due
+                ? (countCadence.lastCountAt === null
+                    ? t('mat.count.due.never')
+                    : t('mat.count.due.overdue', { days: countCadence.overdueDays }))
+                : t('mat.count.due.next', { date: dateShort(countCadence.nextDueAt ?? '') })}
+            </p>
+          )}
           {counts.length === 0 ? (
             <p className="rounded-lg border border-dashed border-stone-300 p-4 text-center text-xs text-stone-500">
               {t('mat.count.empty')}
@@ -800,6 +888,9 @@ function SiteStoreCard() {
                         <Badge className={`border-0 text-[10px] hover:opacity-90 ${c.status === 'posted' ? 'bg-teal-100 text-teal-800' : 'bg-amber-100 text-amber-800'}`}>
                           {c.status === 'posted' ? t('mat.count.status.posted') : t('mat.count.status.open')}
                         </Badge>
+                        {c.blind && (
+                          <Badge className="border-0 bg-violet-100 text-[10px] text-violet-800 hover:bg-violet-100">{t('mat.count.blind.badge')}</Badge>
+                        )}
                         <span className="text-sm font-semibold text-stone-800">{dateShort(c.countedAt)}</span>
                         <span className="truncate text-xs text-stone-500">{c.countedBy}</span>
                       </div>
@@ -939,12 +1030,12 @@ function SiteStoreCard() {
         </DialogContent>
       </Dialog>
 
-      {/* ---- run stock count dialog (issue #194) ---- */}
+      {/* ---- run stock count dialog (issue #194; blind mode REC-1 #359) ---- */}
       <Dialog open={countOpen} onOpenChange={setCountOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="text-stone-900">{t('mat.count.dialog.title')}</DialogTitle>
-            <DialogDescription>{t('mat.count.dialog.desc')}</DialogDescription>
+            <DialogDescription>{countBlind ? t('mat.count.blind.desc') : t('mat.count.dialog.desc')}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-1">
             <div className="grid grid-cols-2 gap-3">
@@ -957,12 +1048,35 @@ function SiteStoreCard() {
                 <Input id="cnt-note" value={countNote} onChange={(e) => setCountNote(e.target.value)} placeholder={t('mat.count.ph.noteOptional')} />
               </div>
             </div>
+            {/* REC-1 (#359): blind-count toggle — a PER-COUNT choice (see the
+                state comment). While on, the lines below carry NO book
+                quantities: the expected figure appears only AFTER the session
+                is saved, in the variance view. */}
+            <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md border border-stone-200 p-2.5 transition hover:border-stone-300">
+              <Checkbox
+                checked={countBlind}
+                onCheckedChange={(v) => setCountBlind(v === true)}
+                aria-label={t('mat.count.blind.label')}
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-stone-800">{t('mat.count.blind.label')}</span>
+                <span className="block text-[11px] leading-snug text-stone-500">{t('mat.count.blind.hint')}</span>
+              </span>
+            </label>
             <div className="max-h-72 space-y-1.5 overflow-y-auto pr-2 -mr-2">
               {items.map((i) => (
                 <div key={i.id} className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 p-2.5">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-stone-800">{i.materialName}</p>
-                    <p className="text-[11px] text-stone-500">{t('mat.count.countLine', { name: i.materialName, location: i.location, qty: i.closingQty, unit: i.unit })}</p>
+                    <p className="text-[11px] text-stone-500">
+                      {/* Blind mode hides the book figure HERE — the one place
+                          the counter is typing the count. The store table above
+                          still shows closing stock (it is the book view); blind
+                          mode is counting discipline, not an info barrier. */}
+                      {countBlind
+                        ? t('mat.count.blind.line', { name: i.materialName, location: i.location })
+                        : t('mat.count.countLine', { name: i.materialName, location: i.location, qty: i.closingQty, unit: i.unit })}
+                    </p>
                   </div>
                   <Input
                     aria-label={t('mat.count.col.counted')}
@@ -997,7 +1111,12 @@ function SiteStoreCard() {
             return (
               <>
                 <DialogHeader>
-                  <DialogTitle className="text-stone-900">{t('mat.count.detail.title')}</DialogTitle>
+                  <DialogTitle className="flex items-center gap-2 text-stone-900">
+                    {t('mat.count.detail.title')}
+                    {c.blind && (
+                      <Badge className="border-0 bg-violet-100 text-[10px] text-violet-800 hover:bg-violet-100">{t('mat.count.blind.badge')}</Badge>
+                    )}
+                  </DialogTitle>
                   <DialogDescription>
                     {t('mat.count.detail.desc')} — {dateShort(c.countedAt)} · {c.countedBy}{c.note ? ` · ${c.note}` : ''}
                   </DialogDescription>

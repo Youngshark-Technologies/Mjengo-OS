@@ -29,6 +29,7 @@ import type { TxClient } from '@/backend/modules/ledger/service'
 import { notify } from '@/backend/modules/notify/service'
 import { derivedClosingQty } from './repository'
 import { isLowStock, movementInflowQty } from './low-stock'
+import { parseCountIntervalDays } from './count-cadence'
 
 export interface MovementResult {
   inventoryItemId: string
@@ -439,6 +440,8 @@ export interface RecordCountResult {
   countId: string
   countedBy: string
   countedAt: string
+  /** REC-1 (#359): the session was recorded blind (book figures hidden until save). */
+  blind: boolean
   itemCount: number
   variances: Array<{
     inventoryItemId: string
@@ -454,6 +457,17 @@ export interface RecordCountResult {
  * Record a physical stock count session (inventory.count): one StockCount
  * row + one StockCountItem per counted line, with the expected snapshot
  * pinned at countedAt. Atomic — a bad line writes nothing.
+ *
+ * REC-1 (#359) blind mode: payload `blind: true` records that the counter
+ * never saw the book quantities while counting. This is UI-discipline + an
+ * auditable session attribute, NOT an information boundary — the store view
+ * legitimately carries closing quantities, and a determined counter can
+ * walk to it. What blind mode honestly buys: the number is not on screen
+ * next to the input being typed, and the history says which sessions were
+ * counted that way. The server has NO pre-submission expected-qty API to
+ * leak: this action is the first time a count exists server-side, and its
+ * result (the variance view) is returned only after the row is written —
+ * that IS the submission.
  */
 export async function recordStockCount(projectId: string, p: any): Promise<RecordCountResult> {
   return db.$transaction(async (tx) => {
@@ -469,6 +483,7 @@ export async function recordStockCount(projectId: string, p: any): Promise<Recor
     if (Number.isNaN(countedAt.getTime())) {
       throw new Error('inventory.count: countedAt must be a valid date')
     }
+    const blind = p.blind === true
 
     // Validate + dedupe every line BEFORE any write (the DB unique
     // (countId, inventoryItemId) is the second lock, not the first).
@@ -497,6 +512,7 @@ export async function recordStockCount(projectId: string, p: any): Promise<Recor
         countedBy,
         countedAt,
         note: p.note ? String(p.note) : null,
+        blind,
         status: 'open',
       },
     })
@@ -526,6 +542,7 @@ export async function recordStockCount(projectId: string, p: any): Promise<Recor
       countId: count.id,
       countedBy,
       countedAt: countedAt.toISOString(),
+      blind,
       itemCount: items.length,
       variances,
     }
@@ -635,6 +652,33 @@ export async function postCountAdjustments(projectId: string, p: any): Promise<P
     await notifyLowStockCrossing(projectId, m)
   }
   return result
+}
+
+export interface SetCountCadenceResult {
+  intervalDays: number | null
+  cleared: boolean
+}
+
+/**
+ * Set (or clear) the store's recurring count cadence
+ * (inventory.count.schedule, REC-1 #359): Project.countIntervalDays.
+ *
+ * The schedule itself is COMPUTED ON READ (count-cadence.ts — last count +
+ * interval), so this action only stores the interval; nothing is scheduled,
+ * nothing fires, and "due" is always honest about the rows that exist.
+ * Validation is the shared parseCountIntervalDays (whole days, 1–365, or
+ * null to clear). Project scoping is inherent: the row updated is the
+ * session's own project.
+ */
+export async function setCountCadence(projectId: string, p: any): Promise<SetCountCadenceResult> {
+  const intervalDays = parseCountIntervalDays(p?.intervalDays)
+  const project = await db.project.findUnique({ where: { id: projectId }, select: { id: true } })
+  if (!project) throw new Error('inventory.count.schedule: project not found')
+  await db.project.update({
+    where: { id: project.id },
+    data: { countIntervalDays: intervalDays },
+  })
+  return { intervalDays, cleared: intervalDays === null }
 }
 
 // ---- BOQ ----

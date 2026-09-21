@@ -49,6 +49,12 @@ model Project {
   startDate           DateTime
   targetDate          DateTime
   status              String              @default("active") // active, completed, on_hold
+  // REC-1 (issue #359): recurring stock-count cadence for the site store, in
+  // whole days (e.g. 7 = weekly). NULL = no cadence (the pre-#359 contract:
+  // counts happen when someone chooses to run one). nextCountDue is NOT
+  // stored — it is derived on read (modules/inventory/count-cadence.ts,
+  // last count + interval) so no cron and no drift-prone schedule row exists.
+  countIntervalDays   Int?
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
   phases              Phase[]
@@ -1335,6 +1341,12 @@ model StockCount {
   countedBy String // name/role of whoever ran the physical count
   countedAt DateTime // when the physical count happened
   note      String?
+  // REC-1 (issue #359): this session ran BLIND — the counter never saw the
+  // book (expected) quantities while entering the count, only after saving
+  // (the variance view). Pinned on the row so the reconciliation history and
+  // the CSV export carry the evidential weight of a blind count. Default
+  // false: sessions recorded through the pre-#359 flow were not blind.
+  blind     Boolean          @default(false)
   status    String           @default("open") // open (recorded) | posted (adjustments applied)
   postedAt  DateTime?
   postedBy  String?

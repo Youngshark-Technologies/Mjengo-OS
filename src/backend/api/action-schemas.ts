@@ -32,9 +32,9 @@
 // (plus tests) — the seam already exists.
 //
 //   strict today:  MONEY_ACTIONS (7) + WALLET_ACTIONS (9) = 16 types
-//   documented:    the other 108 types (core 30 + trust 4 + evidence 7 +
+//   documented:    the other 109 types (core 30 + trust 4 + evidence 7 +
 //                  land 7 + professionals 6 + supply 24 + invoice 6 +
-//                  intel 5 + inventory 17 + ai 2)
+//                  intel 5 + inventory 18 + ai 2)
 //
 // HONEST BOUNDS POLICY: the strict schemas must never be narrower than what
 // the appliers accept (no false rejections — existing flows stay green);
@@ -411,8 +411,9 @@ export const ACTION_PAYLOAD_SCHEMAS = {
   'inventory.return': documentedPayload, // { inventoryItemId, qty, note? }
   'inventory.damage': documentedPayload, // { inventoryItemId, qty, damageNote }
   'inventory.adjust': documentedPayload, // { inventoryItemId, qty, reason } — ± count correction
-  'inventory.count': documentedPayload, // { countedBy, countedAt?, note?, counts: [{ inventoryItemId, countedQty }] } (#194)
+  'inventory.count': documentedPayload, // { countedBy, countedAt?, note?, blind?, counts: [{ inventoryItemId, countedQty }] } (#194; blind REC-1 #359)
   'inventory.count.post': documentedPayload, // { countId, postedBy? }
+  'inventory.count.schedule': documentedPayload, // { intervalDays: number | null } — set/clear the recurring count cadence (REC-1 #359)
   'boq.create': documentedPayload, // { name, lines?: [{ materialName, unit?, qty?, estUnitPrice?, category?, note? }] }
   'boq.line.upsert': documentedPayload, // { boqId, id?, materialName, unit, qty, estUnitPrice?, category?, note? }
   'boq.line.delete': documentedPayload, // { id }

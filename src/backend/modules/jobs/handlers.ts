@@ -37,7 +37,9 @@ import { computeLedgerConsistency } from '@/backend/modules/invoices/three-way'
 import type { LedgerCheck } from '@/backend/modules/invoices/types'
 import {
   computeAttendanceFraudFindings, computeCostVarianceFindings, computeDuplicatePurchaseFindings,
+  computeStockVarianceFindings,
   overallProgress, type AttendanceAuditRow, type CostCategory, type DuplicateOrderRow, type EngineFinding,
+  type StockVarianceCount,
 } from '@/backend/modules/intel/engine'
 import { runDarajaReconcile } from '@/backend/modules/wallet/daraja-reconcile'
 import { buildTrustDigest } from '@/backend/modules/ai/trust-digest'
@@ -54,12 +56,13 @@ function dateEATAgo(days: number): string {
   return new Date(Date.now() + 3 * 3600 * 1000 - days * 86_400_000).toISOString().slice(0, 10)
 }
 
-/** Alert.type bucket per deterministic rule key (Doc A §16 attendance / §29 budget+cost). */
+/** Alert.type bucket per deterministic rule key (Doc A §16 attendance / §29 budget+cost / REC-1 stock). */
 const RULE_ALERT_TYPE: Record<string, string> = {
   attendance_override_pattern: 'attendance',
   weekend_ghost_pattern: 'attendance',
   budget_category_overrun: 'budget',
   duplicate_purchase_watch: 'anomaly',
+  stock_variance_watch: 'anomaly',
 }
 
 /** Transaction.type → §29 cost category (costCode can re-route to professional fees). */
@@ -86,7 +89,7 @@ async function runDeterministicScanRules(projectId: string): Promise<EngineFindi
   const windowStart = dateEATAgo(14)
   const historyStart = dateEATAgo(90)
 
-  const [attendanceRows, weekendHistory, transactions, phases, boq, orders] = await Promise.all([
+  const [attendanceRows, weekendHistory, transactions, phases, boq, orders, stockCounts] = await Promise.all([
     db.attendance.findMany({
       where: { projectId, date: { gte: windowStart } },
       select: {
@@ -111,6 +114,15 @@ async function runDeterministicScanRules(projectId: string): Promise<EngineFindi
     db.purchaseOrder.findMany({
       where: { projectId, createdAt: { gte: new Date(now.getTime() - 60 * 86_400_000) } },
       include: { lines: { select: { name: true, lineTotal: true } }, deliveries: { select: { receivedAt: true } } },
+    }),
+    // REC-1 (#359): count sessions whose PHYSICAL count time falls in the
+    // window (countedAt, not createdAt — an offline count flushed late
+    // still counts from when the bags were counted). Posted and open
+    // sessions both carry their variance snapshot.
+    db.stockCount.findMany({
+      where: { projectId, countedAt: { gte: new Date(now.getTime() - 14 * 86_400_000) } },
+      include: { items: { include: { inventoryItem: { select: { materialName: true, unit: true } } } } },
+      orderBy: { countedAt: 'desc' },
     }),
   ])
 
@@ -174,10 +186,25 @@ async function runDeterministicScanRules(projectId: string): Promise<EngineFindi
     lines: o.lines.map((l) => ({ name: l.name, lineTotal: l.lineTotal })),
   }))
 
+  // REC-1 (#359): the count sessions as the variance rule sees them.
+  const stockVarianceCounts: StockVarianceCount[] = stockCounts.map((c) => ({
+    countId: c.id,
+    countedAt: c.countedAt,
+    countedBy: c.countedBy,
+    blind: c.blind,
+    lines: c.items.map((line) => ({
+      materialName: line.inventoryItem.materialName,
+      unit: line.inventoryItem.unit,
+      expectedQty: line.expectedQty,
+      countedQty: line.countedQty,
+    })),
+  }))
+
   return [
     ...computeAttendanceFraudFindings({ now, rows: auditRows, weekendBaseline: { rows: weekendRows, present: weekendPresent } }),
     ...computeCostVarianceFindings({ progressPct, phaseBudgetTotal, boq: boqEstimate, spendByCategory }),
     ...computeDuplicatePurchaseFindings(duplicateRows),
+    ...computeStockVarianceFindings(stockVarianceCounts),
   ]
 }
 
@@ -206,9 +233,9 @@ export interface AnomalyScanResult {
  * Anomaly scan shared core: reconcile deliveries vs consumption vs progress
  * vs budget, write up to 4 LLM Alert rows PLUS the B4-INTEL deterministic
  * anti-fraud/cost-control alerts (§16/§29 — attendance overrides, weekend
- * ghosts, category variance, duplicate purchases), then emit
- * 'anomaly.detected' (the event policy notifies the contractor — kind
- * 'anomaly' — so the bell surfaces it).
+ * ghosts, category variance, duplicate purchases) and the REC-1 stock-count
+ * variance watch (#359), then emit 'anomaly.detected' (the event policy
+ * notifies the contractor — kind 'anomaly' — so the bell surfaces it).
  */
 export async function runAnomalyScan(projectId?: string | null): Promise<AnomalyScanResult> {
   const digest = await buildProjectDigest(projectId)
@@ -244,11 +271,12 @@ Max 4 alerts, ordered by severity. Only flag genuine discrepancies — do not in
     created.push({ id: alert.id, type: alert.type, severity: alert.severity, title: alert.title })
   }
 
-  // B4-INTEL deterministic rules (§16/§29) — every finding states its evidence
-  // and rule key in the message, same Alert shape as the LLM pass above.
+  // B4-INTEL deterministic rules (§16/§29) + REC-1 stock variance (#359) —
+  // every finding states its evidence and rule key in the message, same
+  // Alert shape as the LLM pass above.
   const findings = await runDeterministicScanRules(digest.projectId)
   const deterministicRules: string[] = []
-  for (const f of findings.slice(0, 6)) {
+  for (const f of findings.slice(0, 7)) {
     const alert = await db.alert.create({
       data: {
         projectId: digest.projectId,
@@ -267,10 +295,10 @@ Max 4 alerts, ordered by severity. Only flag genuine discrepancies — do not in
     const counts = new Map<string, number>()
     for (const r of deterministicRules) counts.set(r, (counts.get(r) ?? 0) + 1)
     summaryParts.push(
-      `Deterministic rules (§16/§29): ${deterministicRules.length} finding(s) — ${Array.from(counts.entries()).map(([r, n]) => `${r}×${n}`).join(', ')}.`,
+      `Deterministic rules (§16/§29/#359): ${deterministicRules.length} finding(s) — ${Array.from(counts.entries()).map(([r, n]) => `${r}×${n}`).join(', ')}.`,
     )
   } else {
-    summaryParts.push('Deterministic rules (§16/§29): 0 findings — attendance overrides, weekend ghosts, category variance and duplicate purchases all within their thresholds.')
+    summaryParts.push('Deterministic rules (§16/§29/#359): 0 findings — attendance overrides, weekend ghosts, category variance, duplicate purchases and stock-count variance all within their thresholds.')
   }
   const summary = summaryParts.filter(Boolean).join(' ')
 
