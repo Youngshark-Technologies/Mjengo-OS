@@ -4,7 +4,7 @@
 - **Date:** 2026-09-24
 - **Issue:** [#205](https://github.com/Youngshark-Technologies/Mjengo-OS/issues/205) — audit finding **OBS-3** (P3); sibling finding **OBS-5** (trace-worthy spans)
 - **Deciders:** Backend engineering (task 4-WAVE-B)
-- **Related:** `GET /api/metrics` (phase 1, this issue — `src/app/api/metrics/route.ts`); `src/backend/lib/health-queries.ts` (the shared-query seam); issue #202 / `ERROR_SINK_URL` (the same opt-in, env-gated, fail-open posture this ADR copies); issue #204 / `LOG_FORMAT` (the structured-log seam); issue #217 / `docs/runbooks/MONITORING.md` (the outside-in checks); ADR 0002 (Supabase phase-2 — where a hosted collector would live); `docs/audit/INTEGRATION_BASELINE.md` §5 ("Metrics — NONE", "Tracing — NONE" — the honest baseline this wave started from)
+- **Related:** `GET /api/metrics` (phase 1, this issue — `src/app/api/metrics/route.ts`); `src/backend/lib/health-queries.ts` (the shared-query seam); issue #202 / `ERROR_SINK_URL` (the same opt-in, env-gated, fail-open posture this ADR copies); issue #204 / `LOG_FORMAT` (the structured-log seam); issue #217 / `docs/runbooks/MONITORING.md` (the outside-in checks); ADR 0002 (Supabase phase-2 — where a hosted collector would live); the 2026-09 integration audit baseline §5 ("Metrics — NONE", "Tracing — NONE" — removed 2026-09-21; the honest baseline this wave started from)
 
 ## Context
 

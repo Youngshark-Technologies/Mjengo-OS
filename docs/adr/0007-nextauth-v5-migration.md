@@ -4,7 +4,7 @@
 - **Date:** 2026-09-18
 - **Issue:** [#173](https://github.com/Roy-Wanyoike/Mjengo-OS/issues/173) — SEC-5 (P2)
 - **Deciders:** Principal engineering (task 4-a)
-- **Related:** [docs/audit/SECURITY_BASELINE.md](../audit/SECURITY_BASELINE.md) §12 + findings register **SEC-5**; ADR 0002 (Supabase Phase-2 identity — v5 credentials is the bridge to it); issues #74 (boot guard), #94 (dev fallback mirror), #216 (Dependabot extension to `mjengoos-website/`), #7 (proxy origin derivation); the `fix/audit2-security` wave (SEC-1/SEC-2 — same files, already on `main`)
+- **Related:** the 2026-09 security audit baseline (removed 2026-09-21; its register lives in the tracker) §12 + findings register **SEC-5**; ADR 0002 (Supabase Phase-2 identity — v5 credentials is the bridge to it); issues #74 (boot guard), #94 (dev fallback mirror), #216 (Dependabot extension to `mjengoos-website/`), #7 (proxy origin derivation); the `fix/audit2-security` wave (SEC-1/SEC-2 — same files, already on `main`)
 
 ## Context
 
@@ -267,4 +267,4 @@ session-lifecycle work logged as SEC-15 in the same audit batch).
 - Issues #74 (boot guard), #94 (the fallback mirror this plan deletes),
   #216 (Dependabot for the website tree), #7 (proxy origin derivation that
   v5's `trustHost` formalizes)
-- `docs/audit/PENDING_WORK.md` §2 (SEC-5 row tracks delivery state)
+- the tracker (issue #360 tracks the SEC-5 cutover delivery state)

@@ -291,8 +291,7 @@ trusting the model**:
 The pre-existing Copilot routes (`/api/ai/recap`, `analyze-photo`, …) keep
 their older `ai_progress`/`ai_voice` flags; the Wave-6 layer is the new,
 stricter seam. Engineering detail: [ARCHITECTURE.md](./ARCHITECTURE.md) ·
-release story: [docs/RELEASE-NOTES.md](./docs/RELEASE-NOTES.md) · plan:
-[docs/wave6-plan.md](./docs/wave6-plan.md).
+release story: [docs/RELEASE-NOTES.md](./docs/RELEASE-NOTES.md).
 
 ## The project lifecycle — land to handover
 
@@ -639,7 +638,7 @@ Three workflows live in `.github/workflows/`, all triggered on every push to
   a real `next build` (standalone) with a throwaway SQLite URL + dummy secret
   — the production build must never require real env secrets.
 - **Tests** (`test.yml`) — the full vitest unit suite run coverage-enabled,
-  **`bun run test:coverage`** (3,328 tests across 154 files, all passing —
+  **`bun run test:coverage`** (3,643 tests across 166 files, all passing —
   counts as of 2026-09-21; re-run `bunx vitest run` for the current number,
   since every wave adds tests), on every push/PR to `main`. No database or
   secrets required — the tests are pure/unit-level by design (a handful of
@@ -747,17 +746,14 @@ the README wins on current status); the live issue-level roadmap is the
 | `mjengoos-website/` | Marketing site (independent Next.js app, `:3001`, proxied at `/website`) |
 | `prisma/` | `schema.prisma` (68 models), `migrations/` (0_init + additive 1_mjengo_score … 8_trust_digest; 9_schema_reconcile closes the last drift — see DEPLOYMENT.md §4.1), `seed.ts` + `seed-extras/` |
 | `public/` | PWA manifest + service worker, demo site photos, Swahili voice notes |
-| `tests/unit/` | The vitest suite (154 files, 3,328 tests — counts as of 2026-09-21; re-run vitest for current) — unit-level, no DB or secrets needed (critical-path suites use a throwaway real SQLite file) |
+| `tests/unit/` | The vitest suite (166 files, 3,643 tests — counts as of 2026-09-21; re-run vitest for current) — unit-level, no DB or secrets needed (critical-path suites use a throwaway real SQLite file) |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Module map + production migration roadmap |
-| [`docs/audit/`](./docs/audit/) | **Phase-0 baseline entry point** — start at [MASTER_AUDIT.md](./docs/audit/MASTER_AUDIT.md), the index over the 2026-09 production-readiness re-audit baselines (API, frontend, website, database, security, mock/demo, integration — one file per surface), the findings-register → issue crosswalk, and [TEST_BASELINE.md](./docs/audit/TEST_BASELINE.md), the living test baseline |
 | [docs/SUPABASE-DATABASE-DESIGN.md](./docs/SUPABASE-DATABASE-DESIGN.md) | Target-state Supabase/PostgreSQL design (68-table DDL, RLS policy matrix, storage, migration + rollback plan; ADR 0002) |
 | [docs/adr/](./docs/adr) | Architecture decision records — 0001 mobile scope (PWA-first), 0002 Supabase database, 0003 repo topology, 0007 next-auth v4→v5 migration plan, 0008 OpenAPI document scope, 0009 observability OTel seam, 0010 soft-FK registry, 0011 BOQ line-level lineage, 0012 extraction triggers |
 | [docs/PRODUCT-BLUEPRINT.md](./docs/PRODUCT-BLUEPRINT.md) | Product vision document (aspirational — the README wins on current status) |
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Build/run/test/deploy operations guide |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Day-to-day contribution workflow: branches, gates, PR expectations |
 | [docs/RELEASE-NOTES.md](./docs/RELEASE-NOTES.md) | Plain-language release notes — v0.1 → v0.2.5, wave by wave |
-| [docs/backlog.md](./docs/backlog.md) | PM release plan (waves 3–6) with paste-ready issue texts |
-| [docs/wave6-plan.md](./docs/wave6-plan.md) | Wave-6 release plan (research → specs → paste-ready issue texts) + the market-gap research it rests on (`docs/research/`) |
 | [SECURITY.md](./SECURITY.md) | Vulnerability reporting policy |
 
 ## Contributing

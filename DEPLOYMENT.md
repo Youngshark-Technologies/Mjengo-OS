@@ -244,9 +244,9 @@ bun run test:finance    # the money-invariant release gate: 27 files / 629
 ```
 
 Run it on every money-path change (seconds, instead of the full suite) and
-before every release, alongside the full suite (`bun run test` — 3,328
-tests / 154 files, counts as of 2026-09-21; the gate's files are a subset;
-the living baseline is `docs/audit/TEST_BASELINE.md`).
+before every release, alongside the full suite (`bun run test` — 3,643
+tests / 166 files, counts as of 2026-09-21; the gate's files are a subset;
+the living baseline is CONTRIBUTING.md's test-baseline note).
 Release notes and QA reports cite it as one line: "`bun run test:finance`
 green at `<sha>`".
 
@@ -285,7 +285,7 @@ check the Overview tab renders KPIs and `/api/health` shows `db: "up"`.
 | Workflow | Job | Steps |
 |---|---|---|
 | `ci.yml` | `quality` | checkout → setup-bun → `bun install --frozen-lockfile` → `bun run lint` → `bunx tsc --noEmit` |
-| `test.yml` | `test` (Vitest unit suite) | checkout → setup-bun → `bun install --frozen-lockfile` → `bun run test:coverage` (`vitest run --coverage` — 3,328 tests / 154 files, counts as of 2026-09-21; re-run vitest for current. No database or secrets required. Enforces the per-module coverage floors — issue #185) → upload `coverage/` (lcov report) as a run artifact |
+| `test.yml` | `test` (Vitest unit suite) | checkout → setup-bun → `bun install --frozen-lockfile` → `bun run test:coverage` (`vitest run --coverage` — 3,643 tests / 166 files, counts as of 2026-09-21; re-run vitest for current. No database or secrets required. Enforces the per-module coverage floors — issue #185) → upload `coverage/` (lcov report) as a run artifact |
 | `ci.yml` | `build` | checkout → setup-bun → `bun install --frozen-lockfile` → `bunx prisma generate` → `bun run build` (standalone) with `DATABASE_URL=file:ci.db` + dummy `NEXTAUTH_SECRET` — the build must never need real secrets |
 | `docker.yml` | `docker-build` | `docker build -t mjengoos-ci .` on a GitHub runner — **real verification of the Dockerfile** (the dev sandbox has no docker CLI). No registry push. |
 | `docker.yml` | `website-build` | `docker build -t mjengoos-website-ci ./mjengoos-website` — same posture, real verification of the marketing-site image. No registry push. |
@@ -1124,13 +1124,14 @@ Operating notes:
     every remaining sealed copy (live and archived) unreadable going
     forward; retrieve the leads you must keep BEFORE rotating.
 - The sandbox-level drill of the whole chain (including a live WAL
-  writer and a restore): `docs/audit/RESTORE_DRILL_2026-09-18.md`.
+  writer and a restore) was executed 2026-09-18 (the drill record was
+  removed with the 2026-09-21 audit-doc cleanup; PR #277 carried it).
 
 #### 7.2.2 Restore runbook (drill it before you need it)
 
 A backup that has never been restored is a hope, not a backup. This
-runbook was executed once at script level on a scratch host — exact
-commands and outputs in `docs/audit/RESTORE_DRILL_2026-09-18.md`. After
+runbook was executed once at script level on a scratch host (2026-09-18 —
+the drill record was removed with the 2026-09-21 audit-doc cleanup). After
 installing §7.2.1, run one full drill on YOUR hardware (the sandbox
 drill could not bring up the compose stack; that part is deliberately
 left as the operator's step).

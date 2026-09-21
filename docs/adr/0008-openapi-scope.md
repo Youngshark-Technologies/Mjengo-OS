@@ -3,7 +3,7 @@
 - **Status:** Accepted (2026-09-23)
 - **Issue:** [#165](https://github.com/Roy-Wanyoike/Mjengo-OS/issues/165) — audit finding **API-14** (P3)
 - **Deciders:** Backend/API engineering (task 20-b)
-- **Related:** issue #28 (created the doc), #29 (honest-copy sweep), #153 (extract-document — the one deliberate non-v1 addition since, and the template for future app-read additions); audit finding **API-10** (the action-schema registry this decision's main revisit trigger depends on); ADR 0001 (mobile scope — same "scope by decision, not omission" pattern); [`docs/audit/API_BASELINE.md`](../audit/API_BASELINE.md) §2 (the per-route inventory this ADR points to)
+- **Related:** issue #28 (created the doc), #29 (honest-copy sweep), #153 (extract-document — the one deliberate non-v1 addition since, and the template for future app-read additions); audit finding **API-10** (the action-schema registry this decision's main revisit trigger depends on); ADR 0001 (mobile scope — same "scope by decision, not omission" pattern); the 2026-09 API audit baseline §2 (removed 2026-09-21; the per-route inventory this ADR pointed to)
 
 ## Context
 
@@ -163,5 +163,5 @@ scope change).
 - `src/app/api/openapi.json/route.ts` — `info.description` links here
 - `tests/unit/openapi-cross-check.test.ts` — the automated §3 cross-check
 - `ARCHITECTURE.md` — API section references this ADR
-- `docs/audit/API_BASELINE.md` — §2 inventory (the contract record for the
+- the 2026-09 API audit baseline — §2 inventory (removed 2026-09-21; the contract record for the
   webapp-private surface), §3 cross-check, §5 API-14 resolution note

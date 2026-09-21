@@ -136,8 +136,10 @@ for the paying persona, and two-sided liquidity for the marketplace. Suite:
 
 The wave that put a model on top of the evidence — without ever letting it
 decide anything. It started with research (a market-gap analysis over 21
-web searches, `docs/research/market-gaps-2026-09.md`) and a release plan
-(`docs/wave6-plan.md`), then shipped four things:
+web searches — the dated research doc was removed with the 2026-09-21 repo
+cleanup; its actionable findings live in the tracker's roadmap registers)
+and a release plan (same cleanup — the wave specs all shipped or are
+tracked), then shipped four things:
 
 1. **The AI foundation** — a provider seam (`src/backend/modules/ai/`:
    chat, vision, transcription, speech) behind a new `ai` feature flag that

@@ -548,7 +548,7 @@ describe('#363: the zero-VAT note states the honest posture in both languages', 
 // ---------------------------------------------------------------------------
 
 describe('#125: every baseline EN-only surface now imports useT (regression guard)', () => {
-  // The definitive FE-3 list (docs/audit/FRONTEND_BASELINE.md §3, rg -L useT)
+  // The definitive FE-3 list (register row FE-3, resolved via #125; rg -L useT)
   // — artifacts (report-utils.ts / export-utils.ts) are pure functions that
   // TAKE t() instead of calling the hook, so they are pinned by signature in
   // the artifacts block below, not by the useT import.
