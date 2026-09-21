@@ -146,9 +146,13 @@ unaffected.
 The website is a **frontend-only** consumer of public information. The only
 backend surface is its own `/api/contact` route (submissions stored in
 `data/submissions.json` — gitignored runtime data, capped at the 500 most
-recent entries, no third party contacted). Retrieving leads: read that file
-in dev; under the repo's compose stack it lives on the `website-data`
-volume — `docker compose exec website cat /app/data/submissions.json`
+recent entries, no third party contacted). Since issue #362 (MD-3) every
+submission's PII fields are sealed at rest with AES-256-GCM under
+`CONTACT_PII_KEY` (see `.env.example`; `id`/`ts`/`source` stay plaintext so
+the store remains inspectable without the key). Retrieving leads:
+`bun run decrypt-leads` in dev (`scripts/decrypt-leads.mjs` — decrypt, or
+`--seal` for the erasure write-back); under the repo's compose stack
+`docker compose exec website node /app/scripts/decrypt-leads.mjs`
 (full guide in the root `DEPLOYMENT.md` §6.3). "Sign in" links point to
 the app via `NEXT_PUBLIC_APP_URL`. No database, no auth, no SDK usage.
 

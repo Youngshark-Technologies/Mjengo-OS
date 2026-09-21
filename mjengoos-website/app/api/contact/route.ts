@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
 import { SITE } from "@/lib/site";
+import {
+  hasLegacyPlaintextContactPii,
+  resolveContactPiiChannel,
+  sealContactSubmission,
+} from "../../../lib/contact-pii.mjs";
 
 /**
  * Contact / demo-request endpoint (§45), hardened per audit MW-10:
@@ -39,6 +44,21 @@ import { SITE } from "@/lib/site";
  *    on write) so the gitignored runtime PII file cannot grow unbounded —
  *    and since issue #131 every eviction logs a warning with the count:
  *    dropped leads are silent no longer (see DEPLOYMENT.md §6.3).
+ *  · Contact-PII encryption at rest (MD-3 / issue #362): every PII field
+ *    of a submission (name, email, phone, organization, role, country,
+ *    projectType, message) is sealed with AES-256-GCM under
+ *    CONTACT_PII_KEY before the file is written — the volume, its tar
+ *    backups and any leaked copy rest as ciphertext without the key.
+ *    `id`/`ts`/`source` stay plaintext on purpose so the store remains
+ *    inspectable for counts, the 500-cap eviction order and erasure
+ *    targeting without it. Production with no key (or a malformed one)
+ *    FAILS CLOSED — 503, nothing written, one loud error per process
+ *    (the VAPID_SUBJECT / issue #354 posture); dev/test seals under the
+ *    labeled dev-fallback key with one warning. Legacy plaintext rows
+ *    are re-sealed by a write-path sweep: the first submission after the
+ *    upgrade seals the whole file, and sealed rows are never re-sealed
+ *    (no churn). Retrieval + the erasure write-back: the site's
+ *    scripts/decrypt-leads.mjs CLI (DEPLOYMENT.md §6.3).
  *
  * Still no third-party service is contacted; validation stays server-side.
  */
@@ -201,6 +221,25 @@ export async function POST(request: Request) {
     );
   }
 
+  // Contact-PII key gate (issue #362 / MD-3), BEFORE the rate limiter and
+  // any body read: with no usable key this endpoint cannot store anything
+  // it is allowed to store, so it refuses — 503, honest copy for the
+  // visitor, the operator detail in the once-per-process console.error
+  // emitted by resolveContactPiiChannel(). Production fails closed on an
+  // unset key; a malformed key refuses in EVERY runtime (a bad key must
+  // never seal leads it cannot decrypt back).
+  const piiChannel = resolveContactPiiChannel();
+  if (piiChannel.refused) {
+    return NextResponse.json(
+      {
+        ok: false,
+        reason: `contact_pii_key_${piiChannel.problem}`,
+        error: "We can't save your message right now — please try again a little later.",
+      },
+      { status: 503 },
+    );
+  }
+
   const key = rateLimitKey(request);
   const limited = rateLimitStatus(key);
   if (limited) {
@@ -268,27 +307,50 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, errors }, { status: 400 });
   }
 
-  const submission: Submission = {
+  // The submission's PII fields are sealed BEFORE the first byte touches
+  // disk (issue #362). The response returns the id only — it is not PII.
+  const submission = sealContactSubmission(piiChannel.key, {
     id: `sub_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     ts: new Date().toISOString(),
     ...data,
-  };
+  });
 
   try {
     const file = path.join(process.cwd(), "data", "submissions.json");
-    let existing: Submission[] = [];
+    let existing: Array<Record<string, unknown>> = [];
     try {
-      existing = JSON.parse(await fs.readFile(file, "utf8")) as Submission[];
+      existing = JSON.parse(await fs.readFile(file, "utf8")) as Array<Record<string, unknown>>;
       if (!Array.isArray(existing)) existing = [];
     } catch {
       // First submission — file doesn't exist yet.
     }
+    // Write-path sweep (issue #362): any entry still resting in plaintext
+    // (a legacy pre-#362 row, or an operator's plaintext write-back) is
+    // sealed in the same write, so the store converges to fully encrypted
+    // on the first submission after the upgrade. Fully sealed rows are
+    // never revisited — steady-state writes do zero crypto on old entries.
+    let sealedLegacy = 0;
+    existing = existing.map((row) => {
+      if (hasLegacyPlaintextContactPii(row)) {
+        sealedLegacy += 1;
+        return sealContactSubmission(piiChannel.key, row);
+      }
+      return row;
+    });
+    if (sealedLegacy > 0) {
+      console.warn(
+        `[contact] sealed ${sealedLegacy} legacy plaintext entr${sealedLegacy === 1 ? "y" : "ies"} ` +
+          `during this write (issue #362 migration sweep) — the store is now fully encrypted at rest.`,
+      );
+    }
     existing.push(submission);
-    // Retention cap (MW-10): keep only the most recent entries so the
-    // plaintext contact data on disk stays bounded. Since issue #131 every
-    // eviction is LOUD — dropped leads are the one irreversible loss this
-    // endpoint can suffer, so operators get a count in the logs (visible
-    // via `docker compose logs website`; retrieval guide: DEPLOYMENT §6.3).
+    // Retention cap (MW-10, kept verbatim by #362 — the 500-most-recent
+    // count cap IS the documented live-file retention, §6.3/§7.2.1): keep
+    // only the most recent entries so the contact data on disk stays
+    // bounded. Since issue #131 every eviction is LOUD — dropped leads are
+    // the one irreversible loss this endpoint can suffer, so operators get
+    // a count in the logs (visible via `docker compose logs website`;
+    // retrieval guide: DEPLOYMENT §6.3).
     if (existing.length > MAX_STORED_SUBMISSIONS) {
       const dropped = existing.length - MAX_STORED_SUBMISSIONS;
       console.warn(

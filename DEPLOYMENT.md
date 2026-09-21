@@ -355,7 +355,9 @@ docker compose up -d --build
 - **`website`** — the marketing site (`./mjengoos-website`), built in
   integrated mode by default, `restart: unless-stopped`, **internal port
   3001 only** (not published — it is reached through the app's rewrite),
-  named volume `website-data` for contact-form submissions, healthcheck
+  named volume `website-data` for contact-form submissions (PII
+  encrypted at rest under `CONTACT_PII_KEY`, interpolated from the root
+  `.env` — issue #362/MD-3; see the leads section below), healthcheck
   probing `/website` with node's `fetch`.
 - **`jobs-tick`** — a busybox sidecar (no app code) that POSTs
   `http://app:3000/api/jobs/run` every 5 minutes with
@@ -395,7 +397,7 @@ These caps are **per-compose only**: any *other* container on the host
 (a reverse proxy, a database, a monitoring agent) is not covered by them —
 set daemon-level defaults for those (§7.2, "Container log rotation").
 
-#### Retrieving contact-form leads (issue #110 / audit WD-8)
+#### Retrieving contact-form leads (issue #110 / audit WD-8; encryption: issue #362 / MD-3)
 
 The website's contact and demo-request forms (`POST /api/contact`, proxied
 at `/website/api/contact` in integrated mode) persist every submission to a
@@ -404,21 +406,67 @@ notification is ever sent, so reading that file is the only retrieval path
 (an operator who forgets it loses leads silently). Where it lives and how
 to read it:
 
-- **Local dev / standalone site** — `mjengoos-website/data/submissions.json`
-  (relative to the site process's working directory; gitignored runtime
-  PII — the `data/` directory is absent on a fresh clone but the contact
-  route creates it on first write with `mkdir -p` semantics, so no manual
-  setup is needed). Pretty-print it with
-  `python3 -m json.tool mjengoos-website/data/submissions.json`.
-- **docker compose** — the file lives inside the `website` service container
-  on the `website-data` volume (`/app/data/submissions.json`):
+- **At rest the file is ENCRYPTED (issue #362 / MD-3).** Every PII field of
+  a submission — `name`, `email`, `phone`, `organization`, `role`,
+  `country`, `projectType`, `message` — is sealed with AES-256-GCM under
+  the `CONTACT_PII_KEY` secret before it is written; only `id`, `ts` and
+  `source` stay plaintext (they carry no personal data, and they are what
+  operations needs keyless: entry counts, the retention cap's eviction
+  order, and targeting a row for erasure). The `website-data` volume, its
+  tar backups and any leaked copy therefore rest as ciphertext without
+  the key.
+- **`CONTACT_PII_KEY`** — generate with `openssl rand -base64 32` (64 hex
+  chars also accepted). Runtime env, never a build arg: under compose the
+  file's root `.env` carries it and `docker-compose.yml` interpolates it
+  into the `website` container (the one website-visible secret); local
+  dev reads it from `mjengoos-website/.env` (site `.env.example`
+  documents the full posture). **Fail-closed, the `VAPID_SUBJECT` /
+  issue-#354 shape:** unset in production (the image's `NODE_ENV`) → the
+  contact form refuses submissions with 503 and writes nothing, with one
+  loud error per process in `docker compose logs website`; a SET but
+  malformed key refuses the same way in every runtime (a bad key must
+  never seal leads it cannot decrypt back). Dev/test without a key seals
+  under a labeled dev-fallback key with one warning — usable, not
+  secret.
+- **Reading leads back — decrypt, don't `cat`:**
 
   ```bash
-  docker compose exec website cat /app/data/submissions.json
-  # keep a copy outside the volume:
-  docker compose exec website cat /app/data/submissions.json > leads.json
+  # docker compose (the key is already in the website container's env):
+  docker compose exec website node /app/scripts/decrypt-leads.mjs > leads.json
+
+  # local dev / standalone site (from mjengoos-website/ — `bun run` loads
+  # the site's .env; plain `node scripts/decrypt-leads.mjs` works too):
+  bun run decrypt-leads > leads.json
   ```
 
+  The script prints the plaintext store as pretty JSON (the same shape
+  the site writes), reports any field that fails to authenticate on
+  stderr and exits non-zero — a wrong/rotated key never silently drops
+  or fakes a lead. `cat /app/data/submissions.json` still works as a
+  keyless structural check (ids, timestamps, entry count) — the PII
+  fields read as `enc:v1:…` strings. A store written before #362 (or a
+  plaintext write-back, below) is migrated by the next form submission:
+  the route's write-path sweep re-seals any plaintext row it finds.
+- **Erasure / corrections hit the live file first — decrypt → edit →
+  re-seal → write back** (issue #151's runbook, updated for encryption):
+
+  ```bash
+  docker compose exec website node /app/scripts/decrypt-leads.mjs > leads.json
+  # edit leads.json (delete the entry, fix a typo)…
+  docker compose exec -T website sh -c \
+    'node /app/scripts/decrypt-leads.mjs --seal > /app/data/submissions.json' < leads.json
+  ```
+
+  The `--seal` half re-seals the edited file so the store never rests in
+  plaintext after an operator touch (forget it and the next form
+  submission still re-seals the file — the migration sweep above — but
+  don't rely on that window).
+- **Local dev / standalone site** — the store is
+  `mjengoos-website/data/submissions.json` (relative to the site process's
+  working directory; gitignored runtime data — the `data/` directory is
+  absent on a fresh clone but the contact route creates it on first write
+  with `mkdir -p` semantics, so no manual setup is needed). Read it with
+  `bun run decrypt-leads` from `mjengoos-website/`.
 - **Retention cap — read it regularly:** the store keeps only the **500 most
   recent** submissions; every write past 500 drops the oldest entry, and
   there is no rotation or archive file, so dropped leads are gone for good.
@@ -434,9 +482,10 @@ to read it:
 
 Each entry is the validated form payload —
 `{ id, ts, source, name, email, phone?, organization?, role?, country?,
-projectType?, message? }` — plaintext PII on disk; handle it accordingly
-(the file is gitignored, and the site's `.dockerignore` keeps `data/` out
-of images).
+projectType?, message? }` — with the PII fields sealed as described above
+and `id`/`ts`/`source` in the clear; handle both the file and any
+plaintext extracts accordingly (the file is gitignored, and the site's
+`.dockerignore` keeps `data/` out of images).
 
 #### Contact-form rate limiting (issue #131 / audit WD-1)
 
@@ -902,8 +951,9 @@ server {
   — both produce a consistent snapshot; keep the uploads volume in the
   same backup (photos are evidence). The **`website-data` volume belongs
   in every ad-hoc backup too (issue #151 — it holds `submissions.json`,
-  plaintext lead PII, and the 500-entry cap means backups may be the
-  only surviving copy of early leads)**:
+  lead PII sealed under `CONTACT_PII_KEY` since issue #362, and the
+  500-entry cap means backups may be the only surviving copy of early
+  leads)**:
 
   ```bash
   docker compose exec -T website tar -C /app/data -cf - . > website-data-$(date +%F).tar
@@ -945,7 +995,12 @@ server {
 - **Secrets:** generate `NEXTAUTH_SECRET` with `openssl rand -hex 32`; store
   it in your secret manager / `.env` on the host (never in git, never in the
   image). Changing it invalidates all sessions (users just sign in again).
-  Do not expose the SQLite file or `db/` via the proxy.
+  Do not expose the SQLite file or `db/` via the proxy. The website has one
+  secret of its own (issue #362 / MD-3): `CONTACT_PII_KEY`
+  (`openssl rand -base64 32`) seals the contact store's PII fields at rest —
+  unset in production the contact form fails closed, and a copy of the key
+  plus any backup archive reads the leads, so it never lives in the backup
+  dir (posture + retrieval: §6.3, backup angle: §7.2.1).
 - **Session revocation (issue #181 / SEC-15):** sessions are 30-day JWTs by
   design (the offline-first posture — field devices may sit offline for
   days). The server-side kill switch is the per-user `tokenVersion`: the
@@ -1032,9 +1087,15 @@ Operating notes:
   is being read ("file changed as we read it") — an upload or a contact
   submission racing the run fails it ON PURPOSE rather than ship a torn
   archive. Re-run; the next daily timer tick self-heals.
-- **PII (issue #151 — and the Kenya DPA 2019 angle):** the website
-  archive contains `submissions.json` — plaintext lead PII (name,
-  email, phone, message). Artifacts are written `0600` by the dedicated
+- **PII (issue #151 — and the Kenya DPA 2019 angle; encryption: issue
+  #362/MD-3):** the website archive contains `submissions.json` — lead
+  PII, but since issue #362 the PII fields are AES-256-GCM-sealed under
+  the website's `CONTACT_PII_KEY`: an archive without the key is
+  ciphertext (only `id`/`ts`/`source` read in the clear). Treat the KEY
+  with the same care as the archives themselves — keep it in the
+  deployment env / root `.env`, never inside the backup dir or an
+  off-host archive copy; the key and an archive together read the leads.
+  Artifacts are written `0600` by the dedicated
   `mjengo` service user into the `0700` backup dir; treat the backup dir
   (and any off-host copies — take them!) with the same care as the live
   file. Concretely — the same spirit the repo already tracks for worker
@@ -1049,13 +1110,19 @@ Operating notes:
     group/world bits, and never park archives on shared drives, tickets
     or chats where the live file would not go.
   - **Erasure requests hit the live file first.** `submissions.json`
-    is the system of record — edit/delete there (the §6.3 retrieval
-    path is also the write-back path: pipe the corrected JSON back
-    with `docker compose exec -T website sh -c 'cat >
-    /app/data/submissions.json' < leads.json`). Backup copies age out
+    is the system of record — decrypt, edit/delete there, re-seal and
+    pipe the corrected JSON back (the §6.3 retrieval path is also the
+    write-back path, updated for encryption by issue #362):
+    `docker compose exec website node /app/scripts/decrypt-leads.mjs >
+    leads.json` → edit → `docker compose exec -T website sh -c 'node
+    /app/scripts/decrypt-leads.mjs --seal > /app/data/submissions.json'
+    < leads.json`). Backup copies age out
     on the retention clock above; when a request cannot wait that
     long, destroy the affected archives *together with their `.sha256`
-    sidecars* rather than rewriting a tar by hand.
+    sidecars* rather than rewriting a tar by hand — and if the key was
+    ever exposed alongside them, rotating `CONTACT_PII_KEY` renders
+    every remaining sealed copy (live and archived) unreadable going
+    forward; retrieve the leads you must keep BEFORE rotating.
 - The sandbox-level drill of the whole chain (including a live WAL
   writer and a restore): `docs/audit/RESTORE_DRILL_2026-09-18.md`.
 
@@ -1087,10 +1154,12 @@ after the app is stopped.
 - `app-photos` → `mjengo-photos-<TS>.tar.gz`: the uploads volume
   (photos are evidence).
 - `website-data` → `mjengo-website-<TS>.tar.gz`: contains
-  `submissions.json`, plaintext lead PII — and because of the 500-entry
+  `submissions.json`, lead PII sealed under `CONTACT_PII_KEY` (issue
+  #362 — the archive is ciphertext without the key; keep the key out of
+  the backup dir) — and because of the 500-entry
   cap (§6.3), backups may be the ONLY surviving copy of early leads.
-  The archive is PII too (issue #151): store/encrypt off-host copies
-  accordingly.
+  The archive is PII-class too (issue #151): store/encrypt off-host
+  copies accordingly.
 - optional `app-docs` → `mjengo-docs-<TS>.tar.gz` if you enabled it.
 
 **Order of operations.** (`<TS>` = the UTC timestamp in the artifact
@@ -1171,13 +1240,18 @@ names; `<project>` = your compose project name = clone dir name, e.g.
    image that 404s means the photos tar is from a different date than
    the DB — re-do step 3 with the matching `<TS>`; every artifact of
    one run shares its timestamp) — and that **the leads file reads back
-   through the site's own path (issue #151)**:
+   through the site's own path (issue #151; decrypt step: issue #362)**:
 
    ```bash
-   docker compose exec website cat /app/data/submissions.json   # the §6.3 retrieval command
+   docker compose exec website cat /app/data/submissions.json   # keyless structural check (ids/ts/count; PII reads as enc:v1:…)
+   docker compose exec website node /app/scripts/decrypt-leads.mjs | tail -6   # the §6.3 retrieval command — must exit 0
    ```
 
-   It must parse as JSON and end with a recent `ts`; an empty or missing
+   The `cat` must parse as JSON and end with a recent `ts`; the decrypt
+   run must exit 0 with every PII field opened (a non-zero exit with
+   `cannot decrypt …` lines means the restored store predates the current
+   `CONTACT_PII_KEY` — the leads still exist sealed, but the key that
+   reads them is the one that wrote them); an empty or missing
    file means the website tar is stale for this `<TS>` or was extracted
    without the `chown` above.
 

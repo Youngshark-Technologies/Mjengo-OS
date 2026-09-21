@@ -23,16 +23,23 @@
 #           root app performs in its build script happen here instead — this
 #           app's build script stays a plain `next build`). PORT=3001.
 #           The contact-form API appends to data/submissions.json, so
-#           /app/data is created writable for the non-root user. A
-#           HEALTHCHECK (INF-2) probes the site's served route with node's
+#           /app/data is created writable for the non-root user. Contact-PII
+#           tooling (issue #362 / MD-3): lib/contact-pii.mjs (the shared
+#           AES-256-GCM module the route seals with) and
+#           scripts/decrypt-leads.mjs (the operator's retrieve/re-seal CLI)
+#           are copied in EXPLICITLY — nft traces the lib via the route
+#           import, but the script is unreachable from the server and would
+#           otherwise be missing; the explicit pair keeps `docker compose
+#           exec website node /app/scripts/decrypt-leads.mjs` deterministic.
+#           A HEALTHCHECK (INF-2) probes the site's served route with node's
 #           global fetch — see the comment at the HEALTHCHECK itself.
 #
 #  BUILD-time env = the three NEXT_PUBLIC_* ARGs above (no secrets).
-#  RUNTIME env (docker run / compose): none required. PORT/HOSTNAME are
-#  preset; the web app reaches this container as WEBSITE_ORIGIN in its
-#  next.config.ts rewrite (http://website:3001 under compose). Optionally
-#  set TRUST_PROXY=1 at RUNTIME (see mjengoos-website/.env.example) only
-#  when a real appending proxy fronts this container directly.
+#  RUNTIME env (docker run / compose): CONTACT_PII_KEY (the contact-PII
+#  sealing key — unset + this image's NODE_ENV=production means the contact
+#  form fails closed; docker-compose.yml interpolates it from the root
+#  .env) and optionally TRUST_PROXY=1 (see mjengoos-website/.env.example)
+#  only when a real appending proxy fronts this container directly.
 # ---------------------------------------------------------------------------
 
 # Digest-pinned 2026-09-21 (INF-3): manifest-list digest, multi-arch FROM. Refresh: curl -s https://hub.docker.com/v2/repositories/oven/bun/tags/1 | jq -r .digest
@@ -103,6 +110,13 @@ ENV NODE_ENV=production \
 
 # Next standalone output: server.js, .next/, traced node_modules, public/.
 COPY --from=builder --chown=node:node /app/.next/standalone ./
+
+# Contact-PII tooling (issue #362 / MD-3) — see the header comment: the
+# decrypt/seal CLI and the shared crypto module, present deterministically
+# for `docker compose exec website node /app/scripts/decrypt-leads.mjs`
+# (retrieval + erasure write-back guide: DEPLOYMENT.md §6.3).
+COPY --from=builder --chown=node:node /app/lib/contact-pii.mjs /app/lib/contact-pii.mjs
+COPY --from=builder --chown=node:node /app/scripts/decrypt-leads.mjs /app/scripts/decrypt-leads.mjs
 
 # Runtime state the non-root user must be able to write: the contact-form
 # API (POST /api/contact → /website/api/contact) appends here.
