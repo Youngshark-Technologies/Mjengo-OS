@@ -20,6 +20,16 @@
 // browser's offline toggle does not queue a WhatsApp message — a real relay
 // would retry on its side. Replies come back as the plain text the relay
 // would send to the handset, always footered "— MjengoOS sim".
+//
+// SERVER-FED CONTENT (session-2 register: "WhatsApp panel server-fed
+// content"): the conversation content — the opening greeting, the keyword
+// grammar chips and the line's HELP text — is fetched from
+// GET /api/whatsapp?view=simulation and rendered exactly as served; this
+// file keeps NO canned copy of it (a load failure shows an honest note and
+// hides the chips — never a client-side stand-in). What stays client-side is
+// view-only UI chrome through the wa.* dict family (EN/SW, the #140 USSD
+// pattern): titles, badges, explainer, aria labels. The conversation itself
+// is EN exactly as the line replies today — honest, not a fake locale.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMjengo } from '@/frontend/hooks/use-mjengo'
@@ -30,6 +40,7 @@ import { Input } from '@/frontend/ui/input'
 import { MessageCircle, Send, Smartphone, Info, WifiOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { useT } from '@/frontend/i18n/provider'
+import { WHATSAPP_SIMULATION_VIEW, type WhatsappSimulationContent } from '@/shared/whatsapp-simulation'
 
 // ---------------- chat model ----------------
 
@@ -38,8 +49,6 @@ interface ChatBubble {
   dir: 'out' | 'in'
   text: string
 }
-
-const KEYWORDS = ['PRESENT', 'ABSENT', 'HALF', 'BALANCE', 'HELP'] as const
 
 // ---------------- component ----------------
 
@@ -50,9 +59,13 @@ export function WhatsAppPanel() {
   const [phone, setPhone] = useState('')
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
-  const [chat, setChat] = useState<ChatBubble[]>([
-    { dir: 'in', text: 'MjengoOS line ready. Reply HELP for keywords, or just send a note.' },
-  ])
+  // Server-fed conversation content (register row: WhatsApp panel
+  // server-fed). null until the route answers; on failure contentFailed
+  // shows the honest note and the chips/greeting stay ABSENT — the panel
+  // never substitutes canned client copy for the server's.
+  const [content, setContent] = useState<WhatsappSimulationContent | null>(null)
+  const [contentFailed, setContentFailed] = useState(false)
+  const [chat, setChat] = useState<ChatBubble[]>([])
 
   const chatRef = useRef<HTMLDivElement>(null)
 
@@ -74,6 +87,31 @@ export function WhatsAppPanel() {
     const el = chatRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [chat])
+
+  // Fetch the simulation content from the server once on mount — the
+  // greeting bubble, the keyword chips and the HELP text render exactly
+  // what the route serves (no client-side canned copy).
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch(`/api/whatsapp?view=${WHATSAPP_SIMULATION_VIEW}`)
+        if (!res.ok) throw new Error(`status ${res.status}`)
+        const body = (await res.json()) as { ok?: boolean; simulation?: WhatsappSimulationContent }
+        if (!body.ok || !body.simulation) throw new Error('bad payload')
+        if (cancelled) return
+        setContent(body.simulation)
+        // The greeting arrives when the line answers — append, the same way
+        // a real session's first business message lands after the opt-in.
+        setChat((prev) => [...prev, { dir: 'in', text: body.simulation!.greeting }])
+      } catch {
+        if (!cancelled) setContentFailed(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   function pushBubbles(bubbles: ChatBubble[]) {
     setChat((prev) => [...prev, ...bubbles])
@@ -176,6 +214,11 @@ export function WhatsAppPanel() {
                       </p>
                     </div>
                   ))}
+                  {contentFailed && (
+                    <p className="rounded-xl bg-[#202c33] px-3 py-1.5 text-[11px] leading-relaxed text-amber-300/90">
+                      {t('wa.chat.contentUnavailable')}
+                    </p>
+                  )}
                   {busy && (
                     <div className="flex justify-start" aria-label={t('wa.chat.sending')}>
                       <p className="rounded-xl rounded-bl-sm bg-[#202c33] text-stone-400 text-[12px] px-3 py-1.5">
@@ -206,8 +249,14 @@ export function WhatsAppPanel() {
                     <Input
                       value={text}
                       onChange={(e) => setText(e.target.value)}
-                      placeholder={t('wa.chat.placeholder')}
-                      aria-label={t('wa.chat.placeholder')}
+                      placeholder={
+                        content
+                          ? t('wa.chat.placeholder', { keywords: content.keywords.join(' · ') })
+                          : contentFailed
+                            ? t('wa.chat.placeholderPlain')
+                            : t('wa.chat.placeholderLoading')
+                      }
+                      aria-label={t('wa.chat.composerLabel')}
                       disabled={busy || isClient}
                       maxLength={1000}
                       className="h-8 border-[#2a3942] bg-[#0b141a] text-stone-100 placeholder:text-stone-500 text-xs"
@@ -231,20 +280,35 @@ export function WhatsAppPanel() {
                 </div>
               </div>
 
-              {/* keyword quick-reply chips */}
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {KEYWORDS.map((k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    disabled={busy || isClient}
-                    onClick={() => setText(k)}
-                    className="rounded-full border border-stone-200 bg-stone-50 px-2.5 py-0.5 text-[10px] font-mono text-stone-600 hover:bg-stone-100 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-emerald-400 focus-visible:-outline-offset-2"
-                  >
-                    {k}
-                  </button>
-                ))}
-              </div>
+              {/* keyword quick-reply chips + the line's HELP text — both
+                  SERVER-FED (register: WhatsApp panel server-fed content):
+                  the grammar is the route's, so the chips and the reference
+                  render exactly what GET ?view=simulation served. */}
+              {content && (
+                <div className="mt-2 space-y-1.5">
+                  <div className="flex flex-wrap gap-1.5">
+                    {content.keywords.map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        disabled={busy || isClient}
+                        onClick={() => setText(k)}
+                        className="rounded-full border border-stone-200 bg-stone-50 px-2.5 py-0.5 text-[10px] font-mono text-stone-600 hover:bg-stone-100 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-emerald-400 focus-visible:-outline-offset-2"
+                      >
+                        {k}
+                      </button>
+                    ))}
+                  </div>
+                  <details className="group">
+                    <summary className="cursor-pointer list-none text-[10px] text-stone-400 hover:text-stone-600 focus-visible:outline-2 focus-visible:outline-emerald-400 focus-visible:-outline-offset-2">
+                      {t('wa.chat.keywordsTitle')}
+                    </summary>
+                    <p className="mt-1 whitespace-pre-wrap rounded-md border border-stone-100 bg-stone-50 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-stone-500">
+                      {content.helpText}
+                    </p>
+                  </details>
+                </div>
+              )}
 
               <p className="mt-3 text-xs text-center text-stone-500 flex items-center justify-center gap-1.5">
                 <Smartphone className="w-3.5 h-3.5" aria-hidden />

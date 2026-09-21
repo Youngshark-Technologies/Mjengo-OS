@@ -486,7 +486,15 @@ export const swDict = {
   'wa.chat.status': 'uigaji wa lango · majibu yana mguu wa MjengoOS sim',
   'wa.chat.aria': 'Skrini ya mazungumzo ya WhatsApp',
   'wa.chat.phone': 'Kutoka — namba ya simu ya mfundi',
-  'wa.chat.placeholder': 'Andika ujumbe — PRESENT, ABSENT, HALF, BALANCE, HELP au maandishi huru',
+  // #356 server-fed content: {keywords} interpolates the SERVER-SERVED
+  // grammar (GET /api/whatsapp?view=simulation) — the panel never re-lists
+  // the line's keywords client-side.
+  'wa.chat.composerLabel': 'Maandishi ya ujumbe',
+  'wa.chat.placeholder': 'Andika ujumbe — {keywords} au maandishi huru',
+  'wa.chat.placeholderPlain': 'Andika ujumbe',
+  'wa.chat.placeholderLoading': 'Inapakia mstari…',
+  'wa.chat.keywordsTitle': 'Marejeleo ya maneno maalum — jibu la HELP la mstari',
+  'wa.chat.contentUnavailable': 'Maudhui ya mstari hayapatikani — seva haikutuma skripti ya uigaji, kwa hivyo hakuna kinachochukuliwa nafasi yake.',
   'wa.chat.send': 'Tuma ujumbe',
   'wa.chat.sending': 'Inatuma',
   'wa.chat.error': 'Kosa la webhook',

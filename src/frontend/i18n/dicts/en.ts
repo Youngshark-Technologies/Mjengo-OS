@@ -487,7 +487,15 @@ export const enDict = {
   'wa.chat.status': 'gateway simulation · replies footered MjengoOS sim',
   'wa.chat.aria': 'WhatsApp chat screen',
   'wa.chat.phone': 'From — worker phone number',
-  'wa.chat.placeholder': 'Type a message — PRESENT, ABSENT, HALF, BALANCE, HELP or free text',
+  // #356 server-fed content: {keywords} interpolates the SERVER-SERVED
+  // grammar (GET /api/whatsapp?view=simulation) — the panel never re-lists
+  // the line's keywords client-side.
+  'wa.chat.composerLabel': 'Message text',
+  'wa.chat.placeholder': 'Type a message — {keywords} or free text',
+  'wa.chat.placeholderPlain': 'Type a message',
+  'wa.chat.placeholderLoading': 'Loading the line…',
+  'wa.chat.keywordsTitle': 'Keyword reference — the line\u2019s HELP reply',
+  'wa.chat.contentUnavailable': 'Line content unavailable — the server did not serve the simulation script, so nothing is shown in its place.',
   'wa.chat.send': 'Send message',
   'wa.chat.sending': 'Sending',
   'wa.chat.error': 'Webhook error',
