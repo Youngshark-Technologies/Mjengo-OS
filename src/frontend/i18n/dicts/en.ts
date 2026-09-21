@@ -542,6 +542,11 @@ export const enDict = {
   // shared outbox.*/sync.* families the owner panel renders).
   'supplier.outbox.notPermitted': 'This action is not available on the supplier portal — it cannot be queued.',
   'supplier.outbox.conflictNote': 'Sync conflict — this action was not applied. It stays queued here until it is resolved.',
+  // #352 — the guarded-persistence banners (the owner app.persist.* texts'
+  // supplier twin: this surface's queue-only fallback drops the
+  // inspection-only syncHistory, not re-fetchable project data).
+  'supplier.persist.degraded': "Can't save your offline changes — this device's storage is full. Keep this portal open; your work will sync when you're back online.",
+  'supplier.persist.queueOnly': 'Device storage is full — queued actions are still saved on this device, but your synced-action history will not be kept after a restart.',
   'supplier.signout': 'Sign out',
   'supplier.stats.aria': 'What needs your action',
   'supplier.stats.quotes': 'RFQs waiting for your price',

@@ -541,6 +541,11 @@ export const swDict = {
   // inatumia familia za outbox.*/sync.* zinazotumiwa na paneli ya mmiliki).
   'supplier.outbox.notPermitted': 'Kitendo hiki hakipatikani kwenye portal ya msambazaji — hakiwezi kuingizwa foleni.',
   'supplier.outbox.conflictNote': 'Mgogoro wa usawazishaji — kitendo hiki hakikutumwa. Kinasalia kwenye foleni hapa hadi kitatatuliwa.',
+  // #352 — mabango ya uhifadhi uliolindwa (siri ya msambazaji ya maandishi
+  // ya app.persist.* — akiba ya foleni-y pekee ya uso huni inatupa
+  // historia ya ukaguzi pekee, si data za mradi zinazoweza kupakiwa tena).
+  'supplier.persist.degraded': 'Mabadiliko yako ya nje ya mtandao hayawezi kuhifadhiwa — hifadhi ya kifaa hiki imejaa. Baki na portal hii wazi; kazi yako itasawazishwa ukirudi mtandaoni.',
+  'supplier.persist.queueOnly': 'Hifadhi ya kifaa imejaa — vitendo vilivyowekwa foleni bado vimehifadhiwa kwenye kifaa hiki, lakini historia ya vitendo vilivyosawazishwa haitahifadhiwa baada ya kufungua upya.',
   'supplier.signout': 'Toka',
   'supplier.stats.aria': 'Kinachohitaji uamuzi wako',
   'supplier.stats.quotes': 'Maombi ya nukuu yanayosubiri bei yako',

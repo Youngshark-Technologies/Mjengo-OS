@@ -27,7 +27,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSession, signOut } from 'next-auth/react'
-import { HardHat, LogOut, MessageSquareQuote, RefreshCw, Truck, ReceiptText, Boxes, Settings } from 'lucide-react'
+import { HardHat, LogOut, MessageSquareQuote, RefreshCw, Truck, ReceiptText, Boxes, Settings, TriangleAlert } from 'lucide-react'
 import { Badge } from '@/frontend/ui/badge'
 import { Button } from '@/frontend/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/frontend/ui/card'
@@ -94,6 +94,13 @@ export function SupplierPortal() {
   // queue + drain; this component only wires connectivity + refreshes.
   const online = useSupplierOutbox((s) => s.online)
   const dataVersion = useSupplierOutbox((s) => s.dataVersion)
+  // #352 — persistence health (the guarded adapter's flags): the supplier
+  // twin of app.tsx's #192/#337 banner. `degraded` = writes failing
+  // outright (device storage full / private mode) — offline work still
+  // queues in memory but is one tab-close from loss; `queueOnly` = the
+  // fallback banked the queue by dropping the inspection-only syncHistory.
+  const persistDegraded = useSupplierOutbox((s) => s.persistDegraded)
+  const persistQueueOnly = useSupplierOutbox((s) => s.persistQueueOnly)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -260,6 +267,27 @@ export function SupplierPortal() {
           </div>
         </div>
       </header>
+
+      {/* #352 — the persistence-degradation banner (the owner app.tsx
+          banner's supplier twin): red when writes are failing outright
+          (device storage full / private mode), amber when the queue-only
+          fallback banked the queue by dropping the inspection-only
+          syncHistory. LOUDER than the offline state: while degraded,
+          offline work still queues in memory but is one tab-close from
+          loss. */}
+      {(persistDegraded || persistQueueOnly) && (
+        <div
+          className={`px-4 py-2 flex items-center justify-center gap-2 text-sm font-medium ${
+            persistDegraded ? 'bg-red-600 text-white' : 'bg-amber-600 text-stone-950'
+          }`}
+          role={persistDegraded ? 'alert' : 'status'}
+        >
+          <TriangleAlert className="w-4 h-4 shrink-0" aria-hidden />
+          <span className="text-center">
+            {persistDegraded ? t('supplier.persist.degraded') : t('supplier.persist.queueOnly')}
+          </span>
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 border-b border-red-200 px-4 py-3 text-center text-sm text-red-800" role="alert">

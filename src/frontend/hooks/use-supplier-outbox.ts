@@ -36,9 +36,24 @@
 // batch auth-blocked, never silently re-queued), on the bounded auto-retry
 // schedule (#132: 5s → 30s → 2min, max 3, then manual-only), and manually
 // from the supplier sync sheet.
+//
+// #352 — GUARDED PERSISTENCE (the #337 contract, this surface): every write
+// to this store's key is wrapped in the guarded adapter (lib/guarded-storage
+// — the SAME policy the owner store runs): quota/private-mode failures are
+// CAUGHT (the dispatch never breaks; the in-memory queue is the source of
+// truth), a quota failure retries once with the droppable slice dropped
+// (queue-only fallback — this surface's droppable slice is `syncHistory`,
+// the capped inspection-only retention of ALREADY-SYNCED items; the queued
+// mutations are the irreplaceable part), and the outcome flips this store's
+// non-persisted persistDegraded/persistQueueOnly flags → the supplier
+// portal's banner. Cross-tab rehydrate rides the native `storage` event —
+// this surface STAYS on localStorage (deliberate: the #351 headless-drain
+// policy refuses supplier actions with no tab — the supplier session is
+// role-pinned, so SW-readability would buy nothing here — and localStorage
+// still fires `storage` at foreign writes, the exact #337 mechanism).
 
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware'
 import { toast } from 'sonner'
 import { SUPPLIER_ACTIONS } from '@/shared/supplier-actions'
 import { useLocalePrefs } from '@/frontend/i18n/store'
@@ -55,6 +70,10 @@ import {
   type OutboxItem,
   type SyncItemResult,
 } from '@/frontend/lib/outbox'
+// #352: the guarded-persistence policy (write-failure catch, queue-only
+// fallback, health reporting) — the same extracted factory the owner store
+// runs (#351), parameterized for THIS surface's key and droppable slice.
+import { createGuardedStorage, shouldRehydrateFromStorageEventFor } from '@/frontend/lib/guarded-storage'
 
 /**
  * Toast-time translator (same seam as use-mjengo's): the store lives outside
@@ -92,6 +111,16 @@ interface SupplierOutboxState {
   /** Synced + conflict-resolved items, retained (capped) as history for inspection. */
   syncHistory: OutboxItem[]
   lastSyncAt: number | null
+  /**
+   * #352 — persistence health (NEVER persisted; flipped by the guarded
+   * adapter's onHealth report): `degraded` = writes are failing outright
+   * (quota full / private mode / security software) — offline work still
+   * queues in memory but is one tab-close from loss; `queueOnly` = the
+   * fallback banked the queue by dropping `syncHistory`. The portal banner
+   * renders from these (the owner app.tsx banner's supplier twin).
+   */
+  persistDegraded: boolean
+  persistQueueOnly: boolean
   /**
    * Bumped once per drain that synced ≥ 1 item — the portal's signal to
    * re-read GET /api/supplier (this store owns no payload of its own). Not
@@ -144,6 +173,80 @@ const autoRetry = createAutoRetryEngine({
   syncNow: () => useSupplierOutbox.getState().syncNow(),
 })
 
+// ---------------- #352 — guarded persistence on this surface's own key ----------------
+
+/**
+ * The supplier outbox's OWN persisted key — deliberately NOT the owner
+ * store's `mjengo-os-store`: different session, different surface, no
+ * shared state (the session-scoping tests pin both keys). Exported like
+ * MJENGO_STORE_KEY because the guarded adapter needs the name.
+ */
+export const SUPPLIER_OUTBOX_KEY = 'mjengo-supplier-outbox'
+
+/**
+ * The raw localStorage seam wrapped for createJSONStorage. Never touches
+ * localStorage at module scope — the typeof guard in the persist options
+ * below keeps node/SSR exactly as inert as the old default storage (a
+ * browser without localStorage gets the degraded in-memory posture, never
+ * a crash).
+ */
+const rawLocalStorage: StateStorage = {
+  getItem: (name) => localStorage.getItem(name),
+  setItem: (name, value) => {
+    localStorage.setItem(name, value)
+  },
+  removeItem: (name) => {
+    localStorage.removeItem(name)
+  },
+}
+
+/** The #352 medium+policy: raw localStorage behind the guarded-write contract. */
+const guardedSupplierStorage = createGuardedStorage({
+  label: SUPPLIER_OUTBOX_KEY,
+  storage: rawLocalStorage,
+  // This surface's droppable slice: `syncHistory` is the capped
+  // inspection-only retention of ALREADY-SYNCED items — the only slice of
+  // the payload that is not the irreplaceable queued work. (The owner
+  // drops `data`, its own re-fetchable slice; there is no `data` here.)
+  droppableSlice: 'syncHistory',
+  onHealth: setPersistHealth,
+})
+
+/**
+ * The adapter's write outcome → the store's non-persisted health flags
+ * (the owner store's #192 sink, mirrored for this surface's own store).
+ *
+ * Re-entrancy: flipping the flags is itself a setState, which itself
+ * triggers a storage write (persist writes on EVERY setState) — the depth
+ * guard makes that inner write's health report a no-op instead of a loop;
+ * the transition check keeps the steady state (every successful write
+ * reports 'ok') write-free.
+ *
+ * TDZ: the FIRST hydrate at store creation can run setItem while the
+ * `useSupplierOutbox` binding is still initialising; the report is re-sent
+ * a tick later instead of dropped.
+ */
+let persistHealthDepth = 0
+function setPersistHealth(health: 'ok' | 'queue-only' | 'degraded'): void {
+  if (persistHealthDepth > 0) return // our own flag-flip's write — already decided
+  let s: Pick<SupplierOutboxState, 'persistDegraded' | 'persistQueueOnly'>
+  try {
+    s = useSupplierOutbox.getState()
+  } catch {
+    setTimeout(() => setPersistHealth(health), 0)
+    return
+  }
+  const degraded = health === 'degraded'
+  const queueOnly = health === 'queue-only'
+  if (s.persistDegraded === degraded && s.persistQueueOnly === queueOnly) return
+  persistHealthDepth++
+  try {
+    useSupplierOutbox.setState({ persistDegraded: degraded, persistQueueOnly: queueOnly })
+  } finally {
+    persistHealthDepth--
+  }
+}
+
 export const useSupplierOutbox = create<SupplierOutboxState>()(
   persist(
     (set, get) => ({
@@ -153,6 +256,8 @@ export const useSupplierOutbox = create<SupplierOutboxState>()(
       syncHistory: [],
       lastSyncAt: null,
       dataVersion: 0,
+      persistDegraded: false,
+      persistQueueOnly: false,
 
       setOnline: (v) => {
         const wasOnline = get().online
@@ -415,8 +520,18 @@ export const useSupplierOutbox = create<SupplierOutboxState>()(
       // The supplier outbox's OWN persisted key — deliberately NOT the owner
       // store's `mjengo-os-store`: different session, different surface, no
       // shared state (the session-scoping tests pin both keys).
-      name: 'mjengo-supplier-outbox',
+      name: SUPPLIER_OUTBOX_KEY,
       version: 1,
+      // #352 — the guarded adapter: write failures (quota / private mode)
+      // are caught + surfaced, and a quota failure retries once with the
+      // inspection-only syncHistory dropped so the queued work still banks.
+      // The typeof guard keeps node/SSR byte-identical to the old default
+      // storage (createJSONStorage returns undefined when getStorage
+      // throws → persist inert — no phantom localStorage in tests/server).
+      storage: createJSONStorage(() => {
+        if (typeof localStorage === 'undefined') throw new Error('localStorage unavailable')
+        return guardedSupplierStorage
+      }),
       migrate: (persisted: unknown) => {
         const s = (persisted ?? {}) as Partial<SupplierOutboxState> & { outbox?: OutboxItem[] }
         return {
@@ -425,25 +540,116 @@ export const useSupplierOutbox = create<SupplierOutboxState>()(
           syncHistory: (s.syncHistory ?? []).map(normalizeOutboxItem),
         } as SupplierOutboxState
       },
-      onRehydrateStorage: () => (state) => {
+      onRehydrateStorage: () => (state, error) => {
+        // #352: a hydration failure (unreadable/corrupted key) is ALSO a
+        // persistence degradation — surface it, never swallow it. (When the
+        // medium itself still writes fine — a corrupt snapshot after a hard
+        // power cut — the very next successful write self-heals the flags:
+        // they report the MEDIUM's write health; the lost snapshot is gone
+        // either way. When the medium refuses reads AND writes — security
+        // software / private mode — every write keeps reporting 'degraded'
+        // and the banner sticks.)
+        if (error) setPersistHealth('degraded')
         // Belt-and-braces: any stale shape is normalised after rehydration;
         // the #132 schedule is restored (the persisted nextAttemptAt stamps
         // survive, the timer itself does not). Deferred a tick because this
         // callback can run while the module is still initialising; inert in
         // node/tests (no storage → zustand never calls this back there).
-        if (state?.outbox) state.outbox = state.outbox.map(normalizeOutboxItem)
-        if (state?.syncHistory) state.syncHistory = state.syncHistory.map(normalizeOutboxItem)
+        // A queue-only fallback write persists `syncHistory: null` (the
+        // dropped slice) at the SAME persist version — migrate never runs
+        // for it, so THIS seam is what normalises it back to an array (a
+        // null syncHistory would crash the next drain's spread).
+        if (state) {
+          state.outbox = Array.isArray(state.outbox) ? state.outbox.map(normalizeOutboxItem) : []
+          state.syncHistory = Array.isArray(state.syncHistory) ? state.syncHistory.map(normalizeOutboxItem) : []
+        }
+        // #352 (owner parity): an orphaned 'syncing' item → 'pending'. A
+        // persisted 'syncing' item is by definition a snapshot written
+        // MID-DRAIN — the drain that marked it either completed in the
+        // writing surface or died with it; no drain owns it HERE, and
+        // syncNow only drains 'pending' (without this it would strand
+        // forever showing "Syncing…"). The cross-tab rehydrate below rides
+        // the same normalization.
+        const orphaned = state?.outbox?.some((o) => o.syncStatus === 'syncing') ?? false
         setTimeout(() => autoRetry.arm(), 0)
+        if (orphaned) {
+          // Same deferral reason (TDZ): return the orphaned 'syncing' items
+          // to the drainable 'pending' state a tick after the merge.
+          setTimeout(() => {
+            useSupplierOutbox.setState({
+              outbox: useSupplierOutbox.getState().outbox.map((o) =>
+                o.syncStatus === 'syncing' ? { ...o, syncStatus: 'pending' as const } : o),
+            })
+          }, 0)
+        }
       },
       partialize: (s) => ({
         online: s.online,
         outbox: s.outbox,
         syncHistory: s.syncHistory,
         lastSyncAt: s.lastSyncAt,
+        // #352: the health flags are deliberately NOT persisted — they are
+        // THIS tab's live read of the medium, re-derived at every write.
       }),
     },
   ),
 )
+
+/**
+ * #352 — cross-tab rehydration (the browser `storage` event, this surface's
+ * mechanism: it STAYS on localStorage, which still fires `storage` at
+ * foreign writes — the #337 contract verbatim; the owner store moved to
+ * indexedDB and re-reads on foreground instead, see use-mjengo.ts).
+ *
+ * zustand-persist does NOT listen for `storage`: with the portal open in
+ * two surfaces (installed PWA window + browser tab) each surface's writes
+ * are invisible to the other, and the stale surface's next write clobbers
+ * the newer snapshot wholesale — an older outbox can wipe newer queued
+ * mutations.
+ *
+ * Semantics (the #337 decision, unchanged): DEBOUNCED LAST-WRITER-WINS
+ * WITH REHYDRATE — a short trailing debounce coalesces an active peer's
+ * burst (persist writes on every setState); a CRDT is explicitly NOT
+ * wanted (true conflicts are arbitrated server-side; the supplier
+ * families are unversioned by design, pinned by tests). Honest v1
+ * limits, same as the owner's: a rehydrate can momentarily revert an
+ * in-flight drain's 'syncing' items to the peer's snapshot state (the
+ * orphan normalization in onRehydrateStorage returns them to 'pending'),
+ * and a key CLEARED by another tab (storage event with key === null) is
+ * ignored — this surface keeps working from memory and its next write
+ * re-creates the key.
+ */
+
+/** Debounce window for the supplier surface's cross-tab rehydrates (#352). */
+export const SUPPLIER_CROSS_TAB_REHYDRATE_DEBOUNCE_MS = 250
+
+/**
+ * Pure decision (#352): only writes to OUR key rehydrate. `key === null` is
+ * a clear() from another surface — deliberately NOT ours to react to (see
+ * the section comment). Delegates to the shared guarded-storage helper.
+ */
+export function shouldRehydrateFromSupplierStorageEvent(e: { key: string | null }): boolean {
+  return shouldRehydrateFromStorageEventFor(SUPPLIER_OUTBOX_KEY, e)
+}
+
+let supplierCrossTabRehydrateTimer: ReturnType<typeof setTimeout> | null = null
+
+/** The storage-event entry point (#352): debounced rehydrate on our key's foreign writes. */
+export function handleSupplierCrossTabStorageEvent(e: { key: string | null }): void {
+  if (!shouldRehydrateFromSupplierStorageEvent(e)) return
+  if (supplierCrossTabRehydrateTimer !== null) clearTimeout(supplierCrossTabRehydrateTimer)
+  supplierCrossTabRehydrateTimer = setTimeout(() => {
+    supplierCrossTabRehydrateTimer = null
+    void useSupplierOutbox.persist.rehydrate()
+  }, SUPPLIER_CROSS_TAB_REHYDRATE_DEBOUNCE_MS)
+}
+
+// Registered once per page load at module scope (the store is a singleton —
+// same home as the __MJENGO_SUPPLIER_DEBUG__ hook below; node/SSR have no
+// window, so tests call handleSupplierCrossTabStorageEvent directly).
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('storage', handleSupplierCrossTabStorageEvent)
+}
 
 /**
  * Dev/debug console hook (mirrors the owner store's __MJENGO_DEBUG__):

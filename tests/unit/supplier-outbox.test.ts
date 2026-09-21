@@ -38,9 +38,10 @@ vi.mock('sonner', () => ({
 import { toast } from 'sonner'
 import {
   useSupplierOutbox,
+  SUPPLIER_OUTBOX_KEY,
   type SupplierSendResult,
 } from '@/frontend/hooks/use-supplier-outbox'
-import { useMjengo, type OutboxItem } from '@/frontend/hooks/use-mjengo'
+import { useMjengo, MJENGO_STORE_KEY, type OutboxItem } from '@/frontend/hooks/use-mjengo'
 import { SUPPLIER_ACTIONS } from '@/shared/supplier-actions'
 import { enDict } from '@/frontend/i18n/dicts/en'
 import { swDict } from '@/frontend/i18n/dicts/sw'
@@ -443,12 +444,19 @@ describe('#128: session scoping — the supplier outbox never drains owner items
   it('the two stores persist under DIFFERENT localStorage keys and share no state', () => {
     const supplierSrc = readSrc('src/frontend/hooks/use-supplier-outbox.ts')
     const ownerSrc = readSrc('src/frontend/hooks/use-mjengo.ts')
-    expect(supplierSrc).toContain("name: 'mjengo-supplier-outbox'")
+    // #352 moved the supplier key behind the exported SUPPLIER_OUTBOX_KEY
+    // const (the guarded storage adapter needs the name), exactly as #192
+    // did for the owner — pin BOTH consts' values and their uses, the same
+    // invariant the literal pins carried.
+    expect(supplierSrc).toContain("export const SUPPLIER_OUTBOX_KEY = 'mjengo-supplier-outbox'")
+    expect(supplierSrc).toContain('name: SUPPLIER_OUTBOX_KEY')
     // #192 moved the owner key behind the exported MJENGO_STORE_KEY const
     // (the guarded storage adapter needs the name) — pin BOTH the const's
     // value and its use, the same invariant the literal pin carried.
     expect(ownerSrc).toContain("export const MJENGO_STORE_KEY = 'mjengo-os-store'")
     expect(ownerSrc).toContain('name: MJENGO_STORE_KEY')
+    // The two surfaces' keys never collide (the session-scoping invariant).
+    expect(SUPPLIER_OUTBOX_KEY).not.toBe(MJENGO_STORE_KEY)
     // The supplier store consumes the SHARED core (lib/outbox) but never the
     // owner store — no entanglement by construction.
     expect(supplierSrc).not.toContain("from '@/frontend/hooks/use-mjengo'")
