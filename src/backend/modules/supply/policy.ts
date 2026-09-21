@@ -106,7 +106,12 @@ export function supplyCan(role: SupplyRole, action: SupplyAction): boolean {
     case 'delivery.void':
       return true
 
-    // 4) Suppliers/catalog — contractor manages the network (§1)
+    // 4) Suppliers/catalog — contractor manages the network (§1). MD-6: this
+    //    matrix case is now ENFORCED at the action layer (mjengo.ts
+    //    SUPPLIER_MASTER_ACTIONS gate) for buyer-side roles too, not just the
+    //    client/share seam — supervisor/procurement/qs/finance can no longer
+    //    demo-edit any supplier's network-global rows. Supplier sessions edit
+    //    their own rows via the W5-3 pin (supplier-scope.ts).
     case 'supplier.upsert':
     case 'catalog.upsert':
       return role === 'contractor' || role === 'admin'

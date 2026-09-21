@@ -583,6 +583,24 @@ const SHARE_ROTATE_ROLES: readonly string[] = ['contractor', 'admin']
 /** The share-link lifecycle action gated above (issue #172). */
 const SHARE_ROTATE_ACTIONS: readonly string[] = ['share.regenerate']
 
+/**
+ * MD-6 (audit register): supplier + catalog rows are NETWORK-GLOBAL master
+ * data — editing any supplier's prices from any project was demo-posture
+ * ("minimal working, demo editing", MOCK_DEMO_BASELINE §4). The permission
+ * matrix (modules/supply/policy.ts case 4 — Finder spec §1 "contractor …
+ * manage suppliers/catalog") scopes their maintenance to contractor/admin;
+ * this shared-path gate ENFORCES that matrix server-side (the matrix was
+ * previously only consulted for client/share stamps). Supplier-role sessions
+ * are exempt HERE only so the W5-3 pin below can scope them to their OWN
+ * catalog rows (assertSupplierScope rewrites supplierId to the session pin);
+ * supervisor/procurement/qs/finance and the field-channel stamps ('ussd',
+ * 'whatsapp') are refused before any handler touches data.
+ */
+const SUPPLIER_MASTER_ROLES: readonly string[] = ['contractor', 'admin']
+
+/** The master-data actions gated above (MD-6) — the matrix's case-4 pair. */
+const SUPPLIER_MASTER_ACTIONS: readonly string[] = ['supplier.upsert', 'catalog.upsert']
+
 /** §33 professional roles a roster entry may carry. */
 const PROJECT_TEAM_ROLES: readonly string[] = ['contractor', 'supervisor', 'qs', 'architect', 'engineer', 'surveyor', 'client_rep']
 
@@ -804,6 +822,23 @@ export async function applyAction(type: ActionType, payload: any, projectIdArg?:
     throw new Error(
       `Clients may raise material requests and place purchase orders — "${type}" stays with the site team (spec §24). ` +
         'Sign in as the site team, or ask them to run it.',
+    )
+  }
+  // MD-6 — supplier catalog demo-editing scope: buyer-side master data
+  // (network-global Supplier + CatalogItem rows) is contractor/admin-only per
+  // the permission matrix, enforced HERE on the shared mutation path so every
+  // entry route (/api/actions, /api/sync outbox items, the gateways) inherits
+  // it — not just the UI. Runs AFTER the §24 client gate (a client keeps the
+  // client-seam refusal copy) and BEFORE the W5-3 supplier pin (a supplier
+  // session falls through to its own-row pin, never this gate).
+  if (
+    SUPPLIER_MASTER_ACTIONS.includes(type) &&
+    effectiveRole !== 'supplier' &&
+    !SUPPLIER_MASTER_ROLES.includes(effectiveRole)
+  ) {
+    throw new Error(
+      `Only a contractor or admin may maintain supplier and catalog rows — "${effectiveRole}" is not permitted. ` +
+        'Suppliers edit their own catalog through their portal; ask a contractor or admin for buyer-side edits.',
     )
   }
   // W5-3 supplier pin — the SAME dual-layer pattern, mirrored: the route layer

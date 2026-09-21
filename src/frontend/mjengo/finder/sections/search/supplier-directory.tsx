@@ -5,13 +5,16 @@
 // rows timestamped "as of <date>" (CatalogItem.updatedAt — never invent
 // freshness), and the project's save-supplier shortlist (spec §30 —
 // supplier.save/unsave; saved suppliers sort first and carry a badge).
-// Minimal catalog editing (price/stock) via catalog.upsert and new-supplier
-// capture via supplier.upsert. Suppliers are network-global rows (no project
-// scope); every edit lands in the Bias-Free Ledger on the dispatching project.
-// Verification ladder language is honest: platform activity levels, never
-// government certification claims.
+// MD-6: catalog editing (catalog.upsert) and new-supplier capture
+// (supplier.upsert) are contractor/admin-only — the same matrix case the
+// RulesCard narrows (policy.ts case 4), and the backend SUPPLIER_MASTER gate
+// enforces server-side; the shortlist stays site-team-wide. Suppliers are
+// network-global rows (no project scope); every edit lands in the Bias-Free
+// Ledger on the dispatching project. Verification ladder language is honest:
+// platform activity levels, never government certification claims.
 
 import { useState } from 'react'
+import { useSession } from 'next-auth/react'
 import { useMjengo } from '@/frontend/hooks/use-mjengo'
 import { Badge } from '@/frontend/ui/badge'
 import { Button } from '@/frontend/ui/button'
@@ -28,6 +31,7 @@ import { formatKes } from './bits'
 
 export function SupplierDirectory({ canManage }: { canManage: boolean }) {
   const { data, dispatch, online, outbox, actionBusy } = useMjengo()
+  const { data: session } = useSession()
   const t = useT()
   const suppliers = data?.supply.suppliers ?? []
   const savedIds = data?.supply.savedSupplierIds ?? []
@@ -39,6 +43,11 @@ export function SupplierDirectory({ canManage }: { canManage: boolean }) {
   const [form, setForm] = useState({ businessName: '', county: '', town: '', phone: '', deliveryFeeBase: '', responseHours: '' })
   const busy = actionBusy !== null
   const offlineNote = t('field.savedQueued', { count: outbox.length })
+  // MD-6: master-data edits are contractor/admin (policy.ts case 4 — the
+  // rules-card idiom); the shortlist below keeps the site-team-wide
+  // canManage. Share-link visitors have no session → null role → read-only.
+  const sessionRole = session?.user?.role ?? null
+  const canEditMaster = canManage && (sessionRole === 'contractor' || sessionRole === 'admin')
 
   // Saved suppliers first (spec §30) — stable within each group
   const sorted = [...suppliers].sort(
@@ -102,7 +111,7 @@ export function SupplierDirectory({ canManage }: { canManage: boolean }) {
             {t('finder.dir.desc')}
           </CardDescription>
         </div>
-        {canManage && (
+        {canEditMaster && (
           <Button size="sm" variant="outline" className="min-h-11 gap-1.5" onClick={() => setAddOpen(true)} aria-label={t('finder.dir.addAria')}>
             <Plus className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">{t('finder.dir.add')}</span>
           </Button>
@@ -188,7 +197,7 @@ export function SupplierDirectory({ canManage }: { canManage: boolean }) {
                           <th scope="col" className="px-2 py-2 text-right font-medium">{t('finder.dir.col.stock')}</th>
                           <th scope="col" className="px-2 py-2 text-right font-medium">{t('finder.dir.col.minOrder')}</th>
                           {/* relative anchors the sr-only span (see results-table.tsx note) */}
-                          {canManage && <th scope="col" className="relative px-3 py-2 text-right font-medium"><span className="sr-only">{t('finder.dir.col.actions')}</span></th>}
+                          {canEditMaster && <th scope="col" className="relative px-3 py-2 text-right font-medium"><span className="sr-only">{t('finder.dir.col.actions')}</span></th>}
                         </tr>
                       </thead>
                       <tbody>
@@ -208,7 +217,7 @@ export function SupplierDirectory({ canManage }: { canManage: boolean }) {
                             <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-stone-800">{formatKes(item.unitPrice)}</td>
                             <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-stone-700">{item.stockQty}</td>
                             <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-stone-500">{item.minOrderQty}</td>
-                            {canManage && (
+                            {canEditMaster && (
                               <td className="whitespace-nowrap px-3 py-2 text-right">
                                 <Button
                                   size="sm" variant="ghost" className="h-8 min-h-8 gap-1 px-2 text-xs"
@@ -227,7 +236,7 @@ export function SupplierDirectory({ canManage }: { canManage: boolean }) {
                           </tr>
                         ))}
                         {!s.catalogItems.length && (
-                          <tr><td colSpan={canManage ? 5 : 4} className="px-3 py-3 text-center text-xs text-stone-400">{t('finder.dir.noCatalog')}</td></tr>
+                          <tr><td colSpan={canEditMaster ? 5 : 4} className="px-3 py-3 text-center text-xs text-stone-400">{t('finder.dir.noCatalog')}</td></tr>
                         )}
                       </tbody>
                     </table>
