@@ -511,6 +511,33 @@ describe('#123: posture banner key family exists in both dictionaries', () => {
 })
 
 // ---------------------------------------------------------------------------
+// #363 / audit MD-8 — the zero-VAT invoice note (finder.inv.vatNote): ONE
+// shared key rendered by every invoice surface that shows totals (detail
+// dialog, printable record, tab list, decision-queue card, pay/create
+// dialogs, supplier portal, CSV export — the per-surface wiring is pinned in
+// invoice-vat-labeling.test.ts, along with the posture seam that gates it).
+// ---------------------------------------------------------------------------
+
+describe('#363: the zero-VAT note states the honest posture in both languages', () => {
+  it('EN names the posture, the pending configuration and the totals fact', () => {
+    expect(translate(enDict, 'finder.inv.vatNote')).toContain('VAT is not applied')
+    expect(translate(enDict, 'finder.inv.vatNote')).toContain('tax configuration is pending')
+    expect(translate(enDict, 'finder.inv.vatNote')).toContain('totals include no VAT')
+  })
+
+  it('SW renders the Kiswahili twin (same claims, no raw English fallback)', () => {
+    expect(translate(swDict, 'finder.inv.vatNote')).toContain('VAT haijatumika')
+    expect(translate(swDict, 'finder.inv.vatNote')).toContain('bado unasubiri')
+    expect(translate(swDict, 'finder.inv.vatNote')).toContain('jumla hazijumuishi VAT')
+  })
+
+  it('both cite MD-8 (the audit register row tracking the deferred VAT work)', () => {
+    expect(translate(enDict, 'finder.inv.vatNote')).toContain('(MD-8)')
+    expect(translate(swDict, 'finder.inv.vatNote')).toContain('(MD-8)')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // #125 Kiswahili surface completion (audit FE-3): audit tab, finder invoices/
 // requests/dashboard/search, land dialogs + professionals, overview cards,
 // shell cards, and the report/CSV artifacts. Same conventions as the blocks
@@ -738,6 +765,7 @@ describe('#125: report + CSV artifacts honor the active locale', () => {
     expect(exports).toContain('reconciliationCSV(t: TranslateFn')
     expect(exports).toContain('attendanceCSV(t: TranslateFn')
     expect(exports).toContain('transactionsCSV(t: TranslateFn')
+    expect(exports).toContain('invoicesCSV(t: TranslateFn')
     expect(exports).toContain('projectSummaryCSV(t: TranslateFn')
   })
 

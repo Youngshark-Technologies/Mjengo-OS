@@ -1,5 +1,7 @@
 import type { ProjectPayload } from '@/backend/lib/mjengo'
+import type { InvoiceWithLines } from '@/backend/modules/invoices/types'
 import type { TranslateFn } from '@/frontend/i18n/types'
+import { anyZeroTaxInvoice } from '@/frontend/mjengo/finder/sections/invoices/vat-posture'
 
 /**
  * Pure CSV export helpers for MjengoOS.
@@ -150,6 +152,41 @@ export function transactionsCSV(t: TranslateFn, p: ProjectPayload): string {
       Note: tr.note ?? '',
     })),
   ]
+  return toCSV(rows)
+}
+
+/**
+ * Invoices list (issue #363 / MD-8): the Finder invoices tab's CSV face —
+ * every invoice with its subtotal/tax/total, plus the shared zero-VAT
+ * posture note as a trailing row while any exported invoice is zero-tax,
+ * so the export can never render unlabeled zero-tax totals. Same
+ * conventions as the tab: KSh plain rounded numbers, ISO date-only,
+ * DB enum statuses verbatim.
+ */
+export function invoicesCSV(t: TranslateFn, invoices: InvoiceWithLines[]): string {
+  const rows: CSVRow[] = [
+    {
+      Invoice: t('csv.inv.invoice'), Supplier: t('csv.inv.supplier'), PO: t('csv.inv.po'),
+      Status: t('csv.inv.status'), Subtotal: t('csv.inv.subtotal'), Tax: t('csv.inv.tax'),
+      Total: t('csv.inv.total'), Due: t('csv.inv.due'),
+    },
+    ...invoices.map((inv) => ({
+      Invoice: inv.invoiceCode,
+      Supplier: inv.supplierName ?? '—',
+      PO: inv.orderCode ?? '—',
+      Status: inv.status,
+      Subtotal: Math.round(inv.subtotal),
+      Tax: Math.round(inv.tax),
+      Total: Math.round(inv.total),
+      Due: inv.dueDate ? isoDateOnly(inv.dueDate) : '—',
+    })),
+  ]
+  if (anyZeroTaxInvoice(invoices.map((inv) => inv.tax))) {
+    rows.push({
+      Invoice: t('finder.inv.vatNote'), Supplier: '', PO: '', Status: '',
+      Subtotal: '', Tax: '', Total: '', Due: '',
+    })
+  }
   return toCSV(rows)
 }
 

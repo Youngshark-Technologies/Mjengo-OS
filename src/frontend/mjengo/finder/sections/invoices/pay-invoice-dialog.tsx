@@ -21,6 +21,7 @@ import { AlertTriangle, Banknote, BookOpen, Check, ShieldCheck } from 'lucide-re
 import { useT } from '@/frontend/i18n/provider'
 import type { InvoiceWithLines, ThreeWayReport } from '@/backend/modules/invoices/types'
 import { autoPaymentReference } from '@/shared/ids'
+import { shouldShowZeroVatNote } from './vat-posture'
 import { paymentMethodLabels, formatKes } from './invoice-bits'
 
 interface Props {
@@ -216,6 +217,11 @@ export function PayInvoiceDialog({ invoice, report, walletBalance, busy, onConfi
                 </p>
               )}
             </div>
+            {/* #363 / MD-8 — the payer sees the zero-VAT posture with the
+                amount being confirmed (the invoice total is what gets paid) */}
+            {shouldShowZeroVatNote(invoice.tax) && (
+              <p className="text-[11px] text-stone-400">{t('finder.inv.vatNote')}</p>
+            )}
             <p className="flex items-start gap-1.5 rounded-md bg-stone-50 p-2.5 text-xs leading-relaxed text-stone-500">
               <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-stone-400" aria-hidden />
               {t('finder.inv.pay.careful')}

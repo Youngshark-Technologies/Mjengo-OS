@@ -3,17 +3,20 @@
 // The supplier's invoices (W5-3) — read-only list: the buyer decides and
 // pays (invoice.decide / invoice.pay are buyer-side actions; the supplier
 // watches the honest statuses). Reuses the Finder invoices status badge +
-// money formatters (finder/sections/invoices/invoice-bits.tsx).
+// money formatters (finder/sections/invoices/invoice-bits.tsx) and the
+// #363/MD-8 zero-VAT note (vat-posture.ts — one shared posture seam).
 
 import { Badge } from '@/frontend/ui/badge'
 import { useT } from '@/frontend/i18n/provider'
 import { dateShort } from '@/frontend/lib/format'
+import { anyZeroTaxInvoice } from '@/frontend/mjengo/finder/sections/invoices/vat-posture'
 import { InvoiceStatusBadge, formatKes } from '@/frontend/mjengo/finder/sections/invoices/invoice-bits'
 import type { SupplierInvoiceRow } from '@/backend/api/supplier'
 
 export function SupplierInvoices({ invoices }: { invoices: SupplierInvoiceRow[] }) {
   const t = useT()
   return (
+    <>
     <div className="overflow-x-auto rounded-md border border-stone-200">
       <table className="w-full min-w-[560px] text-sm">
         <caption className="sr-only">{t('supplier.invoices.title')}</caption>
@@ -65,5 +68,10 @@ export function SupplierInvoices({ invoices }: { invoices: SupplierInvoiceRow[] 
         </tbody>
       </table>
     </div>
+    {/* #363 / MD-8 — the supplier's own totals carry the same posture note */}
+    {anyZeroTaxInvoice(invoices.map((inv) => inv.tax)) && (
+      <p className="pt-2 text-[11px] text-stone-400">{t('finder.inv.vatNote')}</p>
+    )}
+    </>
   )
 }
