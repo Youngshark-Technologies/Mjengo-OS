@@ -62,6 +62,15 @@ export default defineConfig({
       // tests/unit/error-sink.test.ts via console spies, which replace the
       // method and never reach this hook.
       if (log.includes('ERROR_SINK_URL is not set')) return false
+      // Issue #362: the website contact route's dev-fallback key warning
+      // (fires on the first POST of every freshly imported route module —
+      // i.e. once per vi.resetModules re-import across the website-contact
+      // suites — because the tests run with no CONTACT_PII_KEY, the default
+      // dev posture). Its CONTRACT (exactly once per process, labeled, with
+      // the production fail-closed posture named) is pinned in
+      // tests/unit/website-contact-pii.test.ts via console spies, which
+      // replace the method and never reach this hook.
+      if (log.startsWith('[contact] CONTACT_PII_KEY')) return false
     },
 
     // =====================================================================

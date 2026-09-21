@@ -104,6 +104,18 @@ services:
     # file only if you need direct access to the site's origin.
     expose:
       - "3001"
+    environment:
+      # Contact-PII encryption key (MD-3, issue #362): the website seals
+      # every submission's PII fields (AES-256-GCM) with this 32-byte key
+      # before they touch the website-data volume. Compose interpolation
+      # passes exactly this ONE variable from the root .env (the jobs-tick
+      # sidecar's pattern) — the website container never sees the app's
+      # other secrets. Generate: openssl rand -base64 32. Unset + the
+      # image's NODE_ENV=production → the contact form FAILS CLOSED (503,
+      # one loud error). Lead retrieval / erasure write-back:
+      #   docker compose exec website node /app/scripts/decrypt-leads.mjs
+      # (DEPLOYMENT.md §6.3).
+      - CONTACT_PII_KEY=${CONTACT_PII_KEY:-}
     volumes:
       - website-data:/app/data     # contact-form submissions (POST /website/api/contact)
     healthcheck:

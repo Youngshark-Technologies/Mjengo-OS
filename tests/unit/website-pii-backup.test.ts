@@ -31,6 +31,14 @@
  *   · testing requirement: §7.2.2's verify step reads submissions.json
  *     back through the site's own path.
  *
+ * UPDATE (issue #362 / MD-3): the store's PII fields are now sealed at
+ * rest with AES-256-GCM under CONTACT_PII_KEY, so the archive carries
+ * ciphertext, not plaintext — the env example's PII-nature pin moved
+ * from 'plaintext PII' to the encrypted-at-rest + key-custody wording
+ * (the crypto itself, the route's fail-closed posture and the
+ * decrypt/seal CLI are pinned by tests/unit/website-contact-pii.test.ts;
+ * this file keeps owning the BACKUP-guidance pins).
+ *
  * AND the issue's testing requirement executed for real, as far as a
  * Docker-less sandbox can take it (the same honest posture as the #199
  * drill doc and the #214 js-yaml stand-in): the documented tar pipeline
@@ -85,9 +93,13 @@ describe('the #199 script already backs the volume up (verified state)', () => {
     expect(SCRIPT).toContain('backups contain PII')
   })
 
-  it('the env example ships the volume path + its PII nature', () => {
+  it('the env example ships the volume path + its (now encrypted) PII nature', () => {
     expect(ENV_EXAMPLE).toContain('MJENGO_WEBSITE_DIR=/var/lib/docker/volumes/mjengo-os_website-data/_data')
-    expect(ENV_EXAMPLE).toContain('plaintext PII')
+    // Issue #362: the store is sealed at rest — the pin moved from the
+    // old 'plaintext PII' to the encrypted-at-rest + key-custody truth.
+    expect(ENV_EXAMPLE).toContain('ENCRYPTED AT REST')
+    expect(ENV_EXAMPLE).toContain('CONTACT_PII_KEY')
+    expect(ENV_EXAMPLE).toContain('ciphertext without that key')
   })
 
   it("§6.3's retention warning cross-references the scheduled backup", () => {
@@ -98,6 +110,9 @@ describe('the #199 script already backs the volume up (verified state)', () => {
     expect(s722).toContain('`website-data` → `mjengo-website-<TS>.tar.gz`')
     expect(s722).toContain('submissions.json')
     expect(s722).toContain('ONLY surviving copy of early leads')
+    // Issue #362: the entry is sealed-at-rest ciphertext now, and the
+    // key-custody rule (never in the backup dir) ships with it.
+    expect(s722).toContain('sealed under `CONTACT_PII_KEY`')
   })
 })
 
