@@ -44,8 +44,11 @@
 //     order ('delivered') — the flag rides the OrderDelivery row, matching
 //     the seeded PO-2026-000009 semantics.
 //   - rules: upsert/delete the project's §11 bands; suppliers + catalogs
-//     minimal working upserts for demo editing (suppliers are network-global
-//     rows; the audit event lands on the dispatching project)
+//     upserts are role-scoped master-data edits (MD-6): contractor/admin on
+//     the buyer side (the applyAction SUPPLIER_MASTER gate enforces the
+//     policy matrix case 4), supplier sessions their OWN rows via the W5-3
+//     pin. Suppliers are network-global rows; the audit event lands on the
+//     dispatching project
 //
 // Money NEVER moves here — payment flows through the invoices module only.
 // Every mutation returns a plain object; applyAction() writes the AuditEvent.
@@ -276,7 +279,13 @@ export async function compareSuppliers(
   )
 }
 
-// ---------------- suppliers + catalog (minimal working, demo editing) ----------------
+// ---------------- suppliers + catalog (MD-6: role-scoped master data) ----------------
+
+// Buyer-side upserts reach this code only through the applyAction
+// SUPPLIER_MASTER role gate (contractor/admin); supplier sessions arrive via
+// the W5-3 pin with supplierId forced to their own link. The rows themselves
+// stay network-global (no per-supplier ownership model on the buyer side —
+// the audit event records who edited what, on the dispatching project).
 
 /** `supplier.upsert` { id?, businessName, county, town?, phone?, … } — network-global rows. */
 export async function upsertSupplier(_projectId: string, payload: Record<string, unknown>) {
