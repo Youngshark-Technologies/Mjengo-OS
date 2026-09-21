@@ -11,6 +11,7 @@ import { AlertTriangle, Check, FileText, Printer, ScanSearch, Send, Banknote, Sh
 import { dateShort } from '@/frontend/lib/format'
 import { useT } from '@/frontend/i18n/provider'
 import type { InvoiceWithLines, ThreeWayReport } from '@/backend/modules/invoices/types'
+import { shouldShowZeroVatNote } from './vat-posture'
 import { InvoiceStatusBadge, paymentMethodLabels, ThreeWayChip, formatKes, fmtQty } from './invoice-bits'
 
 interface Props {
@@ -116,8 +117,8 @@ export function InvoiceDetailDialog({
                     </tfoot>
                   </table>
                 </div>
-                {invoice.tax === 0 && (
-                  <p className="pt-1 text-[11px] text-stone-400">{t('finder.inv.det.vatNote')}</p>
+                {shouldShowZeroVatNote(invoice.tax) && (
+                  <p className="pt-1 text-[11px] text-stone-400">{t('finder.inv.vatNote')}</p>
                 )}
               </div>
 

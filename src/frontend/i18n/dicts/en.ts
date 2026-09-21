@@ -2617,6 +2617,13 @@ export const enDict = {
   'finder.inv.desc': 'Draft → submitted → client decision → paid. Every payment writes one permanent Transaction ledger entry.',
   'finder.inv.new': 'New invoice',
   'finder.inv.newAria': 'Create a new supplier invoice',
+  // #363 / MD-8 — the zero-VAT posture, stated on every invoice surface where
+  // totals appear (detail dialog, printable record, tab list, decision queue,
+  // pay/create dialogs, supplier portal, CSV export). ONE shared note; the
+  // render condition lives in finder/sections/invoices/vat-posture.ts.
+  'finder.inv.vatNote': 'VAT is not applied — tax configuration is pending (MD-8); totals include no VAT.',
+  'finder.inv.exportCsv': 'Export CSV',
+  'finder.inv.exportCsvAria': 'Export the invoices list as CSV',
   'finder.inv.emptyTitle': 'No invoices yet',
   'finder.inv.emptySite': 'Create one from a purchase order — supplier and lines pre-fill from the PO.',
   'finder.inv.emptyClient': 'The site team drafts supplier invoices here; you decide and pay.',
@@ -2744,7 +2751,6 @@ export const enDict = {
   'finder.inv.det.subtotal': 'Subtotal',
   'finder.inv.det.tax': 'Tax',
   'finder.inv.det.total': 'Total',
-  'finder.inv.det.vatNote': 'VAT-inclusive supplier pricing (demo data) — tax line is zero.',
   'finder.inv.det.note': 'Note: “{note}”',
   'finder.inv.det.matchTitle': '3-way match — PO ↔ invoice ↔ delivery',
   'finder.inv.det.runMatch': 'Run 3-way match',
@@ -3884,6 +3890,15 @@ export const enDict = {
   'csv.sum.spendDelta': 'Spend vs plan delta %',
   'csv.sum.fundisToday': 'Fundis today',
   'csv.sum.unackedAlerts': 'Unacked alerts',
+  // invoice list export (issue #363) — the CSV face of the Finder invoices tab
+  'csv.inv.invoice': 'Invoice',
+  'csv.inv.supplier': 'Supplier',
+  'csv.inv.po': 'PO',
+  'csv.inv.status': 'Status',
+  'csv.inv.subtotal': 'Subtotal',
+  'csv.inv.tax': 'Tax',
+  'csv.inv.total': 'Total',
+  'csv.inv.due': 'Due',
 
   // --------------------------------------------- #125 · dispatch labels (fundis + share)
   // fundis-tab dispatch labels — the STATUS_LABELS EN values no longer render

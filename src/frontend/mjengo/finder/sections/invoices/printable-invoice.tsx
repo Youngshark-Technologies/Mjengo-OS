@@ -3,11 +3,13 @@
 // Printable invoice — a clean, print-only record of a platform transaction.
 // Rendered in a hidden container; window.print() prints ONLY this block via
 // the visibility technique (no shared-file changes needed). Explicitly NOT a
-// tax document — the footer says so.
+// tax document — the totals carry the zero-VAT note (issue #363 / MD-8) and
+// the footer says so.
 
 import { dateShort } from '@/frontend/lib/format'
 import { useI18n, useT } from '@/frontend/i18n/provider'
 import type { InvoiceWithLines } from '@/backend/modules/invoices/types'
+import { shouldShowZeroVatNote } from './vat-posture'
 import { fmtQty } from './invoice-bits'
 
 interface Props {
@@ -89,6 +91,11 @@ export function PrintableInvoice({ invoice, projectName, clientName, location }:
         <div className="flex justify-between py-1"><span className="text-stone-500">{t('finder.inv.print.tax')}</span><span className="tabular-nums">{money(invoice.tax)}</span></div>
         <div className="flex justify-between border-t border-stone-800 py-2 text-sm font-bold"><span>{t('finder.inv.print.total')}</span><span className="tabular-nums">{money(invoice.total)}</span></div>
       </div>
+      {/* #363 / MD-8 — the zero-VAT posture travels onto paper (and "Save as
+          PDF"), right under the tax line it explains; one shared note */}
+      {shouldShowZeroVatNote(invoice.tax) && (
+        <p className="mt-1 ml-auto w-56 text-right text-[10px] leading-snug text-stone-400">{t('finder.inv.vatNote')}</p>
+      )}
 
       {/* payment record */}
       {invoice.status === 'paid' && (

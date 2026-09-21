@@ -11,6 +11,7 @@ import { AlertTriangle, Check, Eye, MoreHorizontal, ShieldCheck, X } from 'lucid
 import { dateShort } from '@/frontend/lib/format'
 import { useT } from '@/frontend/i18n/provider'
 import type { InvoiceWithLines, ThreeWayReport } from '@/backend/modules/invoices/types'
+import { shouldShowZeroVatNote } from './vat-posture'
 import { InvoiceStatusBadge, ThreeWayChip, formatKes, fmtQty } from './invoice-bits'
 
 interface Props {
@@ -73,6 +74,11 @@ export function DecisionQueueCard({
           </p>
         )}
       </div>
+
+      {/* #363 / MD-8 — the queue card's total is an invoice surface too */}
+      {shouldShowZeroVatNote(invoice.tax) && (
+        <p className="pt-2 text-[10px] text-stone-400">{t('finder.inv.vatNote')}</p>
+      )}
 
       {/* open review items — honest, never an accusation */}
       {report.mismatches.length > 0 && (

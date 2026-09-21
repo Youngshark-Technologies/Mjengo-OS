@@ -16,6 +16,7 @@ import { Textarea } from '@/frontend/ui/textarea'
 import { Plus, ReceiptText, Trash2 } from 'lucide-react'
 import { useT } from '@/frontend/i18n/provider'
 import type { ProjectPayload } from '@/backend/lib/mjengo'
+import { shouldShowZeroVatNote } from './vat-posture'
 import { formatKes } from './invoice-bits'
 
 type OrderRow = ProjectPayload['supply']['orders'][number]
@@ -254,6 +255,12 @@ export function CreateInvoiceDialog({ open, orders, suppliers, busy, onOpenChang
               </p>
             </div>
           </div>
+          {/* #363 / MD-8 — the live totals preview states the platform posture
+              while the draft is zero-tax (entering a tax amount replaces the
+              note with the draft's own numbers — the posture is per-invoice) */}
+          {shouldShowZeroVatNote(Number(tax) || 0) && (
+            <p className="text-[11px] text-stone-400">{t('finder.inv.vatNote')}</p>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="inv-note">{t('finder.inv.create.noteLabel')}</Label>

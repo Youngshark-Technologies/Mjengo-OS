@@ -24,15 +24,17 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from '@/frontend/ui/label'
 import { Textarea } from '@/frontend/ui/textarea'
 import { dateShort, formatKES } from '@/frontend/lib/format'
+import { downloadCSV, invoicesCSV, projectFilePrefix } from '@/frontend/mjengo/export-utils'
 import { matchThreeWay } from '@/backend/modules/invoices/three-way'
 import type { InvoiceWithLines, ThreeWayReport } from '@/backend/modules/invoices/types'
-import { AlertTriangle, Banknote, Check, Hourglass, Plus, ReceiptText, ScrollText, Send, ShieldCheck, X } from 'lucide-react'
+import { AlertTriangle, Banknote, Check, Download, Hourglass, Plus, ReceiptText, ScrollText, Send, ShieldCheck, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useT } from '@/frontend/i18n/provider'
 import { CreateInvoiceDialog } from './invoices/create-invoice-dialog'
 import { DecisionQueueCard } from './invoices/decision-queue-card'
 import { InvoiceDetailDialog } from './invoices/invoice-detail-dialog'
 import { InvoiceStatusBadge, ThreeWayChip, formatKes, fmtQty } from './invoices/invoice-bits'
+import { anyZeroTaxInvoice } from './invoices/vat-posture'
 import { LedgerConsistencyChip } from './invoices/ledger-consistency-chip'
 import { PayInvoiceDialog, PaymentRecordBadge } from './invoices/pay-invoice-dialog'
 import { PrintableInvoice } from './invoices/printable-invoice'
@@ -213,6 +215,16 @@ export function InvoicesSection() {
     setTimeout(() => { window.print() }, 300)
   }
 
+  // #363 / MD-8 — the CSV face of the tab: the SAME rows the table shows
+  // (rounded KSh, ISO date-only) + the shared zero-VAT note as a trailing row,
+  // so the export can never render unlabeled zero-tax totals.
+  function exportInvoices() {
+    if (!data) return
+    const filename = `${projectFilePrefix(data)}-invoices.csv`
+    downloadCSV(filename, invoicesCSV(t, invoices))
+    toast.success(t('field.exported', { file: filename }))
+  }
+
   async function createInvoice(payload: {
     orderId?: string; supplierId?: string; lines: { name: string; qty: number; unitPrice: number }[]
     tax?: number; dueDate?: string; note?: string
@@ -278,11 +290,16 @@ export function InvoicesSection() {
             </CardDescription>
             <LedgerConsistencyChip check={data.invoices.ledgerCheck} walletBalance={walletBalance} />
           </div>
-          {isSiteTeam && (
-            <Button size="sm" variant="outline" className="min-h-11 gap-1.5" onClick={() => setCreateOpen(true)} aria-label={t('finder.inv.newAria')}>
-              <Plus className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">{t('finder.inv.new')}</span>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {isSiteTeam && (
+              <Button size="sm" variant="outline" className="min-h-11 gap-1.5" onClick={() => setCreateOpen(true)} aria-label={t('finder.inv.newAria')}>
+                <Plus className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">{t('finder.inv.new')}</span>
+              </Button>
+            )}
+            <Button size="sm" variant="outline" className="min-h-11 gap-1.5" onClick={exportInvoices} disabled={invoices.length === 0} aria-label={t('finder.inv.exportCsvAria')}>
+              <Download className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">{t('finder.inv.exportCsv')}</span>
             </Button>
-          )}
+          </div>
         </CardHeader>
         <CardContent>
           {invoices.length === 0 ? (
@@ -373,6 +390,11 @@ export function InvoicesSection() {
                 </table>
               </div>
             </div>
+          )}
+          {/* #363 / MD-8 — the tab's own totals carry the posture note (one
+              shared line beside the rows it explains, not per row) */}
+          {anyZeroTaxInvoice(invoices.map((inv) => inv.tax)) && (
+            <p className="pt-2 text-[11px] text-stone-400">{t('finder.inv.vatNote')}</p>
           )}
         </CardContent>
       </Card>

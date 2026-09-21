@@ -2617,6 +2617,14 @@ export const swDict = {
   'finder.inv.desc': 'Rasimu → iliwasilishwa → uamuzi wa mteja → imelipwa. Kila malipo huingiza mstari mmoja wa kudumu katika daftari la Transaction.',
   'finder.inv.new': 'Invoisi mpya',
   'finder.inv.newAria': 'Tengeneza invoisi mpya ya msambazaji',
+  // #363 / MD-8 — msimamo wa VAT sufuri, unatajwa kwenye kila uso wa invoisi
+  // ambapo jumla zinaonekana (dirisha la maelezo, rekodi ya kuchapisha, orodha
+  // ya kichupo, foleni ya maamuzi, madirisha ya malipo/utengenezaji, portalu
+  // ya msambazaji, hamisho la CSV). TANGAZO MOJA likishirikiwa; sharti la
+  // kuonyesha liko kwenye finder/sections/invoices/vat-posture.ts.
+  'finder.inv.vatNote': 'VAT haijatumika — mpangilio wa kodi bado unasubiri (MD-8); jumla hazijumuishi VAT.',
+  'finder.inv.exportCsv': 'Hamisha CSV',
+  'finder.inv.exportCsvAria': 'Hamisha orodha ya invoisi kama CSV',
   'finder.inv.emptyTitle': 'Hakuna invoisi bado',
   'finder.inv.emptySite': 'Tengeneza moja kutoka kwenye agizo la ununuzi — msambazaji na mistari hujaza yenyewe kutoka PO.',
   'finder.inv.emptyClient': 'Timu ya eneo hutunga rasimu za invoisi za wasambazaji hapa; wewe unaamua na kulipa.',
@@ -2744,7 +2752,6 @@ export const swDict = {
   'finder.inv.det.subtotal': 'Jumla ndogo',
   'finder.inv.det.tax': 'Kodi',
   'finder.inv.det.total': 'Jumla',
-  'finder.inv.det.vatNote': 'Bei za wasambazaji zina kodi ndani yake (data ya mfano) — mstari wa kodi ni sufuri.',
   'finder.inv.det.note': 'Maoni: “{note}”',
   'finder.inv.det.matchTitle': 'Ulinganifu wa pande tatu — PO ↔ invoisi ↔ mapokezi',
   'finder.inv.det.runMatch': 'Endesha ulinganifu wa pande tatu',
@@ -3886,6 +3893,15 @@ export const swDict = {
   'csv.sum.spendDelta': 'Tofauti ya matumizi dhidi ya mpango %',
   'csv.sum.fundisToday': 'Fundis leo',
   'csv.sum.unackedAlerts': 'Tahadhari hazijakubaliwa',
+  // hamisho la orodha ya invoisi (issue #363) — uso wa CSV wa kichupo cha invoisi za Finder
+  'csv.inv.invoice': 'Invoisi',
+  'csv.inv.supplier': 'Msambazaji',
+  'csv.inv.po': 'PO',
+  'csv.inv.status': 'Hali',
+  'csv.inv.subtotal': 'Jumla ndogo',
+  'csv.inv.tax': 'Kodi',
+  'csv.inv.total': 'Jumla',
+  'csv.inv.due': 'Inapaswa kulipwa',
 
   // --------------------------------------------- #125 · lebo za dispatch (fundis + share)
   // Lebo za dispatch za fundis-tab — thamani za EN za STATUS_LABELS hazionyeshwi
