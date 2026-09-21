@@ -544,6 +544,86 @@ export function computeDuplicatePurchaseFindings(orders: DuplicateOrderRow[]): E
   return findings
 }
 
+// ---------------- stock variance engine (REC-1, issue #359) ----------------
+
+/**
+ * One counted line as the variance rule sees it (variance has ONE definition:
+ * expected − counted, modules/inventory/repository.countVariance — the same
+ * numbers are recomputed here from the two stored quantities so the engine
+ * stays pure and db-free).
+ */
+export interface StockVarianceLine {
+  materialName: string
+  unit: string
+  expectedQty: number
+  countedQty: number
+}
+
+/** One count session as the variance rule sees it (caller scopes the window). */
+export interface StockVarianceCount {
+  countId: string
+  countedAt: Date
+  countedBy: string
+  /** REC-1 (#359): the session ran blind — a stronger evidential claim. */
+  blind: boolean
+  lines: StockVarianceLine[]
+}
+
+/** Absolute materiality floor: a gap under one whole unit is rounding, not shrinkage. */
+export const STOCK_VARIANCE_MIN_QTY = 1
+/** Relative materiality: the gap must exceed 10% of the book (expected) figure. */
+export const STOCK_VARIANCE_PCT = 0.1
+/** Cap on lines listed inside one finding's message (feed spam guard). */
+const STOCK_VARIANCE_MAX_LINES = 5
+
+/**
+ * REC-1 — stock variance watch, deterministic: for every count session in
+ * the caller's window, a counted line whose |variance| (expected − counted)
+ * is ≥ 1 whole unit AND > 10% of the expected quantity raises ONE warning
+ * finding for the session listing the offending lines. When expected ≤ 0
+ * the relative leg is vacuously satisfied — a whole unit or more of stock
+ * the book does not know about is always worth a look. Zero-variance and
+ * noise-level sessions raise nothing.
+ *
+ * Warning severity (the budget_category_overrun weight): a book/physical
+ * gap is money-adjacent shrinkage — possible loss, theft or unlogged
+ * usage, never an accusation. Posting the count's adjustments does not
+ * erase the discrepancy event, so posted and open sessions are treated
+ * the same. Blind sessions say so in the message: the counter never saw
+ * the book figures while counting, which makes the gap harder to explain
+ * away as anchoring.
+ */
+export function computeStockVarianceFindings(counts: StockVarianceCount[]): EngineFinding[] {
+  const findings: EngineFinding[] = []
+  for (const c of counts) {
+    const offending = c.lines.filter((line) => {
+      const variance = line.expectedQty - line.countedQty
+      const abs = Math.abs(variance)
+      if (abs < STOCK_VARIANCE_MIN_QTY) return false
+      if (line.expectedQty > 0 && abs <= line.expectedQty * STOCK_VARIANCE_PCT) return false
+      return true
+    })
+    if (offending.length === 0) continue
+    const listed = offending.slice(0, STOCK_VARIANCE_MAX_LINES)
+    const detail = listed
+      .map((line) => {
+        const variance = line.expectedQty - line.countedQty
+        const pct = line.expectedQty > 0 ? ` (${Math.round((Math.abs(variance) / line.expectedQty) * 100)}% of book)` : ' (book said zero)'
+        return `${line.materialName}: expected ${line.expectedQty.toLocaleString('en-US')} ${line.unit}, counted ${line.countedQty.toLocaleString('en-US')} ${line.unit}, variance ${variance > 0 ? '+' : ''}${variance.toLocaleString('en-US')}${pct}`
+      })
+      .join('; ')
+    const more = offending.length > listed.length ? ` +${offending.length - listed.length} more line(s)` : ''
+    findings.push({
+      rule: 'stock_variance_watch', severity: 'warning',
+      title: `Stock count variance beyond threshold — ${offending.length} line(s)${c.blind ? ' (blind count)' : ''}`,
+      message: `The ${c.countedAt.toISOString().slice(0, 10)} count by ${c.countedBy}${c.blind ? ' ran BLIND (the counter never saw the book figures until after saving)' : ''} found book-vs-physical gaps beyond the watch level (≥ ${STOCK_VARIANCE_MIN_QTY} whole unit and > ${Math.round(STOCK_VARIANCE_PCT * 100)}% of the expected quantity): ${detail}${more}. A gap this size is possible loss, theft or unlogged usage — verify the count and the movements before acting (issue #359 / REC-1).`,
+      evidence: `${offending.length} of ${c.lines.length} line(s) beyond threshold · count ${c.countId.slice(-6)}${c.blind ? ' · blind' : ''} · threshold ≥ ${STOCK_VARIANCE_MIN_QTY} unit and > ${Math.round(STOCK_VARIANCE_PCT * 100)}% of book`,
+      score: SEVERITY_WEIGHTS.warning,
+    })
+  }
+  return findings
+}
+
 // ---------------- price trend engine ----------------
 
 /** unitPrice is CENTS (issue #122); trend rows convert to KSh numbers at the output. */

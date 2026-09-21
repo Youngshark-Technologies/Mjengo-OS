@@ -35,6 +35,7 @@ import {
   postCountAdjustments,
   receiveStock,
   recordStockCount,
+  setCountCadence,
 } from '@/backend/modules/inventory/service'
 import { loadInventorySlice } from '@/backend/modules/inventory/repository'
 
@@ -327,5 +328,91 @@ describe('stock reconciliation — count → variance → count-linked adjustmen
     // A's count is still open (the foreign post attempt wrote nothing).
     const row = sqlite.prepare('SELECT status FROM StockCount WHERE id = ?').get(recorded.countId) as { status: string }
     expect(row.status).toBe('open')
+  })
+
+  // ---- REC-1 (issue #359): blind counts + scheduled cadence, real tables ----
+
+  it('blind mode round-trips through migration 24: the row stores it, the slice serves it, the default is honest', async () => {
+    const project = await seedProject(prisma, { name: 'Blind Store' })
+    const cement = await openStock(project.id, { materialName: 'Cement', unit: 'bag', qty: 100, location: 'Site Store' })
+
+    // A BLIND session (the counter never saw the book while typing).
+    const blindCount = await recordStockCount(project.id, {
+      countedBy: 'Otieno',
+      blind: true,
+      counts: [{ inventoryItemId: cement.inventoryItemId, countedQty: 95 }],
+    })
+    expect(blindCount.blind).toBe(true)
+    // The real column (migration 24) — SQLite stores the boolean as 1
+    // (better-sqlite3 returns BigInt for INTEGER columns).
+    const rawBlind = sqlite.prepare('SELECT blind FROM StockCount WHERE id = ?').get(blindCount.countId) as { blind: bigint }
+    expect(Number(rawBlind.blind)).toBe(1)
+
+    // A VISIBLE session (the pre-#359 default).
+    const visibleCount = await recordStockCount(project.id, {
+      countedBy: 'Akinyi',
+      counts: [{ inventoryItemId: cement.inventoryItemId, countedQty: 95 }],
+    })
+    expect(visibleCount.blind).toBe(false)
+    const rawVisible = sqlite.prepare('SELECT blind FROM StockCount WHERE id = ?').get(visibleCount.countId) as { blind: bigint }
+    expect(Number(rawVisible.blind)).toBe(0)
+
+    // The slice serves both honestly — the history (and CSV export) can tell
+    // them apart.
+    const slice = await loadInventorySlice(project.id)
+    expect(slice.counts.find((c) => c.id === blindCount.countId)!.blind).toBe(true)
+    expect(slice.counts.find((c) => c.id === visibleCount.countId)!.blind).toBe(false)
+  })
+
+  it('the count cadence derives on read over real rows: never-counted → due, backdated last count → overdue, fresh count → not due, cleared → off', async () => {
+    const project = await seedProject(prisma, { name: 'Cadence Store' })
+    const cement = await openStock(project.id, { materialName: 'Cement', unit: 'bag', qty: 100, location: 'Site Store' })
+
+    // (1) No cadence: nothing is due (the pre-#359 contract).
+    expect((await loadInventorySlice(project.id)).countCadence).toEqual({
+      intervalDays: null, lastCountAt: null, nextDueAt: null, due: false, overdueDays: 0,
+    })
+
+    // (2) A weekly cadence is set but the store has never been counted → due now.
+    await setCountCadence(project.id, { intervalDays: 7 })
+    const rawInterval = sqlite.prepare('SELECT countIntervalDays FROM Project WHERE id = ?').get(project.id) as { countIntervalDays: bigint }
+    expect(Number(rawInterval.countIntervalDays)).toBe(7)
+    const never = (await loadInventorySlice(project.id)).countCadence
+    expect(never.intervalDays).toBe(7)
+    expect(never.due).toBe(true)
+    expect(never.lastCountAt).toBeNull()
+
+    // (3) A count 8 days ago (backdated countedAt) → overdue by ≥ 1 day.
+    await recordStockCount(project.id, {
+      countedBy: 'Otieno',
+      countedAt: new Date(Date.now() - 8 * 86_400_000).toISOString(),
+      counts: [{ inventoryItemId: cement.inventoryItemId, countedQty: 100 }],
+    })
+    const overdue = (await loadInventorySlice(project.id)).countCadence
+    expect(overdue.due).toBe(true)
+    expect(overdue.overdueDays).toBeGreaterThanOrEqual(1)
+    expect(overdue.lastCountAt).toBeTruthy()
+
+    // (4) A fresh count (countedAt now) resets the clock → not due, next due in ~7 days.
+    await recordStockCount(project.id, {
+      countedBy: 'Otieno',
+      counts: [{ inventoryItemId: cement.inventoryItemId, countedQty: 100 }],
+    })
+    const fresh = (await loadInventorySlice(project.id)).countCadence
+    expect(fresh.due).toBe(false)
+    expect(fresh.overdueDays).toBe(0)
+    expect(fresh.nextDueAt).toBeTruthy()
+    const daysToNext = (new Date(fresh.nextDueAt!).getTime() - Date.now()) / 86_400_000
+    expect(daysToNext).toBeGreaterThan(6.9)
+    expect(daysToNext).toBeLessThanOrEqual(7)
+
+    // (5) Clearing the cadence turns everything off — no phantom schedule.
+    await setCountCadence(project.id, { intervalDays: null })
+    const cleared = (await loadInventorySlice(project.id)).countCadence
+    expect(cleared.intervalDays).toBeNull()
+    expect(cleared.due).toBe(false)
+    expect(cleared.nextDueAt).toBeNull()
+    // lastCountAt still reports the honest history.
+    expect(cleared.lastCountAt).toBeTruthy()
   })
 })

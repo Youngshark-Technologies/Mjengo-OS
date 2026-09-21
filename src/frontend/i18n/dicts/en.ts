@@ -1028,6 +1028,22 @@ export const enDict = {
   'mat.count.uncountedCount': '{count} not counted',
   'mat.count.varianceTotal': 'net variance {qty}',
   'mat.count.countLine': '{name} — {location} (expected {qty} {unit})',
+  // REC-1 (#359) — blind-count mode
+  'mat.count.blind.label': 'Blind count',
+  'mat.count.blind.hint': 'Hide the book quantities while counting — enter what is physically there. Expected figures and variances appear only after the session is saved.',
+  'mat.count.blind.desc': 'Blind mode: the book quantities are hidden while you count. Enter what is physically on site per stock line and save — the expected figures and variances appear after saving.',
+  'mat.count.blind.line': '{name} — {location} (count what is physically there)',
+  'mat.count.blind.badge': 'blind',
+  // REC-1 (#359) — scheduled count cadence
+  'mat.count.cadence.label': 'Recurring count cadence',
+  'mat.count.cadence.off': 'No recurring count',
+  'mat.count.cadence.option': 'Count every {days} days',
+  'mat.count.cadence.saved': 'Count cadence saved — every {days} day(s)',
+  'mat.count.cadence.cleared': 'Recurring count cadence cleared',
+  'mat.count.cadence.failed': 'Could not save the count cadence',
+  'mat.count.due.never': 'Count due — a cadence is set but the store has never been counted',
+  'mat.count.due.overdue': 'Count due — overdue by {days} day(s) since the last count',
+  'mat.count.due.next': 'Next count due {date}',
 
   // fundis tab — attendance/payroll toasts (STATUS_LABELS feed dispatch
   // labels and stay English; exception reason labels surface in a toast)
@@ -3832,6 +3848,9 @@ export const enDict = {
   'csv.rec.countedAt': 'Counted At',
   'csv.rec.countedBy': 'Counted By',
   'csv.rec.status': 'Status',
+  'csv.rec.blind': 'Blind Count',
+  'csv.rec.blindYes': 'yes',
+  'csv.rec.blindNo': 'no',
   'csv.rec.material': 'Material',
   'csv.rec.location': 'Location',
   'csv.rec.unit': 'Unit',

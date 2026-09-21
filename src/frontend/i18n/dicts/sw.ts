@@ -1028,6 +1028,22 @@ export const swDict = {
   'mat.count.uncountedCount': '{count} haijahesabiwa',
   'mat.count.varianceTotal': 'jumla ya tofauti {qty}',
   'mat.count.countLine': '{name} — {location} (inayotarajiwa {qty} {unit})',
+  // REC-1 (#359) — hali ya kuhesabu bila kuona daftari
+  'mat.count.blind.label': 'Hesabu bila kuona daftari',
+  'mat.count.blind.hint': 'Ficha idadi za daftari unapohesabu — weka kilichopo halisi. Idadi zinazotarajiwa na tofauti zitaonekana baada ya kipindi kuhifadhiwa tu.',
+  'mat.count.blind.desc': 'Hali ya kuficha: idadi za daftari zimefichwa unapohesabu. Weka kilichopo kwenye ukumbi kwa kila mstari na hifadhi — idadi zinazotarajiwa na tofauti zitaonekana baada ya kuhifadhi.',
+  'mat.count.blind.line': '{name} — {location} (hesabu kilichopo halisi)',
+  'mat.count.blind.badge': 'bila kuona daftari',
+  // REC-1 (#359) — ratiba ya kurudia-rudia ya kuhesabu hisa
+  'mat.count.cadence.label': 'Ratiba ya kurudia-rudia ya kuhesabu',
+  'mat.count.cadence.off': 'Hakuna ratiba ya kurudia-rudia',
+  'mat.count.cadence.option': 'Hesabu kila siku {days}',
+  'mat.count.cadence.saved': 'Ratiba imehifadhiwa — kila siku {days}',
+  'mat.count.cadence.cleared': 'Ratiba ya kurudia-rudia imefutwa',
+  'mat.count.cadence.failed': 'Kuhifadhi ratiba kumeshindikana',
+  'mat.count.due.never': 'Hesabu inahitajika — ratiba imewekwa lakini duka halijawahesabiwa',
+  'mat.count.due.overdue': 'Hesabu inahitajika — imchelewa kwa siku {days} tangu hesabu ya mwisho',
+  'mat.count.due.next': 'Hesabu inayofuata {date}',
 
   // fundis tab — attendance/payroll toasts (STATUS_LABELS feed dispatch
   // labels and stay English; exception reason labels surface in a toast)
@@ -3834,6 +3850,9 @@ export const swDict = {
   'csv.rec.countedAt': 'Ilipimwa',
   'csv.rec.countedBy': 'Aliyepima',
   'csv.rec.status': 'Hali',
+  'csv.rec.blind': 'Hesabu Bila Kuona Daftari',
+  'csv.rec.blindYes': 'ndiyo',
+  'csv.rec.blindNo': 'hapana',
   'csv.rec.material': 'Kifaa',
   'csv.rec.location': 'Mahali',
   'csv.rec.unit': 'Kipimo',

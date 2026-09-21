@@ -72,13 +72,16 @@ export function materialsLedgerCSV(t: TranslateFn, p: ProjectPayload): string {
  * signed variance (expected − counted) and the adjustment posted from the
  * line. Uncounted inventory lines are listed with their expected qty at
  * count time and a '—' counted value (same style as materialsLedgerCSV:
- * header row first, KSh-free quantities, ISO date-only).
+ * header row first, KSh-free quantities, ISO date-only). REC-1 (#359): a
+ * Blind Count column carries each session's mode — a blind count's figures
+ * were entered without the book on screen, which is the evidential weight
+ * of the row.
  */
 export function reconciliationCSV(t: TranslateFn, p: ProjectPayload): string {
   const rows: CSVRow[] = [
     {
       'Count ID': t('csv.rec.countId'), 'Counted At': t('csv.rec.countedAt'), 'Counted By': t('csv.rec.countedBy'),
-      Status: t('csv.rec.status'), Material: t('csv.rec.material'), Location: t('csv.rec.location'), Unit: t('csv.rec.unit'),
+      Status: t('csv.rec.status'), 'Blind Count': t('csv.rec.blind'), Material: t('csv.rec.material'), Location: t('csv.rec.location'), Unit: t('csv.rec.unit'),
       'Expected Qty': t('csv.rec.expectedQty'), 'Counted Qty': t('csv.rec.countedQty'),
       'Variance (Expected − Counted)': t('csv.rec.variance'),
       'Posted Adjustment': t('csv.rec.postedAdjustment'),
@@ -89,6 +92,7 @@ export function reconciliationCSV(t: TranslateFn, p: ProjectPayload): string {
         'Counted At': isoDateOnly(c.countedAt),
         'Counted By': c.countedBy,
         Status: c.status,
+        'Blind Count': c.blind ? t('csv.rec.blindYes') : t('csv.rec.blindNo'),
         Material: line.materialName,
         Location: line.location,
         Unit: line.unit,
@@ -102,6 +106,7 @@ export function reconciliationCSV(t: TranslateFn, p: ProjectPayload): string {
         'Counted At': isoDateOnly(c.countedAt),
         'Counted By': c.countedBy,
         Status: c.status,
+        'Blind Count': c.blind ? t('csv.rec.blindYes') : t('csv.rec.blindNo'),
         Material: line.materialName,
         Location: line.location,
         Unit: line.unit,

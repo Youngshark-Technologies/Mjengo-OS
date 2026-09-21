@@ -1,6 +1,8 @@
 // Inventory domain types (spec §33/§35) — the project payload slices and the
 // shapes the UI renders. Closing stock is always derived from movements.
 
+import type { CountCadence } from './count-cadence'
+
 export type StockMovementType =
   | 'opening'
   | 'received'
@@ -85,6 +87,8 @@ export interface StockCountRow {
   countedBy: string
   countedAt: string
   note: string | null
+  /** REC-1 (#359): the session ran blind — expected figures hidden until save. */
+  blind: boolean
   status: StockCountStatus
   postedAt: string | null
   postedBy: string | null
@@ -99,6 +103,8 @@ export interface InventorySlice {
   movements: StockMovementRow[]
   /** Stock reconciliation history (issue #194), newest first. */
   counts: StockCountRow[]
+  /** REC-1 (#359): derived recurring-count state (computed on read). */
+  countCadence: CountCadence
 }
 
 export interface BoqLineRow {

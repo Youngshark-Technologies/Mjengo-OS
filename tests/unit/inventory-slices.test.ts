@@ -46,7 +46,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // In-memory Prisma stub: just enough of inventoryItem.findMany (with the
 // movements include + orderBy createdAt desc the loader relies on for the
-// "latest cost" rule) and stockCount.findMany for loadInventorySlice.
+// "latest cost" rule), stockCount.findMany/findFirst and project.findUnique
+// for loadInventorySlice (findFirst + the project row feed the REC-1 #359
+// derived count cadence).
 vi.mock('@/backend/lib/db', () => {
   const state = {
     seq: 0,
@@ -54,11 +56,13 @@ vi.mock('@/backend/lib/db', () => {
     movements: new Map<string, Record<string, unknown>>(),
     counts: new Map<string, Record<string, unknown>>(),
     countItems: new Map<string, Record<string, unknown>>(),
+    projects: new Map<string, Record<string, unknown>>(),
     reset() {
       state.items.clear()
       state.movements.clear()
       state.counts.clear()
       state.countItems.clear()
+      state.projects.clear()
       state.seq = 0
     },
   }
@@ -94,8 +98,22 @@ vi.mock('@/backend/lib/db', () => {
           .map((line) => ({ ...line, inventoryItem: { ...state.items.get(line.inventoryItemId as string)! } })),
       }))
     },
+    // REC-1 (#359): the cadence's last-count read — newest countedAt.
+    async findFirst({ where }: { where: { projectId: string } }) {
+      const rows = [...state.counts.values()]
+        .filter((c) => c.projectId === where.projectId)
+        .sort((a, b) => (b.countedAt as Date).getTime() - (a.countedAt as Date).getTime())
+      const top = rows[0]
+      return top ? { countedAt: top.countedAt } : null
+    },
   }
-  const db = { inventoryItem, stockCount, __state: state }
+  const project = {
+    async findUnique({ where }: { where: { id: string } }) {
+      const p = state.projects.get(where.id)
+      return p ? { ...p } : null
+    },
+  }
+  const db = { inventoryItem, stockCount, project, __state: state }
   return { db }
 })
 
@@ -107,6 +125,7 @@ type StubState = {
   movements: Map<string, Record<string, unknown>>
   counts: Map<string, Record<string, unknown>>
   countItems: Map<string, Record<string, unknown>>
+  projects: Map<string, Record<string, unknown>>
   reset: () => void
 }
 const state = (db as unknown as { __state: StubState }).__state
@@ -368,8 +387,13 @@ describe('loadInventorySlice — project scoping + slice shape', () => {
 
     // A project with nothing at all: the full empty-slice shape, counts
     // slot included (the #194 half is pinned in the reconciliation suites).
+    // REC-1 (#359): the derived count cadence defaults to OFF (null
+    // interval, nothing due) — no phantom schedule for an empty store.
     const empty = await loadInventorySlice('proj-empty')
-    expect(empty).toEqual({ items: [], movements: [], counts: [] })
+    expect(empty).toEqual({
+      items: [], movements: [], counts: [],
+      countCadence: { intervalDays: null, lastCountAt: null, nextDueAt: null, due: false, overdueDays: 0 },
+    })
   })
 
   it('item rows do NOT double-carry the movement log (movements live in the flat list only)', async () => {
