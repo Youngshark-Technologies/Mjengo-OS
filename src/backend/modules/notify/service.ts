@@ -30,7 +30,10 @@
 //     opt in, none changed), notify() additionally attempts a real web push
 //     to THAT user's recorded PushSubscription rows (the channel's address
 //     book) when the VAPID pair is configured (VAPID_PUBLIC_KEY +
-//     VAPID_PRIVATE_KEY). One row, ONE aggregated honest outcome across the
+//     VAPID_PRIVATE_KEY) AND — in production — VAPID_SUBJECT names a real
+//     contact (issue #354 / MD-2: unset or the mailto:admin@localhost
+//     default fails closed there; dev keeps the labeled fallback). One row,
+//     ONE aggregated honest outcome across the
 //     user's subscriptions: 'sent' when at least one browser accepted
 //     (deliveredAt stamped, providerRef = that subscription's endpoint),
 //     'failed' when every attempt failed. Subscriptions the push service
@@ -63,7 +66,7 @@
 //     kind never reaches any external channel.
 
 import { db } from '@/backend/lib/db'
-import { getPushProvider, getSmsProvider, type ChannelSendInput } from './channels'
+import { getSmsProvider, resolvePushChannel, type ChannelSendInput } from './channels'
 import type { NotifyOptions } from './types'
 
 /**
@@ -270,7 +273,8 @@ async function markAndReturn(
  * provider ref); every attempt failed → 'failed'. Subscriptions the push
  * service answered 404/410 (gone) are pruned right here — a revoked endpoint
  * is deleted, not retried forever. Every skip state (no user, muted kind, no
- * subscriptions, no VAPID pair) honestly stays 'logged' with the reason.
+ * subscriptions, no VAPID pair, no usable production VAPID subject)
+ * honestly stays 'logged' with the reason.
  * Never throws into notify().
  */
 async function attemptPushDelivery(
@@ -302,16 +306,13 @@ async function attemptPushDelivery(
       await markPushOutcome(id, 'logged', 'Web push requested but this user has no recorded subscription — nothing sent', priorSms)
       return
     }
-    const provider = getPushProvider()
+    const { provider, refusalDetail } = resolvePushChannel()
     if (!provider) {
-      // Fail-closed: no VAPID pair → nothing sent — say so honestly. The
-      // subscriptions stay stored for the day the operator configures them.
-      await markPushOutcome(
-        id,
-        'logged',
-        'Web push requested but no VAPID pair configured (VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY unset) — nothing sent',
-        priorSms,
-      )
+      // Fail-closed: no sendable VAPID setup → nothing sent — say so
+      // honestly, with the precise reason (no pair, or issue #354's
+      // production subject refusal). The subscriptions stay stored for the
+      // day the operator configures them.
+      await markPushOutcome(id, 'logged', refusalDetail, priorSms)
       return
     }
 

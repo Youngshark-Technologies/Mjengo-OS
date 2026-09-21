@@ -31,7 +31,13 @@
  *    service PRUNES the dead subscription row, status-only leak-free
  *    details; notify() opts.push end-to-end — no pair / no subscription /
  *    no userId / muted kind → honest 'logged' skip notes, at-least-one
- *    success → 'sent', all-failed → 'failed', the in-app row always intact.
+ *    success → 'sent', all-failed → 'failed', the in-app row always intact;
+ *  · VAPID SUBJECT posture (issue #354 / MD-2): production REFUSES an unset
+ *    or still-default mailto:admin@localhost subject (no provider — sends
+ *    stay 'logged' with the refusal reason, the browser config probe
+ *    answers null → { configured: false }, ONE loud log.error per process);
+ *    dev/test keeps the labeled fallback with ONE log.warn; a real contact
+ *    is used verbatim in every runtime.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -109,8 +115,12 @@ import { db } from '@/backend/lib/db'
 import {
   AtSmsProvider,
   buildWebPushPayload,
+  DEFAULT_VAPID_SUBJECT,
   getSmsProvider,
   getPushProvider,
+  getVapidPublicKey,
+  resolvePushChannel,
+  vapidSubjectVerdict,
   WebPushProvider,
   WebhookSmsProvider,
 } from '@/backend/modules/notify/channels'
@@ -909,5 +919,257 @@ describe('notify() with opts.push — honest end-to-end outcomes (web-push mocke
     expect(row(id).deliveredAt).toBeInstanceOf(Date)
     expect(String(row(id).deliveryDetail)).toContain('no VAPID pair configured')
     expect(String(row(id).deliveryDetail)).toContain('SMS gateway accepted')
+  })
+})
+
+// ------------------------------------------- VAPID subject posture (issue #354 / MD-2)
+
+describe('vapidSubjectVerdict — the pure production/dev split (issue #354)', () => {
+  it('a real contact → ok, trimmed, used verbatim (no fallback flag)', () => {
+    expect(vapidSubjectVerdict('mailto:ops@mjengo.example', 'production')).toEqual({
+      ok: true,
+      subject: 'mailto:ops@mjengo.example',
+      fellBack: false,
+    })
+    expect(vapidSubjectVerdict('  https://mjengo.example/contact  ', 'production')).toEqual({
+      ok: true,
+      subject: 'https://mjengo.example/contact',
+      fellBack: false,
+    })
+    // A real contact is a real contact in every runtime.
+    expect(vapidSubjectVerdict('mailto:ops@mjengo.example', 'development').fellBack).toBe(false)
+    expect(vapidSubjectVerdict('mailto:ops@mjengo.example', undefined).fellBack).toBe(false)
+  })
+
+  it('unset / blank → production REFUSES; every other runtime runs on the labeled fallback', () => {
+    for (const unset of [undefined, '', '   ']) {
+      expect(vapidSubjectVerdict(unset, 'production'), `subject=${String(unset)}`).toEqual({ ok: false, problem: 'unset' })
+      for (const mode of ['development', 'test', 'staging', undefined]) {
+        expect(vapidSubjectVerdict(unset, mode), `subject=${String(unset)} nodeEnv=${String(mode)}`).toEqual({
+          ok: true,
+          subject: DEFAULT_VAPID_SUBJECT,
+          fellBack: true,
+          problem: 'unset',
+        })
+      }
+    }
+  })
+
+  it('still the mailto:admin@localhost default → the same refusal/fallback split (it is not a real contact)', () => {
+    for (const subject of [DEFAULT_VAPID_SUBJECT, `  ${DEFAULT_VAPID_SUBJECT}  `]) {
+      expect(vapidSubjectVerdict(subject, 'production'), `subject=${subject}`).toEqual({
+        ok: false,
+        problem: 'localhost-default',
+      })
+      expect(vapidSubjectVerdict(subject, 'development'), `subject=${subject}`).toEqual({
+        ok: true,
+        subject: DEFAULT_VAPID_SUBJECT,
+        fellBack: true,
+        problem: 'localhost-default',
+      })
+    }
+  })
+})
+
+describe('resolvePushChannel / getPushProvider — VAPID_SUBJECT fail-closed in production (issue #354)', () => {
+  const PAIR = { VAPID_PUBLIC_KEY: VAPID_PUBLIC, VAPID_PRIVATE_KEY: VAPID_PRIVATE }
+
+  let errorSpy: ReturnType<typeof vi.spyOn>
+  let warnSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    errorSpy.mockRestore()
+    warnSpy.mockRestore()
+  })
+
+  it('production + pair + VAPID_SUBJECT unset → NO provider, honest refusal detail, ONE loud error naming the fix', () => {
+    const res = resolvePushChannel({ ...PAIR, NODE_ENV: 'production' })
+    expect(res.provider).toBeNull()
+    expect(res.refusalDetail).toContain('Web push refused')
+    expect(res.refusalDetail).toContain('VAPID_SUBJECT is unset in production')
+    expect(res.refusalDetail).toContain('nothing sent')
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    // The line is actionable: names the env key, the fail-closed state, a
+    // real-contact example. (json log mode in production — substring match.)
+    const line = String(errorSpy.mock.calls[0]?.[0] ?? '')
+    expect(line).toContain('VAPID_SUBJECT')
+    expect(line).toMatch(/FAILS CLOSED/i)
+    expect(line).toContain('mailto:')
+    expect(warnSpy).not.toHaveBeenCalled()
+    // once-per-process: a second resolution is still refused, but silent.
+    expect(resolvePushChannel({ ...PAIR, NODE_ENV: 'production' }).provider).toBeNull()
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('production + pair + still the localhost default → refused the same way, with its own reason', () => {
+    const res = resolvePushChannel({ ...PAIR, NODE_ENV: 'production', VAPID_SUBJECT: DEFAULT_VAPID_SUBJECT })
+    expect(res.provider).toBeNull()
+    expect(res.refusalDetail).toContain('mailto:admin@localhost default in production')
+    expect(res.refusalDetail).toContain('nothing sent')
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expect(String(errorSpy.mock.calls[0]?.[0] ?? '')).toContain('mailto:admin@localhost')
+  })
+
+  it('production + pair + a real subject → the provider resolves and SENDS with that subject (configured → used)', async () => {
+    sendMock.mockResolvedValueOnce({ statusCode: 201, body: '', headers: {} })
+    const provider = getPushProvider({ ...PAIR, NODE_ENV: 'production', VAPID_SUBJECT: 'mailto:ops@mjengo.example' })
+    expect(provider).toBeInstanceOf(WebPushProvider)
+    const result = await provider!.send({
+      to: ENDPOINT,
+      title: 'Milestone released',
+      body: 'KSh 1.2M released',
+      projectId: 'proj-1',
+      kind: 'milestone',
+      pushSubscription: { endpoint: ENDPOINT, keys: SUB_KEYS },
+    })
+    expect(result.ok).toBe(true)
+    const [, , options] = sendMock.mock.calls[0] as [unknown, unknown, { vapidDetails: { subject: string } }]
+    expect(options.vapidDetails.subject).toBe('mailto:ops@mjengo.example')
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('dev + pair + unset → the labeled fallback subject IS used, with ONE warning (the NEXTAUTH_SECRET dev style)', async () => {
+    sendMock.mockResolvedValueOnce({ statusCode: 201, body: '', headers: {} })
+    const provider = getPushProvider({ ...PAIR, NODE_ENV: 'development' })
+    expect(provider).toBeInstanceOf(WebPushProvider)
+    await provider!.send({
+      to: ENDPOINT,
+      title: 't',
+      body: 'b',
+      projectId: 'proj-1',
+      kind: 'milestone',
+      pushSubscription: { endpoint: ENDPOINT, keys: SUB_KEYS },
+    })
+    const [, , options] = sendMock.mock.calls[0] as [unknown, unknown, { vapidDetails: { subject: string } }]
+    expect(options.vapidDetails.subject).toBe(DEFAULT_VAPID_SUBJECT)
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    const line = String(warnSpy.mock.calls[0]?.[0] ?? '')
+    expect(line).toContain('VAPID_SUBJECT')
+    expect(line).toContain('mailto:admin@localhost')
+    expect(line).toContain('production fails')
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('dev + pair + the default EXPLICITLY set → same labeled fallback, its own one-time warning', async () => {
+    sendMock.mockResolvedValueOnce({ statusCode: 201, body: '', headers: {} })
+    const provider = getPushProvider({ ...PAIR, NODE_ENV: 'development', VAPID_SUBJECT: DEFAULT_VAPID_SUBJECT })
+    expect(provider).toBeInstanceOf(WebPushProvider)
+    await provider!.send({
+      to: ENDPOINT,
+      title: 't',
+      body: 'b',
+      projectId: 'proj-1',
+      kind: 'milestone',
+      pushSubscription: { endpoint: ENDPOINT, keys: SUB_KEYS },
+    })
+    const [, , options] = sendMock.mock.calls[0] as [unknown, unknown, { vapidDetails: { subject: string } }]
+    expect(options.vapidDetails.subject).toBe(DEFAULT_VAPID_SUBJECT)
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(String(warnSpy.mock.calls[0]?.[0] ?? '')).toContain('mailto:admin@localhost')
+  })
+})
+
+describe('getVapidPublicKey — the browser config probe refuses with the channel (issue #354)', () => {
+  const PAIR = { VAPID_PUBLIC_KEY: VAPID_PUBLIC, VAPID_PRIVATE_KEY: VAPID_PRIVATE }
+
+  it('production + pair + unset subject → null (configured:false — the UI must not offer a dead subscription)', () => {
+    // Note: the once-per-process posture error already fired at the first
+    // resolution in this process (the resolvePushChannel suite above), so
+    // this asserts the PROBE's refusal, not the log line.
+    expect(getVapidPublicKey({ ...PAIR, NODE_ENV: 'production' })).toBeNull()
+  })
+
+  it('production + pair + the localhost default → null as well', () => {
+    expect(getVapidPublicKey({ ...PAIR, NODE_ENV: 'production', VAPID_SUBJECT: DEFAULT_VAPID_SUBJECT })).toBeNull()
+  })
+
+  it('production + pair + a real subject → the public key (the channel can send)', () => {
+    expect(getVapidPublicKey({ ...PAIR, NODE_ENV: 'production', VAPID_SUBJECT: 'mailto:ops@mjengo.example' })).toBe(
+      VAPID_PUBLIC,
+    )
+  })
+
+  it('non-production + pair + unset subject → the key (the labeled fallback keeps dev usable)', () => {
+    expect(getVapidPublicKey({ ...PAIR, NODE_ENV: 'development' })).toBe(VAPID_PUBLIC)
+    expect(getVapidPublicKey({ ...PAIR })).toBe(VAPID_PUBLIC) // no NODE_ENV at all
+  })
+
+  it('no pair → null in every runtime (unchanged — the pre-#354 rule)', () => {
+    expect(getVapidPublicKey({ NODE_ENV: 'production' })).toBeNull()
+    expect(getVapidPublicKey({ NODE_ENV: 'development' })).toBeNull()
+  })
+})
+
+describe('notify() with opts.push in production — the subject refusal lands honestly in the row (issue #354)', () => {
+  let prevNodeEnv: string | undefined
+  let errorSpy: ReturnType<typeof vi.spyOn>
+  let warnSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    prevNodeEnv = process.env.NODE_ENV
+    process.env.NODE_ENV = 'production'
+    process.env.VAPID_PUBLIC_KEY = VAPID_PUBLIC
+    process.env.VAPID_PRIVATE_KEY = VAPID_PRIVATE
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = prevNodeEnv
+    errorSpy.mockRestore()
+    warnSpy.mockRestore()
+  })
+
+  it('pair set, subject unset → row stays logged with the refusal reason; web-push NEVER called; subscription kept', async () => {
+    seedUser('u-1')
+    seedPush()
+    const { id } = await notify('proj-1', 'Milestone released', 'KSh 1.2M released', {
+      kind: 'milestone',
+      push: { userId: 'u-1' },
+    })
+    expect(sendMock).not.toHaveBeenCalled()
+    expect(row(id).deliveryStatus).toBe('logged')
+    expect(row(id).deliveredAt).toBeNull()
+    expect(String(row(id).deliveryDetail)).toContain('Web push refused')
+    expect(String(row(id).deliveryDetail)).toContain('VAPID_SUBJECT is unset in production')
+    expect(String(row(id).deliveryDetail)).toContain('nothing sent')
+    // The stored subscription survives — it is the address book, not a send log.
+    expect(state.pushSubscriptions.size).toBe(1)
+  })
+
+  it('pair set, subject still the localhost default → the same refusal with its own reason', async () => {
+    process.env.VAPID_SUBJECT = DEFAULT_VAPID_SUBJECT
+    seedUser('u-1')
+    seedPush()
+    const { id } = await notify('proj-1', 't', 'b', { kind: 'milestone', push: { userId: 'u-1' } })
+    expect(sendMock).not.toHaveBeenCalled()
+    expect(row(id).deliveryStatus).toBe('logged')
+    expect(String(row(id).deliveryDetail)).toContain('mailto:admin@localhost default in production')
+    expect(state.pushSubscriptions.size).toBe(1)
+  })
+
+  it('pair + a real subject → production is NOT blanket-refused: the send proceeds and the row records it', async () => {
+    process.env.VAPID_SUBJECT = 'mailto:ops@mjengo.example'
+    seedUser('u-1')
+    seedPush()
+    sendMock.mockResolvedValueOnce({ statusCode: 201, body: '', headers: {} })
+    const { id } = await notify('proj-1', 'Milestone released', 'KSh 1.2M released', {
+      kind: 'milestone',
+      push: { userId: 'u-1' },
+    })
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    const [, , options] = sendMock.mock.calls[0] as [unknown, unknown, { vapidDetails: { subject: string } }]
+    expect(options.vapidDetails.subject).toBe('mailto:ops@mjengo.example')
+    expect(row(id).deliveryStatus).toBe('sent')
+    expect(row(id).deliveredAt).toBeInstanceOf(Date)
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(warnSpy).not.toHaveBeenCalled()
   })
 })

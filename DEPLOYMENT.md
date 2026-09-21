@@ -87,9 +87,14 @@ production never reads it. Full per-variable commentary lives in
 `.env.example` (each block is written to be copy-paste-safe).
 
 **Web push (Wave 5, shipped):** the optional VAPID
-pair (`VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY`, optional `VAPID_SUBJECT`)
-enables push sends through the same env-gated, fail-closed pattern — unset,
-subscriptions store intent and sends stay `logged`.
+pair (`VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY`) enables push sends through
+the same env-gated, fail-closed pattern — unset, subscriptions store intent
+and sends stay `logged`. `VAPID_SUBJECT` (the VAPID spec's abuse-contact)
+is **required in production** (MD-2, issue #354): unset or still the
+labeled `mailto:admin@localhost` default, the channel fails closed there —
+sends stay `logged` with the refusal reason, the browser config probe
+answers `{ configured: false }`, and one loud `log.error` names the fix;
+dev/test keeps the labeled fallback with a one-time warning.
 
 **The Wave-6 AI surface (no env vars — flag + config file):** the `ai`
 feature flag **ships dark** (DEFAULT OFF in `FLAG_DEFAULTS`, seeded
