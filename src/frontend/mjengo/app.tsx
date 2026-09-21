@@ -191,6 +191,29 @@ export function MjengoApp() {
     setTab(landingForRole(role))
   }, [status, session])
 
+  // ---------------- Store hydration gate (issue #351) ----------------
+  // The owner store now rehydrates from indexedDB (async): for the few
+  // milliseconds between first paint and the hydration merge, `data` is
+  // still null — without this gate, an offline relaunch whose session
+  // fetch fails fast would flash the LOGIN screen before the persisted
+  // snapshot lands and the offline boot (issue #78) arms. Honest rule: we
+  // do not KNOW there is no offline snapshot until hydration says so, so
+  // the auth gates hold the boot skeleton until then. Inert media (node /
+  // SSR / no storage → zustand persist never engages) count as hydrated —
+  // there is nothing to wait for.
+  const [storeHydrated, setStoreHydrated] = useState(() => {
+    try {
+      return (useMjengo as unknown as { persist?: { hasHydrated(): boolean } }).persist?.hasHydrated() ?? true
+    } catch {
+      return true
+    }
+  })
+  useEffect(() => {
+    const persist = (useMjengo as unknown as { persist?: { hasHydrated(): boolean; onFinishHydration(cb: () => void): () => void } }).persist
+    if (!persist || persist.hasHydrated()) return
+    return persist.onFinishHydration(() => setStoreHydrated(true))
+  }, [])
+
   useEffect(() => {
     setOrigin(window.location.origin)
   }, [])
@@ -378,7 +401,10 @@ export function MjengoApp() {
     !shareBooting &&
     shouldOfflineBoot({ status, authTimedOut, online, hasData: Boolean(data) })
 
-  if (status === 'loading' && !offlineBoot) {
+  // Store-hydration hold (#351): while the indexedDB rehydrate is still in
+  // flight we cannot know whether an offline snapshot exists — hold the boot
+  // skeleton (never flash the login screen) until hydration finishes.
+  if ((status === 'loading' || !storeHydrated) && !offlineBoot) {
     return <BootSkeleton />
   }
   if (status === 'unauthenticated' && !isClientSurface && !shareBooting && !offlineBoot) {

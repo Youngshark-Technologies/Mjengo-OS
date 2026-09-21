@@ -249,9 +249,10 @@ export function SyncOutboxPanel() {
                 : t('outbox.metaQueued', { count: outbox.length })}
             {lastSyncAt ? ` · ${t('outbox.lastSync', { when: formatDistanceToNow(new Date(lastSyncAt), { addSuffix: true }) })}` : ''}
           </SheetDescription>
-          {/* #192: the honest device-local note — the queue lives in THIS
-              browser's localStorage (spec §40; per-device by architecture,
-              issue #192's audit note), not in the cloud and not on other
+          {/* #192/#351: the honest device-local note — the queue lives in THIS
+              browser's storage (spec §40; per-device by architecture, issue
+              #192's audit note — since #351 the indexedDB record the service
+              worker can also read), not in the cloud and not on other
               devices. stone-600 on white (6.99:1) — the FE-4 contrast rule. */}
           <p className="flex items-center gap-1.5 text-[11px] text-stone-600">
             <Smartphone className="w-3 h-3 shrink-0" aria-hidden /> {t('outbox.deviceLocal')}

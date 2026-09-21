@@ -7,7 +7,7 @@
  *     precached offline.html. In PRODUCTION the '/' shell is cached on every
  *     successful network fetch and served only when the network fails, so an
  *     offline RELOAD boots the real app (data + outbox live client-side in
- *     localStorage). In DEV the v2 no-stale-shell rule stays: HTML is never
+ *     indexedDB). In DEV the v2 no-stale-shell rule stays: HTML is never
  *     cached and never served from cache — the dev server recompiles the same
  *     URL into different HTML on every edit.
  *   - /photos/**     → cache-first with an LRU cap (~100 entries, issue #78 /
@@ -22,13 +22,13 @@
  *     are stable-named but recompiled, so cache-first would serve stale code.
  *   - Non-GET and HMR paths → untouched, straight to the network.
  *
- * Background Sync (issue #193): queuing an outbox item registers the
+ * Background Sync (issues #193/#351): queuing an outbox item registers the
  * one-shot 'mjengoos-outbox' tag (feature-detected, Chromium only); when
  * connectivity returns — even with no page open — the browser fires the
- * `sync` event and the handler below asks any open client to drain. A
- * CLOSED app defers honestly to the next app open: the outbox lives in the
- * page's localStorage, which this worker cannot read (see the sync section
- * at the bottom for the full posture).
+ * `sync` event and the handler below asks any open client to drain, or —
+ * with no client open — drains the HEADLESS-SAFE queued items itself from
+ * the indexedDB record the app persists to (money/session-bound kinds
+ * refuse honestly; see the sync section at the bottom for the full policy).
  */
 
 const VERSION = 'mjengoos-2f-3'
@@ -433,7 +433,7 @@ self.addEventListener('message', (event) => {
   }
 })
 
-// ---------------- sync (#193 — Background Sync outbox drain) ---------------
+// ---------------- sync (#193/#351 — Background Sync outbox drain) ---------------
 //
 // The Background Sync half of the offline outbox. When the app queues an
 // outbox item it registers the one-shot tag 'mjengoos-outbox' (the
@@ -446,35 +446,249 @@ self.addEventListener('message', (event) => {
 // re-launches this worker and fires 'sync', retrying on its own backoff
 // while the tag's promise rejects.
 //
-// HONEST LIMIT (the issue's documented posture): the outbox lives in the
-// page's localStorage, which this worker CANNOT read, and the drain logic
-// (auth, per-item §41 conflict semantics, #132 retry schedules) lives in
-// the app store. So this handler's job is to ASK, not to drain: postMessage
-// { type: 'mjengoos:drain' } at every open window client — an open page
-// runs syncNow() (app.tsx's container listener, guarded by
-// isDrainRequestMessage semantics). With NO client open there is nothing
-// this worker can honestly do: the waitUntil promise RESOLVES (Chromium
-// then consumes the one-shot tag instead of pointlessly re-firing it at a
-// closed app on its own backoff — the next enqueue re-registers), and the
-// drain defers honestly to the next app open (boot + setOnline + the #191
-// drainAfterAuth path all drain the queue). A true closed-app drain
-// requires moving the outbox to SW-readable storage (IndexedDB) — the
-// persistence issue, deliberately out of scope here.
+// #351 — THE CLOSED-APP DRAIN IS REAL NOW. The outbox lives in indexedDB
+// (lib/outbox-idb.ts — the same record the app's zustand persist writes),
+// which this worker reads on the same origin:
+//   · a client IS open → postMessage { type: 'mjengoos:drain' } at every
+//     window client (app.tsx's container listener, guarded by
+//     isDrainRequestMessage semantics) — the app drains with the full
+//     store, toasts and §41 resolution UI, and this worker stays out of it;
+//   · NO client open → drain the HEADLESS-SAFE pending items straight from
+//     the indexedDB record: POST /api/sync with the same body shape the
+//     app's drain sends (the session cookie rides the same-origin fetch),
+//     then write the per-item §40 outcomes back. The allowlist below is the
+//     policy: the non-financial field + evidence families whose worst-case
+//     closed-app outcome is an idempotent replay (§57 item-id markers), a
+//     clean apply, or a human-decides conflict that parks in the sync sheet
+//     on the next app open — never a money movement, never a silent
+//     overwrite.
+//
+// WHAT STILL REFUSES HEADLESS (deliberate, fail-closed — mirrored from
+// sw-handlers.ts, pinned by tests reading both files):
+//   · MONEY rows (escrow.*, milestone.decide, variation.decide,
+//     invoice.pay/decide, wages.pay, payment.*, wallet.*, expense.create,
+//     transaction.delete, project.update): money needs a human watching the
+//     outcome — the #150 waiting-worklist hard stop, same reasoning.
+//   · share.regenerate (the new link exists only in the drain response),
+//     and the supply/marketplace/AI/land/professionals/inventory/intel
+//     families (role-pinned sessions, flag gates, ephemeral payloads,
+//     high-stakes rows; the supplier portal's outbox is a separate
+//     store/session by design and is never drained through this record).
+//   · an expired session (401): the batch is marked auth-blocked (#191
+//     semantics — it waits for a sign-in, never auto-retried blindly).
+//   · a network failure mid-drain: the waitUntil promise REJECTS so
+//     Chromium re-fires the one-shot tag on its own backoff; the items were
+//     never marked, so the retry re-sends them and §57 idempotency bounds
+//     any double-send.
+//   · the LEGACY localStorage queue (pre-#351 installs): localStorage is
+//     invisible to this worker, so until the first post-upgrade app open
+//     adopts it (lib/outbox-idb.ts), this worker honestly drains nothing.
 
 const OUTBOX_SYNC_TAG = 'mjengoos-outbox'
 const DRAIN_REQUEST_MESSAGE_TYPE = 'mjengoos:drain'
+
+// The indexedDB record the app persists the owner store under — mirrors
+// sw-handlers.ts (OUTBOX_DB_* + OUTBOX_DB_RECORD_KEY) and lib/outbox-idb.ts;
+// a static script cannot import them, and tests pin the literals equal.
+const OUTBOX_DB_NAME = 'mjengoos-outbox'
+const OUTBOX_DB_VERSION = 1
+const OUTBOX_DB_STORE = 'kv'
+const OUTBOX_DB_RECORD_KEY = 'mjengo-os-store'
+
+// The headless-safe allowlist — the exact policy list from sw-handlers.ts
+// (HEADLESS_DRAIN_TYPES). Fail-closed by construction: anything not listed
+// stays 'pending' and drains on the next app open.
+const HEADLESS_DRAIN_TYPES = [
+  'attendance.checkin', 'attendance.setStatus', 'attendance.record', 'attendance.exception', 'attendance.override',
+  'task.create', 'task.update', 'task.delete', 'task.assign', 'task.block', 'task.unblock', 'task.verify', 'task.complete',
+  'phase.create', 'phase.update',
+  'worker.create', 'worker.update',
+  'material.create',
+  'delivery.create', 'delivery.assign', 'delivery.transit', 'delivery.arrive',
+  'consumption.create',
+  'alert.ack', 'comment.add', 'comment.resolve',
+  'notification.read', 'notification.readAll',
+  'photo.apply', 'photo.zone', 'zone.create', 'zone.delete',
+]
+
+const HEADLESS_AUTH_BLOCKED_MESSAGE = 'Session expired — this action waits for a sign-in.'
+const HEADLESS_SERVER_REFUSAL_MESSAGE = 'Sync refused while the app was closed.'
+const SYNC_HISTORY_CAP = 50 // mirrors lib/outbox.ts
+const AUTO_RETRY_MAX_ATTEMPTS = 3 // mirrors lib/outbox.ts (#132)
+const AUTO_RETRY_DELAYS_MS = [5_000, 30_000, 120_000] // mirrors lib/outbox.ts
+
+/** #132 — the bounded auto-retry stamp a headless failure schedules (mirror of withAutoRetrySchedule). */
+function withAutoRetryScheduleHeadless(o) {
+  const attempts = o.autoAttempts ?? 0
+  if (attempts >= AUTO_RETRY_MAX_ATTEMPTS) return {}
+  const delay = AUTO_RETRY_DELAYS_MS[Math.min(attempts, AUTO_RETRY_DELAYS_MS.length - 1)]
+  return { autoAttempts: attempts + 1, nextAttemptAt: Date.now() + delay }
+}
+
+/** Is this persisted item a pending action this worker may replay headless? */
+function isHeadlessDrainable(item) {
+  return (item.syncStatus ?? 'pending') === 'pending' && HEADLESS_DRAIN_TYPES.includes(item.type)
+}
+
+/** One indexedDB request → promise (the entire raw-API surface this drain uses). */
+function idbRequestAsPromise(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error ?? new Error('indexedDB request failed'))
+  })
+}
+
+function openOutboxDb() {
+  const request = indexedDB.open(OUTBOX_DB_NAME, OUTBOX_DB_VERSION)
+  request.onupgradeneeded = () => {
+    const db = request.result
+    if (!db.objectStoreNames.contains(OUTBOX_DB_STORE)) db.createObjectStore(OUTBOX_DB_STORE)
+  }
+  return idbRequestAsPromise(request)
+}
+
+function idbGet(db, key) {
+  return idbRequestAsPromise(
+    db.transaction(OUTBOX_DB_STORE, 'readonly').objectStore(OUTBOX_DB_STORE).get(key),
+  ).then((v) => v ?? null)
+}
+
+function idbPut(db, key, value) {
+  return idbRequestAsPromise(
+    db.transaction(OUTBOX_DB_STORE, 'readwrite').objectStore(OUTBOX_DB_STORE).put(value, key),
+  ).then(() => undefined)
+}
+
+/**
+ * The closed-app drain (inline mirror of sw-handlers.ts drainOutboxHeadless
+ * — the canonical, unit-tested statement; tests pin this wiring by reading
+ * this file). Throws ONLY on network/indexedDB failure so the sync event's
+ * waitUntil rejects and Chromium retries the tag.
+ */
+async function drainOutboxHeadlessSw() {
+  const db = await openOutboxDb()
+  const raw = await idbGet(db, OUTBOX_DB_RECORD_KEY)
+  if (raw === null) return
+  let snapshot
+  try {
+    snapshot = JSON.parse(raw)
+  } catch (e) {
+    // Corrupt record — the app's rehydrate owns surfacing it (degraded).
+    return
+  }
+  const outbox = Array.isArray(snapshot.state && snapshot.state.outbox) ? snapshot.state.outbox : []
+  const batch = outbox.filter(isHeadlessDrainable)
+  if (batch.length === 0) return
+
+  // The same body shape the app's drain sends; same-origin fetch carries
+  // the session cookie exactly like the app's.
+  const res = await fetch('/api/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      actions: batch.map(({ id, type, payload, projectId }) => ({ id, type, payload, projectId })),
+    }),
+  })
+
+  const writeBack = async (next) => {
+    await idbPut(db, OUTBOX_DB_RECORD_KEY, JSON.stringify(next))
+  }
+
+  if (res.status === 401) {
+    // #191 semantics: the batch waits for a sign-in — failed + authBlocked,
+    // NO auto-retry schedule (retrying without a session just 401s again).
+    const now = Date.now()
+    const ids = new Set(batch.map((b) => b.id))
+    let count = 0
+    snapshot.state.outbox = outbox.map((o) => {
+      if (!ids.has(o.id) || (o.syncStatus ?? 'pending') === 'synced') return o
+      count += 1
+      return { ...o, syncStatus: 'failed', authBlocked: true, lastError: HEADLESS_AUTH_BLOCKED_MESSAGE, retryCount: (o.retryCount ?? 0) + 1 }
+    })
+    await writeBack(snapshot)
+    console.warn(`[mjengoos-outbox] headless drain auth-blocked ${count} item(s) — waiting for a sign-in`)
+    return
+  }
+
+  // Defensive parse: a non-JSON error body (proxy 502 page) must not fall
+  // into the network-failure path — the server DID answer.
+  const json = await res.json().catch(() => null)
+  if (!json || json.ok !== true) {
+    // Server-level refusal (500/413/429/403…): surfaced per-item as failed
+    // with the reason — never silently re-queued (the app's #191 discipline).
+    const reason =
+      json && typeof json.error === 'string' && json.error.trim() ? json.error : HEADLESS_SERVER_REFUSAL_MESSAGE
+    const ids = new Set(batch.map((b) => b.id))
+    let count = 0
+    snapshot.state.outbox = outbox.map((o) => {
+      if (!ids.has(o.id) || (o.syncStatus ?? 'pending') === 'synced') return o
+      count += 1
+      return { ...o, syncStatus: 'failed', lastError: reason, retryCount: (o.retryCount ?? 0) + 1, ...withAutoRetryScheduleHeadless(o) }
+    })
+    await writeBack(snapshot)
+    console.warn(`[mjengoos-outbox] headless drain refused: ${count} item(s) failed (${reason})`)
+    return
+  }
+
+  // Per-item results — the §40 lifecycle transitions the app's syncNow
+  // applies (synced → capped history; failed → lastError + bounded #132
+  // schedule; conflict → §41 metadata).
+  const now = Date.now()
+  const results = Array.isArray(json.results) ? json.results : []
+  const byId = new Map(results.map((r) => [r.id, r]))
+  const marked = outbox.map((o) => {
+    const r = byId.get(o.id)
+    if (!r) return o // not part of this drain
+    if (r.ok) return { ...o, syncStatus: 'synced', syncedAt: now, lastError: undefined }
+    if ('conflict' in r) {
+      return {
+        ...o,
+        syncStatus: 'conflict',
+        conflictReason: r.reason,
+        conflictRule: r.rule,
+        conflictAt: now,
+        conflictStatus: r.status,
+        conflictServerVersion: r.serverVersion,
+        conflictBaseVersion: r.baseVersion,
+        suggestion: r.suggestion,
+      }
+    }
+    return {
+      ...o,
+      syncStatus: 'failed',
+      lastError: r.error,
+      retryCount: (o.retryCount ?? 0) + 1,
+      ...withAutoRetryScheduleHeadless(o),
+    }
+  })
+  const live = marked.filter((o) => o.syncStatus !== 'synced')
+  const finished = marked.filter((o) => o.syncStatus === 'synced')
+  snapshot.state.outbox = live
+  snapshot.state.syncHistory = [...(snapshot.state.syncHistory ?? []), ...finished].slice(-SYNC_HISTORY_CAP)
+  await writeBack(snapshot)
+  console.info(
+    `[mjengoos-outbox] headless drain: ${finished.length} synced, ` +
+      `${live.filter((o) => o.syncStatus === 'failed').length} failed, ` +
+      `${live.filter((o) => o.syncStatus === 'conflict').length} conflict(s)`,
+  )
+}
 
 self.addEventListener('sync', (event) => {
   // Only our tag — anything else another layer registered is not ours to act on.
   if (event.tag !== OUTBOX_SYNC_TAG) return
   event.waitUntil(
     (async () => {
-      // Ask every open app window to drain (the notificationclick client
-      // idiom): this worker cannot read the outbox or run the drain itself.
+      // A client IS open → ask it to drain (the full-store drain with toasts
+      // and §41 resolution UI); this worker stays out of the way.
       const windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
-      await Promise.all(
-        windowClients.map((client) => client.postMessage({ type: DRAIN_REQUEST_MESSAGE_TYPE })),
-      )
+      if (windowClients.length > 0) {
+        await Promise.all(
+          windowClients.map((client) => client.postMessage({ type: DRAIN_REQUEST_MESSAGE_TYPE })),
+        )
+        return
+      }
+      // NO client open → the closed-app drain from the indexedDB record.
+      await drainOutboxHeadlessSw()
     })(),
   )
 })
