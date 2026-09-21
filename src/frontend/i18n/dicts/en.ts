@@ -3905,6 +3905,19 @@ export const enDict = {
   'sw.update.reload': 'Reload',
   'sw.update.later': 'Later',
 
+  // ------------------------------------------- #357 · PWA install cue (FE-11)
+  // The install half of FE-11 (#148 landed the staleness half). Two honest
+  // variants: the browser-native cue (beforeinstallprompt captured — the
+  // Install button runs the browser's own dialog) and the iOS/Safari
+  // instructions-only hint (the event never fires there — no button, the
+  // real steps only). Every other browser gets no cue at all.
+  'install.cue.aria': 'Install app',
+  'install.cue.body': 'Install MjengoOS — full screen, works offline, opens from your home screen.',
+  'install.cue.install': 'Install',
+  'install.cue.later': 'Not now',
+  'install.ios.body': 'To install on iPhone or iPad: in Safari, tap Share, then "Add to Home Screen".',
+  'install.ios.gotIt': 'Got it',
+
   // --------------------------------------------- #192 · persistence hardening
   // The localStorage-degradation banners (app.tsx) + the outbox sheet's
   // device-local note (sync-outbox-panel.tsx). degraded = writes are
