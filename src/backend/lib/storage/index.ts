@@ -23,8 +23,9 @@ import { createS3CompatDriver } from './s3-compat'
 import { localDiskDriver } from './local-disk'
 import type { StorageAdapter } from './types'
 
-export type { ObjectRead, ObjectStat, PresignedPut, StorageAdapter, PresignCapableAdapter } from './types'
+export type { ObjectRead, ObjectStat, ObjectPrefix, PresignedPut, StorageAdapter, PresignCapableAdapter } from './types'
 export { asPresignCapable } from './types'
+export { sniffMagicBytes, MAGIC_SNIFF_PREFIX_BYTES, type SniffedMagicType } from './magic-sniff'
 export { createLocalDiskDriver, localDiskDriver } from './local-disk'
 export { createS3CompatDriver, DEFAULT_GET_PRESIGN_EXPIRES_SEC } from './s3-compat'
 export {

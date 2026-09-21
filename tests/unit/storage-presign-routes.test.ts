@@ -343,9 +343,12 @@ describe('POST /api/upload/confirm — the full client-direct flow', () => {
     const uploadUrl = String(presigned.uploadUrl)
 
     // The client PUTs straight to object storage with the advisory headers.
+    // (SEC-8: the GET branch answers the confirm route's readPrefix — the
+    // ranged read-back the magic-number sniff runs on.)
     fetchByMethod({
       PUT: () => new Response(null, { status: 200 }),
       HEAD: () => new Response(null, { status: 200, headers: { 'content-length': String(PNG_BYTES.length), 'content-type': 'image/png' } }),
+      GET: () => new Response(new Uint8Array(PNG_BYTES), { status: 206, headers: { 'content-type': 'image/png' } }),
     })
     const putRes = await fetch(uploadUrl, { method: 'PUT', headers: (presigned.headers as Record<string, string>), body: new Uint8Array(PNG_BYTES) })
     expect(putRes.ok).toBe(true)
@@ -389,6 +392,7 @@ describe('POST /api/upload/confirm — the full client-direct flow', () => {
     setStorageDriverForTests(S3_DRIVER_NO_BASE)
     fetchByMethod({
       HEAD: () => new Response(null, { status: 200, headers: { 'content-length': '11', 'content-type': 'image/png' } }),
+      GET: () => new Response(new Uint8Array(PNG_BYTES), { status: 206, headers: { 'content-type': 'image/png' } }),
     })
     const res = await confirmHandler(req('/api/upload/confirm', { key: 'upp-1712345678-abcd12.png', category: 'other' }))
     expect(res.status).toBe(200)
@@ -469,6 +473,7 @@ describe('POST /api/upload/confirm — idempotent on the object key (#159 / API-
   function headOk() {
     fetchByMethod({
       HEAD: () => new Response(null, { status: 200, headers: { 'content-length': '11', 'content-type': 'image/png' } }),
+      GET: () => new Response(new Uint8Array(PNG_BYTES), { status: 206, headers: { 'content-type': 'image/png' } }),
     })
   }
 

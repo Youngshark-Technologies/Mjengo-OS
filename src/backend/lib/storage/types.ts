@@ -59,6 +59,16 @@ export interface ObjectRead {
 }
 
 /**
+ * Result shape of the PREFIX-READ seam (register SEC-8 — the magic-number
+ * sniff source): the FIRST bytes of a stored object, without pulling the
+ * whole thing through the app. An EMPTY Buffer means "the object exists but
+ * is zero bytes" — a state upload-confirm must refuse on its own terms, so
+ * it is deliberately distinct from `null`, which still means "no such
+ * object".
+ */
+export type ObjectPrefix = Buffer
+
+/**
  * The storage adapter. `presignPut` / `presignGet` are OPTIONAL capabilities
  * (local disk cannot presign — its files are already served by the Next
  * server); `statObject` / `read` / `keyFor` are optional for the same reason
@@ -83,6 +93,14 @@ export interface StorageAdapter {
   statObject?(key: string): Promise<ObjectStat>
   /** Capability (issue #37): read the stored bytes for `key` back. null = no such object. */
   read?(key: string): Promise<ObjectRead | null>
+  /**
+   * Capability (register SEC-8): read the FIRST `maxBytes` bytes of the
+   * stored object for `key` — the magic-number sniff source. null = no such
+   * object; an EMPTY Buffer = the object exists but is zero bytes. Drivers
+   * SHOULD honor the prefix cheaply (S3: a ranged GET) instead of pulling
+   * the whole object through the app.
+   */
+  readPrefix?(key: string, maxBytes: number): Promise<ObjectPrefix | null>
   /**
    * Capability (issues #37 + #38): resolve a recorded `storageKey` (a
    * publicUrl THIS driver minted, or a legacy local path shape it serves)
