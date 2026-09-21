@@ -10,6 +10,7 @@ import {
 } from '@/backend/lib/webhook-secret-warning'
 import { captureError } from '@/backend/lib/errors/sink'
 import { currentRequestId, log, withRequestLogging } from '@/backend/lib/log'
+import { WHATSAPP_SIMULATION_VIEW, type WhatsappSimulationContent } from '@/shared/whatsapp-simulation'
 
 export const dynamic = 'force-dynamic'
 
@@ -103,6 +104,10 @@ const WHATSAPP_ACTION_ALLOWLIST = [
   'comment.add',
 ] as const satisfies ReadonlyArray<ActionType>
 
+/** The keyword grammar the POST handler matches (whole message, uppercased).
+ * Also the chip/keyword list SERVED to the simulation panel — one source. */
+const GRAMMAR_KEYWORDS = ['PRESENT', 'ABSENT', 'HALF', 'BALANCE', 'HELP'] as const
+
 type AllowedAction = (typeof WHATSAPP_ACTION_ALLOWLIST)[number]
 
 /** Raw-body cap mirroring POST /api/share's S2 gate (400, same family). */
@@ -122,6 +127,24 @@ function wa(text: string): NextResponse {
     status: 200,
     headers: { 'Content-Type': 'text/plain; charset=utf-8' },
   })
+}
+
+/**
+ * The SERVER-FED simulation content (session-2 register: "WhatsApp panel
+ * server-fed content") — GET /api/whatsapp?view=simulation serves this and
+ * the panel renders exactly it: the opening greeting (footer included, the
+ * same honesty label every reply carries), the keyword grammar chips, and
+ * the HELP reply verbatim. Conversation content belongs to the line, so it
+ * lives HERE on the server — the panel keeps no canned copy (its UI chrome
+ * stays in the frontend dicts, the #140 pattern). EN only, honestly: the
+ * line's replies are EN today, so the simulated conversation is too.
+ */
+function simulationContent(): WhatsappSimulationContent {
+  return {
+    greeting: `MjengoOS line ready. Reply HELP for keywords, or just send a note.${WHATSAPP_FOOTER}`,
+    keywords: [...GRAMMAR_KEYWORDS],
+    helpText: HELP_TEXT,
+  }
 }
 
 /**
@@ -392,8 +415,16 @@ export function POST(req: NextRequest): Promise<NextResponse> {
  * GET: the human-readable webhook contract (plain text, so a relay operator
  * can read it straight from the endpoint). Same fields the USSD route's GET
  * documents, rendered as text; see HELP_TEXT for the in-band grammar.
+ *
+ * GET ?view=simulation serves the SERVER-FED panel content instead (JSON):
+ * the greeting/keywords/helpText the WhatsApp simulation panel renders —
+ * session-2 register row "WhatsApp panel server-fed content". Every other
+ * query string keeps the text contract (the default a relay operator gets).
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (new URL(req.url).searchParams.get('view') === WHATSAPP_SIMULATION_VIEW) {
+    return NextResponse.json({ ok: true, simulation: simulationContent() })
+  }
   const doc = `MjengoOS WhatsApp webhook — CONTRACT (honest seam, no provider wired)
 
 POST /api/whatsapp

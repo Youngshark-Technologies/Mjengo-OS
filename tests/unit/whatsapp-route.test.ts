@@ -849,9 +849,14 @@ describe('honest failure copy — a gateway always gets text back', () => {
 
 // ------------------------------------------------------------ GET contract
 
+/** A GET request against the route (NextRequest, the route's new signature). */
+function waGet(url = 'http://localhost/api/whatsapp'): NextRequest {
+  return new NextRequest(url)
+}
+
 describe('GET /api/whatsapp — the contract doc (plain text)', () => {
   it('serves text/plain with the full relay contract', async () => {
-    const res = await whatsappGet()
+    const res = await whatsappGet(waGet())
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8')
     const doc = await res.text()
@@ -872,5 +877,60 @@ describe('GET /api/whatsapp — the contract doc (plain text)', () => {
     expect(doc).toContain('— MjengoOS sim')
     expect(doc).toContain('not registered')
     expect(doc).toContain('no provider wired') // the honesty claim, verbatim
+  })
+
+  it('an unknown query string keeps the text contract (only ?view=simulation is special)', async () => {
+    const res = await whatsappGet(waGet('http://localhost/api/whatsapp?view=other'))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8')
+    expect(await res.text()).toContain('POST /api/whatsapp')
+  })
+})
+
+// ------------------------------------------- #356 server-fed panel content
+
+describe('GET /api/whatsapp?view=simulation — the server-fed panel content (issue #356)', () => {
+  it('serves JSON { ok, simulation } with the greeting/keywords/helpText the panel renders', async () => {
+    const res = await whatsappGet(waGet('http://localhost/api/whatsapp?view=simulation'))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('application/json')
+    const body = (await res.json()) as {
+      ok?: boolean
+      simulation?: { greeting?: string; keywords?: string[]; helpText?: string }
+    }
+    expect(body.ok).toBe(true)
+    expect(body.simulation).toBeTruthy()
+    // The greeting is a real line message: honest sim footer included.
+    expect(String(body.simulation?.greeting)).toContain('HELP')
+    expect(String(body.simulation?.greeting).endsWith(FOOTER)).toBe(true)
+    // The keyword chips are the POST grammar, exactly and in order.
+    expect(body.simulation?.keywords).toEqual(['PRESENT', 'ABSENT', 'HALF', 'BALANCE', 'HELP'])
+    // The helpText is non-empty usage text and carries the same footer.
+    expect(String(body.simulation?.helpText).length).toBeGreaterThan(20)
+    expect(String(body.simulation?.helpText).endsWith(FOOTER)).toBe(true)
+  })
+
+  it('the served helpText is VERBATIM the reply a HELP text gets — the panel cannot drift from the line', async () => {
+    const served = (await (await whatsappGet(waGet('http://localhost/api/whatsapp?view=simulation'))).json()) as {
+      simulation?: { helpText?: string }
+    }
+    const reply = await whatsappPost(waReq(KAMAU, 'HELP'))
+    expect(reply.status).toBe(200)
+    expect(await reply.text()).toBe(String(served.simulation?.helpText))
+  })
+
+  it('every grammar keyword the chips serve is one the POST handler actually answers (each gets a 200 reply, not the free-text path)', async () => {
+    const served = (await (await whatsappGet(waGet('http://localhost/api/whatsapp?view=simulation'))).json()) as {
+      simulation?: { keywords?: string[] }
+    }
+    for (const kw of served.simulation?.keywords ?? []) {
+      const res = await whatsappPost(waReq(KAMAU, kw))
+      expect(res.status, `keyword ${kw}`).toBe(200)
+      const text = await res.text()
+      // Keyword replies are acknowledgments; the free-text path would have
+      // answered with the photo-note copy (or its honest no-photo refusal).
+      expect(text).not.toContain('not saved')
+      expect(text.endsWith(FOOTER)).toBe(true)
+    }
   })
 })
