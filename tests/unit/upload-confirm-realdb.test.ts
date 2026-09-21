@@ -79,10 +79,22 @@ const S3_DRIVER: StorageAdapter = createS3CompatDriver({
   fetchImpl: fetchMock as unknown as typeof fetch,
 })
 
+// The object the fixtures "uploaded": real PNG magic bytes (SEC-8 — the
+// confirm route now reads the object's first bytes back through the driver
+// and sniffs them; the HEAD fixture must be backed by a GET fixture carrying
+// an honest PNG header, or every confirm would rightly refuse).
+const PNG_PREFIX = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
+
 function headOk() {
   fetchMock.mockImplementation(((_url: string, init?: RequestInit) => {
     if ((init?.method ?? 'GET') === 'HEAD') {
-      return new Response(null, { status: 200, headers: { 'content-length': '11', 'content-type': 'image/png' } })
+      return new Response(null, {
+        status: 200,
+        headers: { 'content-length': String(PNG_PREFIX.length), 'content-type': 'image/png' },
+      })
+    }
+    if ((init?.method ?? 'GET') === 'GET') {
+      return new Response(new Uint8Array(PNG_PREFIX), { status: 206, headers: { 'content-type': 'image/png' } })
     }
     throw new Error(`unexpected fetch ${init?.method}`)
   }) as unknown as typeof fetch)

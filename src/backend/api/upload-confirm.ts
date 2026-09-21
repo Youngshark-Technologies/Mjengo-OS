@@ -6,13 +6,18 @@
 //
 // VERIFICATION IS THE POINT: a presigned URL is bearer-only for a few
 // minutes, but the ROW is the durable record — it must never describe an
-// object that was never uploaded. No magic-number sniffing happens here
-// (bytes are never proxied through the app in this flow); the honest
-// approximation is HEAD metadata: Content-Length for the cap, Content-Type
-// for the image contract. Content-Type on S3 is whatever the client's PUT
-// carried — the presign response's headers told it exactly what to send,
-// so a mismatch here is a client that ignored the contract, and the row is
-// refused with an explanation rather than created with a lie.
+// object that was never uploaded. Register SEC-8 closed the last gap here:
+// HEAD metadata alone was trusted, and Content-Type on S3 is whatever the
+// client's PUT carried (the presign response's headers told it exactly what
+// to send, but nothing enforced it) — a renamed non-image wearing an
+// image Content-Type used to confirm cleanly. The route now reads the
+// FIRST bytes of the stored object back through the driver's readPrefix
+// seam (a ranged GET / a prefix file read — never the whole object through
+// the app) and requires the magic number to match the key's server-minted
+// extension (sniffMagicBytes, src/backend/lib/storage/magic-sniff.ts). On
+// mismatch — including empty and truncated-header objects — the row is
+// refused with a specific explanation rather than created with a lie. The
+// recorded mimeType is the byte-VERIFIED type, not the client's header.
 //
 // IDEMPOTENT ON THE NATURAL KEY (issue #159 / audit API-8): this is the
 // S3/R2 deployment surface, and retries are EXPECTED there (that is why
@@ -54,6 +59,7 @@ import { z } from 'zod'
 import { db } from '@/backend/lib/db'
 import { route, genericError } from '@/backend/lib/route-kit'
 import { getStorageDriver } from '@/backend/lib/storage'
+import { MAGIC_SNIFF_PREFIX_BYTES, sniffMagicBytes } from '@/backend/lib/storage/magic-sniff'
 import { DOCUMENT_CATEGORIES } from '@/backend/modules/documents/types'
 
 const MAX_BYTES = 4 * 1024 * 1024 // same 4 MB cap as the photo path
@@ -62,6 +68,17 @@ const MAX_BYTES = 4 * 1024 * 1024 // same 4 MB cap as the photo path
 const UPP_KEY_RE = /^upp-\d+-[a-f0-9]{6}\.(png|jpg)$/
 
 const PHOTO_MIME_TYPES = new Set(['image/png', 'image/jpeg'])
+
+/**
+ * The byte-verified contract per server-minted key extension (SEC-8): the
+ * presign route minted the extension from the declared contentType, so the
+ * key — not the client's PUT headers — is the type this confirm proves
+ * against the actual bytes.
+ */
+const KEY_EXT_MIME: Record<'png' | 'jpg', 'image/png' | 'image/jpeg'> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+}
 
 const confirmBody = z.strictObject({
   key: z
@@ -161,6 +178,65 @@ export const POST = route(
       )
     }
 
+    // SEC-8 (magic-number sniff): everything above verified METADATA, and
+    // metadata is client-shaped — the PUT's Content-Type is an advisory
+    // header the store records verbatim. The row is the durable record, so
+    // the BYTES get the final word: read the object's first bytes back
+    // through the driver (a ranged GET on S3 — never the whole object
+    // through the app) and require the magic number to match the type the
+    // server-minted key promises. A driver that cannot read bytes back
+    // cannot have its uploads content-verified — honest 409, fail closed.
+    if (typeof driver.readPrefix !== 'function') {
+      return NextResponse.json(
+        {
+          error:
+            `Upload confirmation unavailable — storage driver "${driver.id}" ` +
+            `cannot read object bytes back for content verification (magic-number sniff)`,
+        },
+        { status: 409 },
+      )
+    }
+
+    const expectedMime = KEY_EXT_MIME[key.endsWith('.png') ? 'png' : 'jpg']
+    const prefix = await driver.readPrefix(key, MAGIC_SNIFF_PREFIX_BYTES)
+    if (prefix === null) {
+      // HEAD saw the object, the read did not — vanished in between (or a
+      // store that cannot serve it). The honest answer is "not confirmable
+      // right now", not a row minted on stale metadata.
+      return NextResponse.json(
+        {
+          error:
+            `The uploaded object for key "${key}" could not be read back for content ` +
+            `verification (present at HEAD time, absent on read) — retry the confirm, ` +
+            `or re-upload (POST /api/upload/presign) and confirm the new key`,
+        },
+        { status: 404 },
+      )
+    }
+    if (prefix.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            `Uploaded object for key "${key}" is empty (0 bytes) — expected ${expectedMime}; ` +
+            `upload rejected. PUT real file bytes before confirming.`,
+        },
+        { status: 400 },
+      )
+    }
+    const sniffed = sniffMagicBytes(prefix)
+    if (sniffed !== expectedMime) {
+      return NextResponse.json(
+        {
+          error:
+            `File content does not match its type: key "${key}" expects ${expectedMime}, ` +
+            `but the stored bytes look like ${
+              sniffed ?? 'no recognized file type (PNG, JPEG, WebP, GIF, PDF, HEIC)'
+            } — upload rejected. The Content-Type header is advisory; the bytes are the truth.`,
+        },
+        { status: 400 },
+      )
+    }
+
     // storageKey is the driver's PUBLIC URL (what the frontend renders, same
     // field semantics as every existing Attachment row). With S3_PUBLIC_BASE
     // it is stable forever; without it, it is a presigned GET with the SigV4
@@ -181,7 +257,10 @@ export const POST = route(
           uploadedBy: session.user.email,
           projectId: null,
           category,
-          mimeType: stat.contentType,
+          // SEC-8: the byte-VERIFIED type (=== expectedMime by the sniff
+          // above), never the client-declared HEAD value — the row describes
+          // what the bytes proved to be.
+          mimeType: expectedMime,
           sizeBytes: stat.sizeBytes,
           reviewStatus: 'pending', // the existing upload default — humans review
         },

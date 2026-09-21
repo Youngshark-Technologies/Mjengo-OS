@@ -14,7 +14,7 @@
 // doc-<ts>-<hex>.<ext>). Today's routes never wrote anything else; the
 // adapter just refuses to become a general-purpose file writer.
 
-import { mkdir, readFile, stat, writeFile } from 'fs/promises'
+import { mkdir, open, readFile, stat, writeFile } from 'fs/promises'
 import path from 'path'
 import type { ObjectRead, ObjectStat, StorageAdapter } from './types'
 
@@ -104,6 +104,24 @@ export function createLocalDiskDriver(opts: LocalDiskOptions = {}): StorageAdapt
       if (!bytes) return null
       const ext = key.split('.').pop() ?? ''
       return { bytes, contentType: EXT_MIME[ext] ?? null, sizeBytes: bytes.length }
+    },
+
+    // Prefix-read seam (register SEC-8 — the magic-number sniff source):
+    // open + read ONLY the first maxBytes (never the whole file into memory).
+    // null = no such object / unsafe key; an EMPTY Buffer = the file exists
+    // but is zero bytes — a state confirm refuses on its own terms.
+    async readPrefix(key: string, maxBytes: number): Promise<Buffer | null> {
+      const target = resolveTarget(key, photosDir, docsDir)
+      if (!target) return null
+      const handle = await open(path.join(target.dir, target.name), 'r').catch(() => null)
+      if (!handle) return null
+      try {
+        const buf = Buffer.alloc(Math.max(0, maxBytes))
+        const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
+        return buf.subarray(0, bytesRead)
+      } finally {
+        await handle.close()
+      }
     },
 
     // keyFor (issues #37 + #38): the inverse of publicUrl for the two URL

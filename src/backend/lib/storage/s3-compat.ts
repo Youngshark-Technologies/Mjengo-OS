@@ -177,6 +177,30 @@ export function createS3CompatDriver(config: S3CompatConfig): StorageAdapter {
       return { bytes, contentType: res.headers.get('content-type'), sizeBytes: bytes.length }
     },
 
+    // Prefix-read seam (register SEC-8 — the magic-number sniff source): a
+    // RANGED GET asks the store for exactly the first bytes (the SigV4
+    // presign covers host only, so the Range header rides along unsigned —
+    // the same advisory-header posture as the client's PUT Content-Type).
+    // 404 → null (no such object); 416 → the object exists but is EMPTY
+    // (a zero-byte object satisfies no range) → the empty Buffer, which
+    // confirm refuses on its own terms instead of conflating with missing;
+    // 200 (a store that ignored the Range) is capped to maxBytes locally.
+    async readPrefix(key: string, maxBytes: number): Promise<Buffer | null> {
+      const { url } = presign('GET', key, SERVER_OP_EXPIRES_SEC)
+      const res = await doFetch(url, {
+        method: 'GET',
+        headers: { Range: `bytes=0-${Math.max(0, maxBytes - 1)}` },
+      })
+      if (res.status === 404) return null
+      if (res.status === 416) return Buffer.alloc(0)
+      if (!res.ok) {
+        throw new Error(
+          `s3-compat read-prefix failed for key "${key}" (HTTP ${res.status} from ${host})`,
+        )
+      }
+      return Buffer.from(await res.arrayBuffer()).subarray(0, Math.max(0, maxBytes))
+    },
+
     // keyFor (issues #37 + #38): reverse publicUrl() for the URL shapes this
     // driver mints. Candidates: the configured public base (its path prefix,
     // when it has one) and the endpoint origin (the no-base presigned GET
