@@ -750,7 +750,7 @@ the README wins on current status); the live issue-level roadmap is the
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Module map + production migration roadmap |
 | [`docs/audit/`](./docs/audit/) | **Phase-0 baseline entry point** — start at [MASTER_AUDIT.md](./docs/audit/MASTER_AUDIT.md), the index over the 2026-09 production-readiness re-audit baselines (API, frontend, website, database, security, mock/demo, integration — one file per surface), the findings-register → issue crosswalk, and [TEST_BASELINE.md](./docs/audit/TEST_BASELINE.md), the living test baseline |
 | [docs/SUPABASE-DATABASE-DESIGN.md](./docs/SUPABASE-DATABASE-DESIGN.md) | Target-state Supabase/PostgreSQL design (68-table DDL, RLS policy matrix, storage, migration + rollback plan; ADR 0002) |
-| [docs/adr/](./docs/adr) | Architecture decision records — 0001 mobile scope (PWA-first), 0002 Supabase database, 0003 repo topology, 0007 next-auth v4→v5 migration plan, 0008 OpenAPI document scope |
+| [docs/adr/](./docs/adr) | Architecture decision records — 0001 mobile scope (PWA-first), 0002 Supabase database, 0003 repo topology, 0007 next-auth v4→v5 migration plan, 0008 OpenAPI document scope, 0009 observability OTel seam, 0010 soft-FK registry, 0011 BOQ line-level lineage, 0012 extraction triggers |
 | [docs/PRODUCT-BLUEPRINT.md](./docs/PRODUCT-BLUEPRINT.md) | Product vision document (aspirational — the README wins on current status) |
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Build/run/test/deploy operations guide |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Day-to-day contribution workflow: branches, gates, PR expectations |
