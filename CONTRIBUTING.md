@@ -51,18 +51,11 @@ Run the same gates CI runs:
 ```bash
 bun run lint          # eslint — 0 errors, 0 warnings
 bunx tsc --noEmit     # strict typecheck, 0 errors
-<<<<<<< HEAD
-bun run test          # vitest — the full unit suite (3,159 tests /
-                      #   143 files — counts as of 2026-09-27; re-run
-                      #   vitest for the current number; the living
-                      #   baseline is docs/audit/TEST_BASELINE.md)
-=======
-bun run test          # vitest — the full unit suite (3,171 tests /
-                      #   144 files — counts as of 2026-09-26; re-run
+bun run test          # vitest — the full unit suite (3,328 tests /
+                      #   154 files — counts as of 2026-09-21; re-run
                       #   vitest for the current number)
 bun run test:coverage # the same suite + coverage floors (issue #185) —
                       #   what CI runs; ~11% slower than the plain run
->>>>>>> c950497 (test(qa): vitest coverage config + documented critical-module thresholds (closes #185))
 ```
 
 All must pass locally (the coverage variant is what CI runs; the plain run
