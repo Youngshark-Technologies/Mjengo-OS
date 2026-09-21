@@ -7,6 +7,7 @@ two sides share ONE source of truth instead of drifting copies:
 src/shared/
   permissions.ts       # role → tab matrix (client UX mirror of guard.ts)
   client-actions.ts    # the CLIENT_ACTIONS allowlist (route + store share it)
+  ids.ts               # CSPRNG id/reference generation (MD-4 — both sides mint ids)
 ```
 
 ## permissions.ts — the role matrix
@@ -32,6 +33,24 @@ surface) may perform. Imported by BOTH sides of the wire — the server routes
 `src/frontend/hooks/use-mjengo.ts` re-exports it for the client store. Type-only
 dependency on `@/backend/lib/mjengo` (`ActionType`), so nothing server-side
 ever reaches a client bundle.
+
+## ids.ts — the CSPRNG id/reference seam (register MD-4, issue #350)
+
+Every user-visible id and reference in the app draws from ONE isomorphic
+CSPRNG seam (`crypto.getRandomValues` — a global in browsers, Node ≥ 19 and
+Bun, so server routes and client components run the same single code path;
+no `node:crypto` import that would break the client bundle). Consumers:
+escrow top-up / invoice-payment auto references
+(`autoPaymentReference()` → `MPESA-7XK2P4QA` style, the no-confusables
+alphabet), simulated-rail receipts (`randomReferenceSuffix()`), the offline
+outbox uid suffix (`randomChars()` + `BASE36_CHARSET`), and registry search
+refs (`randomIntInclusive()` → `CS/YYYY/NNNNNN`, format preserved).
+Rejection sampling keeps every draw uniform; if the runtime has no CSPRNG
+the helpers THROW — there is deliberately no Math.random fallback (a
+silently guessable money reference is worse than a loud error). Pinned by
+`tests/unit/csprng-ids.test.ts` (format/charset/uniqueness, the rejection
+mechanism against a stubbed getRandomValues, and a repo-wide
+no-`Math.random(`-in-`src/` sweep).
 
 ## Rules for adding files here
 

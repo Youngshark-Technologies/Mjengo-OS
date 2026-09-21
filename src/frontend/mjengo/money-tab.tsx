@@ -17,6 +17,7 @@ import type { ProjectPayload } from '@/backend/lib/mjengo'
 import type { PaymentRequestRow } from '@/backend/modules/wallet/types'
 import { EMPTY_FINANCE_SLICE } from '@/backend/modules/wallet/types'
 import type { DrawPackLink } from '@/backend/modules/drawpack/service'
+import { autoPaymentReference } from '@/shared/ids'
 import { DrawPackViewer } from '@/frontend/mjengo/draw-pack-viewer'
 import { WalletPostureBanner } from '@/frontend/mjengo/wallet-posture-banner'
 import { useT } from '@/frontend/i18n/provider'
@@ -39,14 +40,6 @@ function parseEvidenceIds(raw: string): string[] {
   } catch {
     return []
   }
-}
-
-function previewReference(method: string): string {
-  const prefix = method === 'bank' ? 'BANK' : method === 'card' ? 'CARD' : 'MPESA'
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  let suffix = ''
-  for (let i = 0; i < 8; i++) suffix += chars[Math.floor(Math.random() * chars.length)]
-  return `${prefix}-${suffix}`
 }
 
 // ---------------- status badges ----------------
@@ -277,7 +270,9 @@ export function MoneyTab() {
   // payment request approve confirm
   const [prApprove, setPrApprove] = useState<PaymentRequestRow | null>(null)
 
-  const refPreview = useMemo(() => previewReference(tMethod), [topupOpen, tMethod])
+  // MD-4 (#350): the preview draws the SAME CSPRNG seam the server's auto
+  // reference uses (src/shared/ids.ts) — one shape, one source of truth.
+  const refPreview = useMemo(() => autoPaymentReference(tMethod), [topupOpen, tMethod])
 
   if (!data) return null
   const isClient = viewMode === 'client'

@@ -16,6 +16,7 @@
 // AuditEvent automatically — never log manually here.
 
 import { db } from '@/backend/lib/db'
+import { randomIntInclusive } from '@/shared/ids'
 import { PARCEL_STATUSES, PARCEL_DOCUMENT_KINDS } from './types'
 
 // ---------------- input helpers ----------------
@@ -303,8 +304,11 @@ export async function requestTitleSearch(projectId: string, payload: Record<stri
   const open = parcel.searches.find((s) => s.status === 'requested')
   if (open) throw new Error('A registry search is already requested for this parcel — receive its result first')
 
+  // MD-4 (#350): the generated search ref draws its six digits from the
+  // shared CSPRNG seam (src/shared/ids.ts) — the CS/YYYY/NNNNNN public shape
+  // is preserved, the draw is no longer Math.random (predictable).
   const searchRef =
-    str(payload.searchRef) ?? `CS/${new Date().getFullYear()}/${Math.floor(100000 + Math.random() * 900000)}`
+    str(payload.searchRef) ?? `CS/${new Date().getFullYear()}/${randomIntInclusive(100000, 999999)}`
   const search = await db.titleSearch.create({
     data: { parcelId, searchRef, status: 'requested', transcriptionMatch: 'pending' },
   })

@@ -14,6 +14,7 @@
 // financial institution").
 
 import { getDarajaProvider } from './daraja'
+import { randomReferenceSuffix } from '@/shared/ids'
 
 /** Payment method / rail identifier. */
 export type PaymentMethod = 'mpesa' | 'bank' | 'card' | 'cash' | 'wallet'
@@ -65,12 +66,14 @@ export interface PaymentProvider {
   refund(providerRef: string, amount: number): Promise<ProviderResult>
 }
 
-/** Pseudo-random provider-style reference — clearly NOT a real rail receipt. */
+/**
+ * Pseudo-random provider-style reference — clearly NOT a real rail receipt.
+ * MD-4 (#350): the suffix is drawn from the shared CSPRNG seam
+ * (src/shared/ids.ts), never Math.random — the shape stays SIM-<rail>-XXXXXXXX
+ * but the draw is unpredictable.
+ */
 function simulatedRef(prefix: string): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  let suffix = ''
-  for (let i = 0; i < 8; i++) suffix += chars[Math.floor(Math.random() * chars.length)]
-  return `SIM-${prefix}-${suffix}`
+  return `SIM-${prefix}-${randomReferenceSuffix()}`
 }
 
 /**
