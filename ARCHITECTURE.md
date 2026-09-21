@@ -211,7 +211,9 @@ the real engine (`tests/unit/search-pushdown-realdb.test.ts`).
 
 The monolith is deliberately structured so each `src/backend/modules/*` domain maps 1:1 to a
 future extracted service. When scale or reliability requirements demand it, migrate in
-this order — each step is independently valuable:
+this order — each step is independently valuable (the trigger signals for extracting the
+sync/wallet/integrations core, and the wallet-sdk path, are decided in
+[ADR 0012](./docs/adr/0012-extraction-triggers.md)):
 
 | Capability | Target technology | Trigger to migrate |
 |---|---|---|
