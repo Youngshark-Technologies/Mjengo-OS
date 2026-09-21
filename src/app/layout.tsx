@@ -6,6 +6,7 @@ import { Toaster } from "@/frontend/ui/sonner";
 import { AuthSessionProvider } from "@/frontend/auth/session-provider";
 import { I18nProvider } from "@/frontend/i18n/provider";
 import { SwUpdatePrompt } from "@/frontend/pwa/sw-update-prompt";
+import { InstallCue } from "@/frontend/pwa/install-cue";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -73,6 +74,15 @@ export default async function RootLayout({
             gate and every surface below it can use t(); locale persists via the
             SAME `mjengo-os-settings` store the Settings tab writes. */}
         <I18nProvider>
+          {/* PWA install cue (issue #357 / audit FE-11 residual — the install
+              half; #148 landed the staleness half). Slim, dismissible, top-of-
+              document bar: browser-native on beforeinstallprompt browsers,
+              instructions-only on iOS/Safari (the event never fires there),
+              nothing anywhere the browser never offered. BEFORE the app shell
+              in flow so it never overlays the sticky header or bottom nav;
+              renders null until hydrated and on already-installed sessions.
+              Inside I18nProvider because the cue needs useT(). */}
+          <InstallCue />
           <AuthSessionProvider>{children}</AuthSessionProvider>
           {/* Service-worker registration + staleness cue (PWA · issue #148 /
               audit FE-11). /api/* is never cached — see public/sw.js. The

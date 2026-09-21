@@ -680,3 +680,93 @@ export async function registerOutboxSync(registration: unknown): Promise<boolean
   }
 }
 
+// ------------- #357 · PWA install cue (FE-11 residual) ---------------------
+//
+// The OTHER half of audit FE-11: #148 landed the staleness cue ("app updated
+// — reload"); the install cue is what remained. The app is an installable
+// PWA (public/manifest.webmanifest, display: standalone) but never SAID so —
+// the browser's own install affordances are buried in chrome menus, and the
+// beforeinstallprompt event (Chromium family) fires whether anyone listens
+// or not. Same idiom as the staleness cue: these pure functions are the
+// canonical, unit-tested statement (tests/unit/install-cue.test.ts); the
+// watch half lives in src/frontend/pwa/install-cue-watch.ts (DI, behavioral
+// tests with fake windows/storages) and the UI half in
+// src/frontend/pwa/install-cue.tsx, mounted from the root layout.
+//
+// HONESTY POSTURE (the house rule — no fake flows):
+//  · the REAL cue shows only when the browser itself offered the install
+//    (beforeinstallprompt captured — Chromium's own eligibility heuristics);
+//    its Install button runs the browser's native prompt(), never a look-
+//    alike;
+//  · iOS/Safari NEVER fires beforeinstallprompt — there the cue is
+//    INSTRUCTIONS-ONLY ("Share → Add to Home Screen"), no button, no
+//    imitation; after the user adds it, the standalone display check keeps
+//    every future session silent;
+//  · every other browser where the event never fires (Firefox desktop, …)
+//    gets NO cue at all — we do not know their steps, so we show nothing
+//    rather than guess.
+
+/** localStorage key remembering a dismissed install cue (guarded write). */
+export const INSTALL_CUE_DISMISS_KEY = 'mjengo-os-install-cue-dismissed'
+
+/**
+ * Is the app ALREADY running as an installed PWA (#357)? Two honest signals:
+ * the CSS display-mode media query (`(display-mode: standalone)` — the
+ * W3C-manifest way, matches how Chrome/Edge launch installed apps) or iOS's
+ * non-standard `navigator.standalone` (Safari sets it in home-screen web
+ * apps; it never fires beforeinstallprompt). Either true → the app IS the
+ * install — no cue, ever.
+ */
+export function isStandaloneDisplay(
+  displayModeStandalone: boolean | undefined,
+  iOSStandalone: boolean | undefined,
+): boolean {
+  return displayModeStandalone === true || iOSStandalone === true
+}
+
+/**
+ * May the browser-native install cue show (#357)? TRUE only when the browser
+ * itself offered the install (a beforeinstallprompt event was captured —
+ * Chromium's eligibility heuristics passed), the user has not dismissed the
+ * cue, and the app is not installed yet. No event → no cue: a button that
+ * pretends to install where the browser never offered is a fake flow.
+ */
+export function shouldShowInstallCue(
+  eventCaptured: boolean,
+  dismissed: boolean,
+  installed: boolean,
+): boolean {
+  return eventCaptured && !dismissed && !installed
+}
+
+/**
+ * The honest iOS heuristic (#357): iPhone/iPad/iPod in the UA, or an
+ * iPadOS 13+ device masquerading as Macintosh Safari with multi-touch (the
+ * documented detection compromise — iPadOS hides "iPad" from the UA). No
+ * iOS browser fires beforeinstallprompt, so these are exactly the devices
+ * whose only install path is Safari's Share → Add to Home Screen.
+ */
+export function looksLikeIOS(userAgent: string, maxTouchPoints: number | undefined): boolean {
+  const ua = userAgent.toLowerCase()
+  if (/iphone|ipad|ipod/.test(ua)) return true
+  if (ua.includes('macintosh') && (maxTouchPoints ?? 0) > 1) return true
+  return false
+}
+
+/**
+ * May the minimal instructions-only iOS hint show (#357)? TRUE only on an
+ * iOS-class device, not already installed (standalone), not dismissed, and
+ * ONLY while no real install event has arrived — if a browser ever does fire
+ * beforeinstallprompt on iOS, the REAL cue (shouldShowInstallCue) wins and
+ * the hint stands down. The hint carries instructions and a "Got it" — never
+ * an install button.
+ */
+export function shouldShowIosInstallHint(
+  iOSDevice: boolean,
+  standalone: boolean,
+  dismissed: boolean,
+  installed: boolean,
+  eventCaptured: boolean,
+): boolean {
+  return iOSDevice && !standalone && !dismissed && !installed && !eventCaptured
+}

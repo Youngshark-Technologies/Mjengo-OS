@@ -3908,6 +3908,19 @@ export const swDict = {
   'sw.update.reload': 'Pakia upya',
   'sw.update.later': 'Baadaye',
 
+  // ------------------------------------------- #357 · uelekeo wa usakinishaji wa PWA
+  // Nusu ya usakinishaji ya FE-11 (#148 iliweka nusu ya ukomavu). Aina mbili
+  // za kweli: uelekeo wa kivinjari (beforeinstallprompt imepatikana — kitufe
+  // cha Sakinisha kinazuia kidirisha cha kivinjari chenyewe) na dokezo la
+  // maelekezo ya iOS/Safari (tukio halitokei hapo — hakuna kitufe, hatua
+  // halisi pekee). Vivinjari vingine havipati uelekeo kabisa.
+  'install.cue.aria': 'Sakinisha programu',
+  'install.cue.body': 'Sakinisha MjengoOS — skrini kamili, inafanya kazi bila mtandao, inafunguka kwenye skrini yako ya nyumbani.',
+  'install.cue.install': 'Sakinisha',
+  'install.cue.later': 'Si sasa',
+  'install.ios.body': 'Kuisakinisha kwenye iPhone au iPad: kwenye Safari, gusa Share, kisha "Add to Home Screen".',
+  'install.ios.gotIt': 'Nimeelewa',
+
   // --------------------------------------------- #192 · kuimarisha kudumu kwa foleni
   // Benga za uharibifu wa hifadhi (app.tsx) + dokezo la "kifaa hiki pekee"
   // la foleni (sync-outbox-panel.tsx). degraded = maandishi yamefeli kabisa
