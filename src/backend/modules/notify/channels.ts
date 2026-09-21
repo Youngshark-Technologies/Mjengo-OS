@@ -1,4 +1,5 @@
 import { sendNotification } from 'web-push'
+import { log } from '@/backend/lib/log'
 
 // Notifications module — external channel providers (the provider seam).
 //
@@ -111,8 +112,13 @@ import { sendNotification } from 'web-push'
 //     by the routes, but notify() send attempts honestly stay 'logged' and
 //     web-push is never contacted.
 //   · VAPID_SUBJECT (a mailto: or https:// URL the push services can contact
-//     about your traffic) defaults to 'mailto:admin@localhost' — set a real
-//     contact for any real deployment.
+//     about your traffic — the VAPID spec's abuse-contact) is REQUIRED IN
+//     PRODUCTION (issue #354 / MD-2): unset or left at the labeled
+//     'mailto:admin@localhost' default, the channel FAILS CLOSED there — no
+//     provider (sends stay 'logged' with the refusal reason, the browser
+//     config probe answers { configured: false }), one loud log.error per
+//     process. Dev/test keeps the labeled fallback with ONE log.warn — the
+//     NEXTAUTH_SECRET dev-fallback posture (lib/next-auth-guard.ts).
 //   · send() NEVER throws. web-push's sendNotification is called PER
 //     SUBSCRIPTION with the per-call vapidDetails (no library-global
 //     setVapidDetails state — the provider stays stateless and testable).
@@ -142,8 +148,12 @@ export interface PushSubscriptionTarget {
 /** Web-push TTL: 24h — stale site news waking a phone later is dishonest. */
 const PUSH_TTL_SEC = 24 * 60 * 60
 
-/** Honest default VAPID subject (push services want a contact for abuse replies). */
-const DEFAULT_VAPID_SUBJECT = 'mailto:admin@localhost'
+/**
+ * The labeled DEV fallback VAPID subject (push services want a contact for
+ * abuse replies). Issue #354 / MD-2: production REFUSES it — unset or default
+ * fails closed there; only non-production runtimes run on this fallback.
+ */
+export const DEFAULT_VAPID_SUBJECT = 'mailto:admin@localhost'
 
 /** Africa's Talking REST hosts (AT_ENV=sandbox switches to the sandbox one). */
 const AT_PROD_BASE = 'https://api.africaistalking.com'
@@ -453,31 +463,146 @@ export class WebPushProvider implements ChannelProvider {
 }
 
 /**
- * Resolve the web push provider from env, at call time (same discipline as
+ * (issue #354 / MD-2) The VAPID subject posture as ONE pure verdict — the
+ * same shape as lib/next-auth-guard.ts's nextAuthSecretVerdict, so the
+ * decision is unit-testable without a provider or a network:
+ *
+ *   · a real contact (non-empty, not the labeled default) → ok, used verbatim;
+ *   · unset / blank / still 'mailto:admin@localhost' + NODE_ENV=production
+ *     → NOT ok — the channel refuses (fail closed);
+ *   · the same values on any other runtime → ok on the labeled
+ *     DEFAULT_VAPID_SUBJECT fallback (fellBack: true — dev stays usable,
+ *     exactly like the NEXTAUTH_SECRET dev fallback).
+ */
+export type VapidSubjectVerdict =
+  | { ok: true; subject: string; fellBack: false }
+  | { ok: true; subject: string; fellBack: true; problem: 'unset' | 'localhost-default' }
+  | { ok: false; problem: 'unset' | 'localhost-default' }
+
+export function vapidSubjectVerdict(
+  subject: string | null | undefined,
+  nodeEnv: string | undefined,
+): VapidSubjectVerdict {
+  const trimmed = (subject ?? '').trim()
+  if (trimmed && trimmed !== DEFAULT_VAPID_SUBJECT) return { ok: true, subject: trimmed, fellBack: false }
+  const problem: 'unset' | 'localhost-default' = trimmed ? 'localhost-default' : 'unset'
+  if (nodeEnv === 'production') return { ok: false, problem }
+  return { ok: true, subject: DEFAULT_VAPID_SUBJECT, fellBack: true, problem }
+}
+
+/**
+ * (issue #354) Runtime×problem keys already warned in THIS process — the
+ * once-only Set pattern of lib/webhook-secret-warning.ts. A real process
+ * never changes NODE_ENV mid-run, so this is one line per posture; tests
+ * that flip NODE_ENV get one line per distinct runtime they pass in.
+ */
+const vapidSubjectWarned = new Set<string>()
+
+/**
+ * ONE loud line per process for a refusal-grade VAPID subject: log.error in
+ * production (the channel just failed closed — the operator must know),
+ * log.warn elsewhere (the labeled fallback is active — set a real contact
+ * before any real deployment). Mirrors the NEXTAUTH_SECRET guard's split.
+ */
+function warnVapidSubjectPostureOnce(env: NodeJS.ProcessEnv, problem: 'unset' | 'localhost-default'): void {
+  const nodeEnv = env.NODE_ENV ?? '<unset>'
+  const key = `${nodeEnv}|${problem}`
+  if (vapidSubjectWarned.has(key)) return
+  vapidSubjectWarned.add(key)
+  const state = problem === 'unset' ? 'is unset' : 'is still the mailto:admin@localhost dev default'
+  if (env.NODE_ENV === 'production') {
+    log.error(
+      'notify',
+      `PRODUCTION POSTURE: VAPID_SUBJECT ${state} — web push FAILS CLOSED ` +
+        `(sends stay deliveryStatus "logged" with the refusal reason; the browser config probe answers ` +
+        `{ configured: false }) until a real contact is set. Set VAPID_SUBJECT to a mailto: or https:// URL ` +
+        `the push services (FCM, Apple, Mozilla) can contact about your traffic ` +
+        `(e.g. mailto:ops@yourdomain.example) and restart (MD-2, issue #354).`,
+    )
+    return
+  }
+  log.warn(
+    'notify',
+    `VAPID_SUBJECT ${state} — pushes in this ${nodeEnv} runtime run on the labeled ` +
+      `mailto:admin@localhost fallback (the push services want a contact for abuse replies). ` +
+      `Set a real mailto:/https:// contact before any real deployment; production fails ` +
+      `closed without it (MD-2, issue #354).`,
+  )
+}
+
+/**
+ * Resolve the web push channel from env, at call time (same discipline as
  * getSmsProvider — never cached across a long-lived process or tests).
  * VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY BOTH required: a partial pair resolves
- * to null, not to a provider that would fail every send — fail closed. With no
- * provider, notify() push attempts honestly stay 'logged' and web-push is
- * never contacted (subscriptions are still stored by the routes).
+ * to no provider, not to a provider that would fail every send — fail closed.
+ * Issue #354 / MD-2: in production the pair is ALSO not enough — an unset or
+ * still-default VAPID_SUBJECT refuses the channel the same way. With no
+ * provider, notify() push attempts honestly stay 'logged' (refusalDetail
+ * carries the precise reason for the row) and web-push is never contacted
+ * (subscriptions are still stored by the routes).
  */
-export function getPushProvider(env: NodeJS.ProcessEnv = process.env): WebPushProvider | null {
+export function resolvePushChannel(
+  env: NodeJS.ProcessEnv = process.env,
+): { provider: WebPushProvider | null; refusalDetail: string } {
   const publicKey = (env.VAPID_PUBLIC_KEY ?? '').trim()
   const privateKey = (env.VAPID_PRIVATE_KEY ?? '').trim()
-  if (!publicKey || !privateKey) return null
-  const subject = (env.VAPID_SUBJECT ?? '').trim() || DEFAULT_VAPID_SUBJECT
-  return new WebPushProvider(publicKey, privateKey, subject)
+  if (!publicKey || !privateKey) {
+    return {
+      provider: null,
+      refusalDetail:
+        'Web push requested but no VAPID pair configured (VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY unset) — nothing sent',
+    }
+  }
+  const verdict = vapidSubjectVerdict(env.VAPID_SUBJECT, env.NODE_ENV)
+  if (verdict.ok) {
+    if (verdict.fellBack) {
+      // Non-production on the labeled fallback — usable, but say it once.
+      warnVapidSubjectPostureOnce(env, verdict.problem)
+    }
+    return { provider: new WebPushProvider(publicKey, privateKey, verdict.subject), refusalDetail: '' }
+  }
+  // Production fail-closed (issue #354): no provider, one loud error, and
+  // the honest refusal reason for every notification row.
+  warnVapidSubjectPostureOnce(env, verdict.problem)
+  return {
+    provider: null,
+    refusalDetail:
+      verdict.problem === 'unset'
+        ? 'Web push refused: VAPID_SUBJECT is unset in production (set a real mailto:/https:// contact — the labeled dev fallback is not accepted there, issue #354) — nothing sent'
+        : 'Web push refused: VAPID_SUBJECT is still the mailto:admin@localhost default in production (set a real contact, issue #354) — nothing sent',
+  }
+}
+
+/**
+ * The send-capability half of resolvePushChannel — kept for the provider
+ * tests' direct use; the notify service reads resolvePushChannel() so the
+ * row gets the refusalDetail from the SAME resolution.
+ */
+export function getPushProvider(env: NodeJS.ProcessEnv = process.env): WebPushProvider | null {
+  return resolvePushChannel(env).provider
 }
 
 /**
  * The PUBLIC half of the VAPID pair, handed to browsers by GET
  * /api/push/subscribe so they can create a subscription. Returns the key only
- * when the pair is COMPLETE (a public key without its private half cannot send
- * — reporting configured would be a lie); null otherwise, which the route
- * renders as { configured: false }.
+ * when the channel can actually SEND: a COMPLETE pair (a public key without
+ * its private half cannot send — reporting configured would be a lie) whose
+ * VAPID subject would not be refused in this runtime (issue #354: a pair
+ * without a real production subject fails closed exactly like a partial
+ * pair); null otherwise, which the route renders as { configured: false }.
  */
 export function getVapidPublicKey(env: NodeJS.ProcessEnv = process.env): string | null {
   const publicKey = (env.VAPID_PUBLIC_KEY ?? '').trim()
   const privateKey = (env.VAPID_PRIVATE_KEY ?? '').trim()
   if (!publicKey || !privateKey) return null
+  const verdict = vapidSubjectVerdict(env.VAPID_SUBJECT, env.NODE_ENV)
+  if (!verdict.ok) {
+    // The channel cannot send — reporting configured would be a lie. The
+    // once-only posture error (issue #354) names the fix for the operator;
+    // the probe firing it means a production misconfiguration is loud even
+    // before the first notify() attempt.
+    warnVapidSubjectPostureOnce(env, verdict.problem)
+    return null
+  }
   return publicKey
 }

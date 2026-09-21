@@ -72,7 +72,10 @@ export interface NotifyOptions {
    * Additionally attempt a real WEB PUSH delivery to this app user's recorded
    * browser subscriptions (PushSubscription rows, POST /api/push/subscribe).
    * Only honored when the VAPID pair is configured (channels.ts:
-   * VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY); otherwise the row honestly stays
+   * VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY) AND — in production —
+   * VAPID_SUBJECT names a real contact (issue #354 / MD-2: unset or the
+   * mailto:admin@localhost default fails closed there; dev keeps the
+   * labeled fallback); otherwise the row honestly stays
    * 'logged' and web-push is never contacted. Never throws into the caller —
    * the aggregated outcome lands in deliveryStatus/deliveryDetail.
    *
