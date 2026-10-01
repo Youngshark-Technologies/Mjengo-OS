@@ -22,10 +22,17 @@
 # write permission in play. Publishing is a main-only, trust-bound act;
 # separating them keeps the permission surfaces disjoint.
 #
-# TRIGGER NOTE: docker.yml's push trigger was `branches: ain]` — a typo
-# from its birth commit that silently disabled push runs (masked by the
-# #98 lock). Fixed in the same PR as this file; both workflows now fire
-# on real `main` pushes when CI unblocks.
+# TRIGGER NOTE (corrected 2026-10-01, byte-level audit, issue #395): an
+# earlier version of this note claimed the push triggers carried a birth
+# typo -- a malformed branch-filter literal -- that commit 280fe0b fixed.
+# Byte-precise verification (grep counts across 30e4e2c, c57c2c5, b4dfb75,
+# 280fe0b, 2520d9b, plus an od byte dump of current main) shows every
+# workflow in this repo has carried the correct main-branch flow-sequence
+# filter since its birth commit; 280fe0b only reworded a comment. The
+# malformed literal appears in NO trigger line of any commit of these
+# files. The real Actions blocker was and is #98 (billing lock) -- once
+# unblocked, these triggers fire on real main pushes.
+
 name: Publish
 
 on:
