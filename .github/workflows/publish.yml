@@ -22,7 +22,7 @@
 # write permission in play. Publishing is a main-only, trust-bound act;
 # separating them keeps the permission surfaces disjoint.
 #
-# TRIGGER NOTE: docker.yml's push trigger was `branches: ain]` — a typo
+# TRIGGER NOTE: docker.yml's push trigger was `branches: [main]` — a typo
 # from its birth commit that silently disabled push runs (masked by the
 # #98 lock). Fixed in the same PR as this file; both workflows now fire
 # on real `main` pushes when CI unblocks.
