@@ -98,7 +98,7 @@ export function MiniBuilding({ stage, ...props }: { stage: BuildStage } & SVGPro
           <g key={i}>
             <rect x={x} y={y} width="18" height="22" rx="2" fill="#123C32" />
             <rect x={x + 2.5} y={y + 2.5} width="13" height="8" rx="1.5" fill="#9DBDAF" opacity="0.85" />
-            <path d={`M${x + 9} ${y + 2.5} V21.5 M${x + 2.5} ${y + 11} H15.5`} stroke="#0b2a23" strokeWidth="1.4" opacity="0.9" />
+            <path d={`M${x + 9} ${y + 2.5} v19 M${x + 2.5} ${y + 11} h13`} stroke="#0b2a23" strokeWidth="1.4" opacity="0.9" />
           </g>
         ))}
         {/* top-row windows on upper slab */}
@@ -146,8 +146,9 @@ export function Crane(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/* Progress ring that completes around the site (scene 5). */
-export function ProgressRing({ progress = 1, ...props }: { progress?: number } & SVGProps<SVGSVGElement>) {
+/* Progress ring that completes around the site (scene 5).
+   `instant` renders the target state on mount (reduced-motion path). */
+export function ProgressRing({ progress = 1, instant = false, ...props }: { progress?: number; instant?: boolean } & SVGProps<SVGSVGElement>) {
   const R = 118;
   const C = 2 * Math.PI * R;
   return (
@@ -161,7 +162,7 @@ export function ProgressRing({ progress = 1, ...props }: { progress?: number } &
         strokeWidth="5"
         strokeLinecap="round"
         strokeDasharray={C}
-        initial={{ strokeDashoffset: C }}
+        initial={instant ? { strokeDashoffset: C * (1 - progress) } : { strokeDashoffset: C }}
         animate={{ strokeDashoffset: C * (1 - progress) }}
         transition={{ duration: 1.6, ease: [0.16, 1, 0.3, 1] }}
         transform="rotate(-90 130 130)"

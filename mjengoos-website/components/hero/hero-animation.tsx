@@ -51,8 +51,10 @@ import {
  *    no story motion, no idle float, everything verified/settled.
  *  - Without JS the server-rendered poster shows the drawn blueprint,
  *    scene-0 caption, badge, CTAs and trust chips — all functional.
- *  - Every animated property is transform/opacity/stroke-dashoffset only;
- *    the visual canvas is decorative (aria-hidden) and scales as one unit.
+ *  - Scene/object motion is transform/opacity/stroke-dashoffset only (the
+ *    phone's micro-UI also animates width/fill on two tiny decorative
+ *    elements); the visual canvas is decorative (aria-hidden) and scales
+ *    as one unit.
  */
 
 /* ── timeline constants ─────────────────────────────────────────────── */
@@ -251,7 +253,12 @@ export function HeroAnimation() {
   const inViewRef = useRef(false);
 
   const reduce = useReducedMotion();
-  const reduced = reduce === true;
+  /* `&& started` defers the reduced-motion derivation until after hydration:
+     useReducedMotion resolves on the client's first render while the server
+     rendered null, so deriving from it pre-hydration would mismatch. started
+     flips in the IntersectionObserver callback (post-hydration), so reduced
+     users hydrate the poster, then derive the settled frame cleanly. */
+  const reduced = reduce === true && started;
   const playing = started && !reduced;
   const simplified = scale < 0.52;
 
@@ -305,7 +312,7 @@ export function HeroAnimation() {
   useEffect(() => {
     if (!playing || !running || phase !== 2) return;
     const steps = [0, 650, 1300, 1950].map((ms, i) =>
-      setTimeout(() => setBuildStage((i + 1) as BuildStage), ms),
+      setTimeout(() => setBuildStage((s) => Math.max(s, i + 1) as BuildStage), ms),
     );
     return () => steps.forEach(clearTimeout);
   }, [phase, playing, running]);
@@ -314,9 +321,9 @@ export function HeroAnimation() {
   useEffect(() => {
     if (phase !== 3 || !playing || !running || reduced) return;
     const steps = [
-      setTimeout(() => setPhoneStep(1), 1100),
-      setTimeout(() => setPhoneStep(2), 2000),
-      setTimeout(() => setPhoneStep(3), 2650),
+      setTimeout(() => setPhoneStep((s) => Math.max(s, 1)), 1100),
+      setTimeout(() => setPhoneStep((s) => Math.max(s, 2)), 2000),
+      setTimeout(() => setPhoneStep((s) => Math.max(s, 3)), 2650),
     ];
     return () => steps.forEach(clearTimeout);
   }, [phase, playing, running, reduced]);
@@ -340,7 +347,7 @@ export function HeroAnimation() {
       return (
         <motion.div
           key={f.id}
-          className="absolute left-0 top-0 will-change-transform"
+          className="absolute left-0 top-0"
           style={{ width: w }}
           initial={false}
           animate={{
@@ -354,12 +361,12 @@ export function HeroAnimation() {
         >
           <motion.div
             animate={
-              reduced
+              reduced || !running
                 ? undefined
                 : { y: [0, -f.idle.amp, 0], rotate: [0, f.idle.rot, 0, -f.idle.rot, 0] }
             }
             transition={
-              reduced
+              reduced || !running
                 ? undefined
                 : { duration: f.idle.dur, delay: f.idle.delay, repeat: Infinity, ease: "easeInOut" }
             }
@@ -495,8 +502,7 @@ export function HeroAnimation() {
           <div
             ref={canvasWrapRef}
             aria-hidden
-            className="relative mx-auto w-full max-w-[620px] select-none lg:max-w-none"
-            style={{ height: Math.round(DESIGN_H * scale) }}
+            className="relative mx-auto aspect-[10/7] w-full max-w-[620px] select-none lg:max-w-none"
           >
             <div
               className="absolute left-0 top-0 origin-top-left"
@@ -625,9 +631,8 @@ export function HeroAnimation() {
                 transition={springSoft}
               >
                 <motion.div
-                  className="will-change-transform"
-                  animate={reduced ? undefined : { y: [0, -9, 0], rotate: [0, -1.4, 0, 1.4, 0] }}
-                  transition={reduced ? undefined : { duration: 6.4, repeat: Infinity, ease: "easeInOut" }}
+                  animate={reduced || !running ? undefined : { y: [0, -9, 0], rotate: [0, -1.4, 0, 1.4, 0] }}
+                  transition={reduced || !running ? undefined : { duration: 6.4, repeat: Infinity, ease: "easeInOut" }}
                 >
                   <PhoneDashboard
                     reviewed={shownPhoneStep >= 1}
