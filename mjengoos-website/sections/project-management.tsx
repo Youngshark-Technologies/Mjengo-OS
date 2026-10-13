@@ -14,7 +14,7 @@ const LIFECYCLE = [
 
 export function ProjectManagement() {
   return (
-    <section aria-labelledby="pm-heading" className="border-b border-ink/10 bg-forest-950">
+    <section aria-labelledby="pm-heading" className="relative overflow-hidden border-b border-ink/10 bg-forest-950">
       <div className="absolute inset-0 bg-survey-grid-dark" aria-hidden />
       <div className="relative">
       <Container className="py-20 lg:py-28">
