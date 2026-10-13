@@ -10,11 +10,18 @@
 # (also once #98's billing lock lifts and jobs actually start).
 name: Tests
 
+# WORKFLOWS SUSPENDED (2026-10-13): GitHub Actions is billing-locked
+# account-wide (#98, owner action pending). Every automatic run fails at
+# startup in 3-9s, so push/PR triggers are parked to keep the Actions tab
+# clean and avoid failed-run noise. Manual workflow_dispatch stays wired.
+# To restore: uncomment the original trigger block once #98 is resolved.
+# on:
+#   push:
+#     branches: [main]
+#   pull_request:
+#     branches: [main]
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

@@ -8,10 +8,17 @@
 #   dummy secret — the production build must never require real env secrets.
 name: CI
 
+# WORKFLOWS SUSPENDED (2026-10-13): GitHub Actions is billing-locked
+# account-wide (#98, owner action pending). Every automatic run fails at
+# startup in 3-9s, so push/PR triggers are parked to keep the Actions tab
+# clean and avoid failed-run noise. Manual workflow_dispatch stays wired.
+# To restore: uncomment the original trigger block once #98 is resolved.
+# on:
+#   push:
+#     branches: [main]
+#   pull_request:
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 # One run per ref; newer pushes to a PR cancel the stale run.
 concurrency:
