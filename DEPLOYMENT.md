@@ -1879,3 +1879,71 @@ and spans wrap the wallet/webhook/job surfaces the audit named (OBS-5).
 No SDK dependency is added today; nothing imports, initializes or exports
 tracing data. The ADR is the contract that the eventual implementation
 starts from — revisit triggers included.
+
+## 11. Vercel (GitHub-integration deployments)
+
+The app is Vercel-aware (the `VERCEL` runtime detection in
+`src/backend/lib/nextauth-fallback-secret.ts`, the Cron caveat in §7.3), and
+the build itself is verified green on a clean clone (2026-10-13:
+`bunx prisma generate && bunx next build` — 0 errors). Yet **no deployment
+ever triggered from this repository** — every push was silently skipped,
+150+ commits, zero Vercel statuses on GitHub. Root cause and the standing
+fix, so it never repeats:
+
+### 11.1 Vercel deploys commits, attributed by AUTHOR EMAIL — not by pusher
+
+Vercel's GitHub integration attributes each push to the **commit author's
+email** and links it to a Vercel account. When that email is not linked to
+an account on the project's Vercel team, the deployment is **skipped
+silently** — no build, no GitHub commit status, nothing in a build log to
+debug. It looks exactly like "the deployment fails" / "Vercel does
+nothing", which is what happened here: commits on `main` were authored
+`wwanyoike18@student.kibu.ac.ke` (a laptop-local git identity) or
+`z@container` (sandbox tooling), while the Vercel account behind the GitHub
+login `Roy-Wanyoike` uses **`roywanyoike328@gmail.com`**. No commit ever
+matched, so nothing ever built.
+
+**Standing rule — set the linked identity before committing:**
+
+```bash
+git config user.name  "Roy Wanyoike"
+git config user.email "roywanyoike328@gmail.com"   # the email on the Vercel account
+```
+
+Repo-local (per clone) is enough; `--global` covers the whole machine.
+Verify before pushing: `git log --format='%an <%ae>' -1`. An unpushed tip
+with the wrong identity is repaired in place with
+`git commit --amend --reset-author --no-edit`. Already-pushed history is
+NOT rewritten — only the author of the pushed tip matters. If an additional
+address must also deploy, add it to the Vercel account
+(Account Settings → Emails) — Vercel matches the email list, not the GitHub
+login alone.
+
+### 11.2 Project settings that make the triggered build pass
+
+No `vercel.json` is required. Framework preset Next.js (default build
+`next build`); the standalone `cp` tail in the `package.json` build script
+runs fine on Vercel and its output is simply unused there. Root directory:
+`/` — the app is the root project; `mjengoos-website/` is a separate
+Next.js app and would be its OWN Vercel project with root directory
+`mjengoos-website`.
+
+| Env var | Required | Why |
+|---|---|---|
+| `NEXTAUTH_SECRET` | **yes** | production boot fails closed without a ≥ 32-char secret (§3) — the auth routes would 500 and sign-in would be impossible |
+| `AUTH_TRUST_HOST=1` | recommended | behind Vercel's proxy, next-auth v4 must derive the origin per request (§3, PR #7) — never pin `NEXTAUTH_URL` to a localhost value |
+| `DATABASE_URL` | runtime only | the build passes WITHOUT it (the Prisma client in `src/backend/lib/db.ts` is instantiated lazily, so nothing touches the DB during prerender); it is required at request time, and a `file:` URL on Vercel is an **ephemeral per-instance** SQLite — see the caveat below |
+| `WEBSITE_ORIGIN` | leave UNSET | no site server runs on Vercel — the `/website/*` rewrites will 502 for those paths only; the app itself is unaffected |
+
+**Honest SQLite caveat:** Vercel's serverless filesystem is ephemeral, so
+`DATABASE_URL=file:…` gives every instance its own scratch database that
+dies with it — fine for previews and smoke demos, useless for stateful
+production (the ledger, uploads under `public/photos|docs`). A durable
+Vercel deployment means moving to a hosted Postgres (schema swap, Prisma
+supports it) or self-hosting per §6/§7. Vercel + SQLite is a preview
+posture, not the production posture this document describes elsewhere.
+
+**Cron caveat:** Vercel Cron issues GET requests only, while the jobs drain
+(`POST /api/jobs/run`) is POST-only by design — see the note in §7.3; on
+Vercel you would need a thin GET wrapper route or an external POST
+scheduler.
