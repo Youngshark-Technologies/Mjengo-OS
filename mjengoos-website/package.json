@@ -2,7 +2,7 @@
   "name": "mjengoos-website",
   "version": "1.0.0",
   "private": true,
-  "description": "MjengoOS marketing website \u2014 Build with evidence.",
+  "description": "MjengoOS marketing website — Build with evidence.",
   "scripts": {
     "dev": "next dev -p 3001 2>&1 | tee dev.log",
     "build": "next build",
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "clsx": "^2.1.1",
+    "framer-motion": "^14.2.0",
     "lucide-react": "^1.46.0",
     "next": "^16.1.1",
     "react": "^19.0.0",
