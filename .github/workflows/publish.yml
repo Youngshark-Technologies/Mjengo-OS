@@ -35,9 +35,15 @@
 
 name: Publish
 
+# PUBLISH SUSPENDED (2026-10-13): GitHub Actions is billing-locked
+# account-wide (#98, owner action pending). Automatic tag-push publishes are
+# parked; manual workflow_dispatch stays wired for when billing is restored.
+# To restore: uncomment the original trigger block once #98 is resolved.
+# on:
+#   push:
+#     branches: [main]
+#   workflow_dispatch:
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:

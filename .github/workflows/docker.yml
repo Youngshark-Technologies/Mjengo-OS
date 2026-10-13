@@ -12,10 +12,17 @@
 # publishing is INF-12's scope — see .github/workflows/publish.yml, issue #209).
 name: Docker
 
+# WORKFLOWS SUSPENDED (2026-10-13): GitHub Actions is billing-locked
+# account-wide (#98, owner action pending). Every automatic run fails at
+# startup in 3-9s, so push/PR triggers are parked to keep the Actions tab
+# clean and avoid failed-run noise. Manual workflow_dispatch stays wired.
+# To restore: uncomment the original trigger block once #98 is resolved.
+# on:
+#   push:
+#     branches: [main]
+#   pull_request:
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
