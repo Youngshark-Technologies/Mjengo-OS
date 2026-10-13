@@ -1919,6 +1919,16 @@ address must also deploy, add it to the Vercel account
 (Account Settings → Emails) — Vercel matches the email list, not the GitHub
 login alone.
 
+**Merge commits inherit the GitHub account's PRIMARY email.** Branch
+protection forces every change through PRs, and a PR merge (web UI or API)
+authors the merge commit as the GitHub account itself — observed
+2026-10-13: PR #403's merge commit came out `wwanyoike18@student.kibu.ac.ke`
+even though the PR's own commits were correctly authored. So EITHER the
+GitHub account's primary email is the Vercel-linked one, OR every email on
+the GitHub account is added to the Vercel account (Account Settings →
+Emails). Otherwise direct pushes deploy but merges silently skip — the
+worst possible split.
+
 ### 11.2 Project settings that make the triggered build pass
 
 No `vercel.json` is required. Framework preset Next.js (default build
