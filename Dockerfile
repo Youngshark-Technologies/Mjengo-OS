@@ -60,7 +60,7 @@ RUN bunx prisma generate
 ENV NEXT_TELEMETRY_DISABLED=1 \
     NEXTAUTH_SECRET=build-time-dummy-secret-0123456789abcdef \
     DATABASE_URL="file:build.db"
-RUN bun run build
+RUN bun run build:standalone
 
 # Digest-pinned 2026-09-21 (INF-3): manifest-list digest, multi-arch FROM. Refresh: curl -s https://hub.docker.com/v2/repositories/library/node/tags/20-slim | jq -r .digest
 FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS runner
