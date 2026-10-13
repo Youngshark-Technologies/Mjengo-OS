@@ -376,7 +376,7 @@ export function HeroAnimation() {
         </motion.div>
       );
     },
-    [effPhase, simplified, reduced],
+    [effPhase, simplified, reduced, running],
   );
 
   const floaters = useMemo(
