@@ -1932,11 +1932,22 @@ worst possible split.
 ### 11.2 Project settings that make the triggered build pass
 
 No `vercel.json` is required. Framework preset Next.js (default build
-`next build`); the standalone `cp` tail in the `package.json` build script
-runs fine on Vercel and its output is simply unused there. Root directory:
-`/` — the app is the root project; `mjengoos-website/` is a separate
-Next.js app and would be its OWN Vercel project with root directory
-`mjengoos-website`.
+`next build`). Root directory: `/` — the app is the root project;
+`mjengoos-website/` is a separate Next.js app and would be its OWN Vercel
+project with root directory `mjengoos-website`.
+
+**Build script split (2026-10-13, evidence-based):** the standalone `cp`
+tail chained onto `build` is NOT harmless on Vercel — an earlier revision
+of this section claimed it "runs fine and its output is simply unused",
+and that was wrong. Vercel does not emit `.next/standalone/` (it consumes
+`.next` directly), so `cp -r … .next/standalone/…` exits 1 and kills the
+build ~30s in, before any compile output. The same instant failure was
+observed live on sibling repos (Nexora @ a620adc→a7db2564,
+digital-lending-os @ 6c4a26ab→62f1d17c: instant failures while the tail
+was chained, 2–3 minute builds once removed). `build` is now plain
+`next build` (Vercel, CI, local) and the chain lives in
+`build:standalone`, which the Dockerfile uses for the self-host runner
+image — unchanged artifact there.
 
 | Env var | Required | Why |
 |---|---|---|
