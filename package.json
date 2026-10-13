@@ -127,5 +127,8 @@
     "tw-animate-css": "^1.3.5",
     "typescript": "^5",
     "vitest": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=20.9.0"
   }
 }

@@ -44,6 +44,22 @@ fix(sync): reject stale outbox versions (keep-server)
 docs(readme): correct the Prisma model count to 61
 ```
 
+Set the repo-local author identity BEFORE the first commit. Vercel's GitHub
+integration keys every deployment to the commit author's email — a push
+whose author email is not linked to the Vercel account is silently skipped
+(no build, no status, no error). Until 2026-10-13 this repo's commits were
+authored `wwanyoike18@student.kibu.ac.ke` / `z@container`, so `main` had
+zero Vercel deployments despite a green build. Use the Vercel-linked email
+(see DEPLOYMENT.md §11):
+
+```bash
+git config user.name  "Roy Wanyoike"
+git config user.email "roywanyoike328@gmail.com"
+```
+
+Verify with `git log --format='%an <%ae>' -1` before pushing; repair an
+unpushed tip with `git commit --amend --reset-author --no-edit`.
+
 ## Before you open a PR
 
 Run the same gates CI runs:
