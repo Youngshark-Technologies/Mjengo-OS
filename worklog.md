@@ -225,3 +225,18 @@ Stage Summary:
 - FINAL STATE: main b5261ad+ (release) == dev, 156 tracked files, 0 dirty, 2 orgs / 3 users of real persisted data, health green.
 - Acceptance: 11/14 criteria fully met with evidence; 3 explicitly limited (deployment ⛔ needs infra, backups ⚠️, staging ⚠️ stood in by dev validation) — all documented in the final report.
 - Delivered: production-ready MjengoOS (25 API routes, 18-model schema, 8 domain views + auth + 17s hero marketing site), issue-driven branch/merge history MJG-001..015, audit + report docs.
+
+---
+Task ID: WALKTHROUGH-01
+Agent: Principal Orchestrator (main)
+Task: Live browser walkthrough of the full golden journey with screenshot evidence (user-requested demo).
+
+Work Log:
+- Two isolated agent-browser sessions (owner: Juma Walkthrough / supervisor: Amina Supervisor), 1440x900, 41 screenshots -> download/walkthrough/.
+- Full journey PASSED: register org (Kilimani Constructors Ltd) -> fresh dashboard -> create site (Riverside Apartments) -> add material (Simba Cement 32.5N, BAG, KES 700) -> stock IN 100 (KES 70,000) -> supplier (Bamburi Building Supplies) -> PO 120 BAG KES 84,000 DRAFT->SENT -> delivery against PO -> human verify (stock 100->220 = KES 154,000, applied exactly once, named attribution) -> worker (Otieno Mason) -> assignment ASSIGNED->ACTIVE -> attendance Present 8h via batch "Save attendance (1)" -> evidence report (foundation slab) -> RED LINE TEST: reporter's Verify button [disabled] in a11y tree, zero API call fired -> OWNER created SUPERVISOR (Team tab) -> 2nd session: Amina's Verify enabled, verified -> "Verified (1)" carries her name -> payment KES 84,000 MATERIAL/BANK ref INV-2026-0142 -> OWNER approve -> mark paid -> dashboard: stock 154,000 / monthly spend 84,000 / workers on site today 1 / all pending counters 0.
+- Regression guard re-confirmed: every metric on /api/dashboard derives from persisted records; activity feed shows the real 6-event trail.
+
+Stage Summary:
+- System works end to end from a cold org to paid money with named human checkpoints at every gated step.
+- Observation (minor, not a blocker): delivery card shows "No supplier recorded" when the delivery is created against a PO — supplier is not denormalized from the PO onto the delivery display. Tracked as cosmetic follow-up.
+- Observation (by design): attendance is an explicit batch save ("Save attendance (n)" bar), not auto-save on select change — documented here so future agents don't mistake queued local state for persistence failure.
