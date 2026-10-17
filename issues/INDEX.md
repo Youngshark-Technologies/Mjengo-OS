@@ -22,6 +22,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-012 | End-to-end browser QA (golden journeys), regression & gates evidence | QA | chore/e2e-qa | IN_PROGRESS |
 | MJG-013 | Git consolidation: exactly `dev` + `main`, temp branch cleanup, final report | DevOps | chore/git-consolidation | TODO |
 | MJG-014 | Org member management: OWNER creates SUPERVISOR/WORKER members (discovered via E2E planning — without it the evidence segregation-of-duties journey is unreachable) | Security+Frontend | feat/org-members | DONE |
+| MJG-015 | Material catalogue UI: add-material dialog in inventory view (E2E gap — stock-in was impossible without catalogue entries) | Frontend | feat/material-ui | DONE |
 
 ---
 
@@ -82,3 +83,6 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 
 ## MJG-014 — Org member management (added during E2E planning)
 **Root cause:** registration creates OWNER only; evidence verification forbids self-verification (red line), so without SUPERVISOR accounts the verification journey could never run in production. **Fix:** `GET/POST /api/users` (POST OWNER-only, roles SUPERVISOR|WORKER, scrypt-hashed password, 409 duplicate) + "Team" tab in Workforce view (member table, add-member dialog gated to OWNER, role helper copy). **Accept:** OWNER adds supervisor → supervisor signs in → verifies worker's evidence; WORKER/SUPERVISOR see no Add-member button; API 403s non-OWNER creates.
+
+## MJG-015 — Material catalogue UI (added during E2E planning)
+**Root cause:** materials list endpoint existed and every dialog consumed it, but no view could CREATE a material — stock-in, POs and deliveries would be dead ends for a fresh org. **Fix:** "Add material" dialog in Inventory view (name, unit enum, category, unit cost) posting to `/api/materials` and invalidating the shared `['materials']` cache. **Accept:** fresh org can catalogue a material and immediately record an IN movement.
