@@ -225,3 +225,98 @@ Stage Summary:
 - FINAL STATE: main b5261ad+ (release) == dev, 156 tracked files, 0 dirty, 2 orgs / 3 users of real persisted data, health green.
 - Acceptance: 11/14 criteria fully met with evidence; 3 explicitly limited (deployment ⛔ needs infra, backups ⚠️, staging ⚠️ stood in by dev validation) — all documented in the final report.
 - Delivered: production-ready MjengoOS (25 API routes, 18-model schema, 8 domain views + auth + 17s hero marketing site), issue-driven branch/merge history MJG-001..015, audit + report docs.
+
+---
+Task ID: WALKTHROUGH-01
+Agent: Principal Orchestrator (main)
+Task: Live browser walkthrough of the full golden journey with screenshot evidence (user-requested demo).
+
+Work Log:
+- Two isolated agent-browser sessions (owner: Juma Walkthrough / supervisor: Amina Supervisor), 1440x900, 41 screenshots -> download/walkthrough/.
+- Full journey PASSED: register org (Kilimani Constructors Ltd) -> fresh dashboard -> create site (Riverside Apartments) -> add material (Simba Cement 32.5N, BAG, KES 700) -> stock IN 100 (KES 70,000) -> supplier (Bamburi Building Supplies) -> PO 120 BAG KES 84,000 DRAFT->SENT -> delivery against PO -> human verify (stock 100->220 = KES 154,000, applied exactly once, named attribution) -> worker (Otieno Mason) -> assignment ASSIGNED->ACTIVE -> attendance Present 8h via batch "Save attendance (1)" -> evidence report (foundation slab) -> RED LINE TEST: reporter's Verify button [disabled] in a11y tree, zero API call fired -> OWNER created SUPERVISOR (Team tab) -> 2nd session: Amina's Verify enabled, verified -> "Verified (1)" carries her name -> payment KES 84,000 MATERIAL/BANK ref INV-2026-0142 -> OWNER approve -> mark paid -> dashboard: stock 154,000 / monthly spend 84,000 / workers on site today 1 / all pending counters 0.
+- Regression guard re-confirmed: every metric on /api/dashboard derives from persisted records; activity feed shows the real 6-event trail.
+
+Stage Summary:
+- System works end to end from a cold org to paid money with named human checkpoints at every gated step.
+- Observation (minor, not a blocker): delivery card shows "No supplier recorded" when the delivery is created against a PO — supplier is not denormalized from the PO onto the delivery display. Tracked as cosmetic follow-up.
+- Observation (by design): attendance is an explicit batch save ("Save attendance (n)" bar), not auto-save on select change — documented here so future agents don't mistake queued local state for persistence failure.
+
+---
+Task ID: MJG-016
+Agent: Principal Orchestrator (main)
+Task: Delivery supplier inherited from PO (server denormalization + display fallback).
+
+Work Log:
+- Root cause confirmed: POST /api/deliveries stored supplierId=null when a PO-linked delivery omitted the supplier; view rendered "No supplier recorded".
+- src/app/api/deliveries/route.ts: captured the PO already loaded for the org-ownership check and inherit po.supplierId when no explicit supplierId (explicit always wins); deliveryInclude adds purchaseOrder.supplier; toDeliveryDTO resolves supplierName as delivery.supplier?.name ?? delivery.purchaseOrder?.supplier?.name ?? null — repairs pre-existing rows with zero migration.
+- Gates: tsc clean, eslint clean; API regression in MJG-020 suite (case 13) PASS; browser regression: existing walkthrough delivery card now reads "Bamburi Building Supplies · PO #cmvcknuf" (screenshot 40).
+
+Stage Summary:
+- Supplier metadata is consistent for new and legacy deliveries; no red-line surface touched.
+
+---
+Task ID: MJG-017
+Agent: Principal Orchestrator (main)
+Task: Attendance save-bar visibility (dirty-state emphasis + aria-live).
+
+Work Log:
+- Kept the explicit batch-save model (deliberate design, documented in WALKTHROUGH-01); fixed discoverability only.
+- src/components/views/workforce-view.tsx: sticky bar now switches to amber-50/amber-300 styling with "N changes ready — not saved yet" + amber glow on the save button while dirty; neutral styling when all saved; container carries role="status" aria-live="polite".
+- Gates: tsc clean, eslint clean; browser regression: dirty state unmissable (screenshot 41), saved state quiet, draft reverted and saved cleanly (screenshot 42).
+
+Stage Summary:
+- The walkthrough failure mode (queued changes mistaken for auto-save) is closed at the UI level.
+
+---
+Task ID: MJG-018
+Agent: Principal Orchestrator (main)
+Task: SQLite backup & restore drill kit (report §7 item 2).
+
+Work Log:
+- scripts/db-backup.ts: online `VACUUM INTO` to db/backups/mjengo-<ts>.db (safe while server holds the DB), then independent verification: PRAGMA integrity_check on the backup + per-table row counts vs live, non-zero exit on any mismatch.
+- scripts/db-restore.ts: integrity-gates the backup, materializes it at a scratch path (live DB never touched implicitly; --into for the real procedure), compares row counts vs backup.
+- docs/BACKUPS.md: procedure, cron (daily 02:00 + 14-day retention), restore runbook, deferred limits (off-site replication, PITR, alerting).
+- LIVE DRILL PASSED: backup mjengo-2026-10-17T22-00-45.db (272 KiB, 24ms vacuum), integrity ok, all 18 tables match live counts; restore drill restored 45 rows across 18 tables, integrity ok.
+
+Stage Summary:
+- Backup/restore is now a verified, replayable operation; scheduling docs in place (automation needs external cron host).
+
+---
+Task ID: MJG-019
+Agent: Principal Orchestrator (main)
+Task: Deployment kit (report §7 item 1 — sandbox-testable parts).
+
+Work Log:
+- Dockerfile (multi-stage: bun deps → prisma generate + next build → slim runner), docker-entrypoint.sh (idempotent prisma db push, then standalone server), .dockerignore (lean context, no dev DBs/logs), .env.example, docs/DEPLOYMENT.md (docker + bare-metal paths, post-deploy checks, backup cron, env table, deferred items).
+- scripts/smoke.sh <base>: /api health JSON (status ok + database connected), landing 200, /api/sites 401 unauthenticated — non-zero exit on first failure.
+- Investigation note: a suspected '[health]' error-log typo in src/app/api/route.ts was ruled out at byte level (od -c shows '[health]' — earlier reading was a terminal rendering artifact). No source change made; registry corrected accordingly.
+- LIVE EVIDENCE: smoke.sh against :3000 → all three checks ok; bash -n syntax-checked smoke.sh + docker-entrypoint.sh.
+- Deferred (documented): the physical deployment act, image build on a real docker daemon, domain/TLS, secrets mgmt.
+
+Stage Summary:
+- Everything deployable-from-here is delivered and locally verified; deployment reduces to running the documented commands on target infra.
+
+---
+Task ID: MJG-020
+Agent: Principal Orchestrator (main)
+Task: Replayable API integration suite (report §7 item 3).
+
+Work Log:
+- tests/api-mjengo.test.ts (bun:test, zero new deps): 21 ordered cases, one golden journey — health, register (+dup 409, wrong-password 401, anonymous 401), site/material/stock (exact math, OUT-beyond-stock 422), supplier/PO DRAFT→SENT, MJG-016 supplier inheritance, verify-once idempotency (re-verify 422), workforce/attendance, evidence self-verify 403 (red line), OWNER→SUPERVISOR two-person verification, supervisor payment-approve 403 + OWNER approve + mark-paid, dashboard totals assert every mutation, /me session persistence, logout invalidation.
+- scripts/api-tests.sh + package.json "test:api": isolated DATABASE_URL (db/api-test.db, prisma db push), production build, standalone boot on :3111, health wait, bun test, teardown removes DB; :3000 dev server untouched (verified by smoke.sh after runs).
+- tsconfig: bun:test types via /// <reference path> (bun-types ships with bun — no new dependency).
+- FINAL RUN: 21 pass / 0 fail / 63 expect() calls on the exact shipped artifact; dev server healthy on :3000 afterwards.
+
+Stage Summary:
+- The CI-replayable API gate the readiness report asked for now exists; future agents run `bun run test:api` before any merge.
+
+---
+Task ID: CONSOLIDATION-02
+Agent: Principal Orchestrator (main)
+Task: Merge MJG-016..020 branches via plumbing, release-sync dev→main, cleanup.
+
+Work Log:
+- (this section is appended post-merge with the resulting hashes)
+
+Stage Summary:
+- (see final entry)
