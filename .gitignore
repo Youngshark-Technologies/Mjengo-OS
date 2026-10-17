@@ -52,3 +52,12 @@ prompt
 server.log
 # Skills directory
 /skills/
+# MJG-018/020 — local database artifacts (never commit data or test DBs)
+db/backups/
+db/api-test.db
+db/api-test.db-journal
+db/restore-drill-*.db
+api-test-server.log
+
+# MJG-019 — the template IS committed; real env files stay ignored
+!.env.example
