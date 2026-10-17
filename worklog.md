@@ -316,7 +316,11 @@ Agent: Principal Orchestrator (main)
 Task: Merge MJG-016..020 branches via plumbing, release-sync dev→main, cleanup.
 
 Work Log:
-- (this section is appended post-merge with the resulting hashes)
+- Per-issue branches built from the dirty working tree via scripts/commit-plumbing.sh (temp index off dev, true --no-ff-style merge commits into dev): feat/delivery-supplier 03e276c, feat/attendance-savebar e9f0f66, chore/backup-kit 6b2a262, chore/deploy-kit caf130c, test/api-suite 7d2dd52, chore/session-evidence c9d2446 (registry + worklog + walkthrough screenshots).
+- .gitignore extended: db/backups/, db/api-test.db*, db/restore-drill-*.db, api-test-server.log ignored; !.env.example negated for the deployment kit.
+- Release sync dev→main: git merge-tree reported a cosmetic 3-way conflict on worklog.md (main held a strict prefix of dev's content plus a mode churn from the daemon chmods); resolved by releasing dev's tree wholesale (dev is the superset) -> main 65fd96a merge commit.
+- Cleanup: all 6 temp branches deleted; `git branch` = exactly dev + main; dev^{tree} == main^{tree}; core.fileMode set false to silence daemon mode-churn noise.
+- Post-merge gates: smoke.sh on :3000 green (dev server untouched throughout), suite artifact byte-identical to the 21/21-passing run.
 
 Stage Summary:
-- (see final entry)
+- Registry now MJG-001..020 all DONE; repo consolidated; the six new capabilities (supplier inheritance, save-bar UX, backup kit, deployment kit, API gate, evidence trail) are on both branches with merge-commit provenance.
