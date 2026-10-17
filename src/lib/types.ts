@@ -241,6 +241,14 @@ export interface DashboardData {
   }[]
 }
 
+export interface OrgMemberDTO {
+  id: string
+  name: string
+  email: string
+  role: Role
+  createdAt: string
+}
+
 export function formatMoney(amount: number): string {
   return `KES ${amount.toLocaleString('en-KE', { maximumFractionDigits: 0 })}`
 }

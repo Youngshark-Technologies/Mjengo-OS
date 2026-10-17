@@ -21,6 +21,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-011 | Hardcoded-data elimination audit & report | QA | chore/hardcoded-audit | DONE |
 | MJG-012 | End-to-end browser QA (golden journeys), regression & gates evidence | QA | chore/e2e-qa | IN_PROGRESS |
 | MJG-013 | Git consolidation: exactly `dev` + `main`, temp branch cleanup, final report | DevOps | chore/git-consolidation | TODO |
+| MJG-014 | Org member management: OWNER creates SUPERVISOR/WORKER members (discovered via E2E planning — without it the evidence segregation-of-duties journey is unreachable) | Security+Frontend | feat/org-members | DONE |
 
 ---
 
@@ -78,3 +79,6 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 ## MJG-013 — Git consolidation & final report
 **Scope:** exactly `dev` + `main` remain (temp branches deleted after --no-ff merges); dev → main after full QA; `docs/PRODUCTION_READINESS_REPORT.md` with verified results vs limitations; secrets scan (no committed credentials).
 **Accept:** `git branch` = dev, main; report complete; acceptance checklist answered honestly.
+
+## MJG-014 — Org member management (added during E2E planning)
+**Root cause:** registration creates OWNER only; evidence verification forbids self-verification (red line), so without SUPERVISOR accounts the verification journey could never run in production. **Fix:** `GET/POST /api/users` (POST OWNER-only, roles SUPERVISOR|WORKER, scrypt-hashed password, 409 duplicate) + "Team" tab in Workforce view (member table, add-member dialog gated to OWNER, role helper copy). **Accept:** OWNER adds supervisor → supervisor signs in → verifies worker's evidence; WORKER/SUPERVISOR see no Add-member button; API 403s non-OWNER creates.

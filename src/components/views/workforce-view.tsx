@@ -12,7 +12,9 @@ import {
   MoreHorizontal,
   Plus,
   RefreshCw,
+  ShieldCheck,
   TriangleAlert,
+  UserPlus,
   Users,
 } from 'lucide-react'
 
@@ -26,6 +28,8 @@ import {
   type AssignmentStatus,
   type AttendanceDTO,
   type AttendanceStatus,
+  type OrgMemberDTO,
+  type SessionUser,
   type SiteDTO,
   type WorkerDTO,
   type WorkerTrade,
@@ -176,6 +180,7 @@ export function WorkforceView() {
           <TabsTrigger value="workers">Workers</TabsTrigger>
           <TabsTrigger value="assignments">Assignments</TabsTrigger>
           <TabsTrigger value="attendance">Attendance (today)</TabsTrigger>
+          <TabsTrigger value="team">Team</TabsTrigger>
         </TabsList>
         <TabsContent value="workers">
           <WorkersTab />
@@ -185,6 +190,9 @@ export function WorkforceView() {
         </TabsContent>
         <TabsContent value="attendance">
           <AttendanceTab onGoToAssignments={() => setTab('assignments')} />
+        </TabsContent>
+        <TabsContent value="team">
+          <TeamTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -1081,6 +1089,180 @@ function AttendanceTab({ onGoToAssignments }: { onGoToAssignments: () => void })
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+/* ------------------------------- Team ------------------------------- */
+
+const ROLE_BADGE: Record<string, string> = {
+  OWNER: 'bg-amber-500/10 text-amber-600 border-amber-500/30',
+  SUPERVISOR: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30',
+  WORKER: 'bg-stone-500/10 text-stone-600 border-stone-500/30',
+}
+
+function TeamTab() {
+  const { toast } = useToast()
+  const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [role, setRole] = useState<'SUPERVISOR' | 'WORKER'>('SUPERVISOR')
+
+  const me = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.get<SessionUser>('/api/auth/me'),
+    staleTime: 60_000,
+  })
+  const members = useQuery({
+    queryKey: ['users'],
+    queryFn: () => api.get<OrgMemberDTO[]>('/api/users'),
+  })
+
+  const isOwner = me.data?.role === 'OWNER'
+
+  const addMember = useMutation({
+    mutationFn: () =>
+      api.post<OrgMemberDTO>('/api/users', { name, email, password, role }),
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      setOpen(false)
+      setName(''); setEmail(''); setPassword(''); setRole('SUPERVISOR')
+      toast({ title: 'Member added', description: `${created.name} can sign in with the credentials you set.` })
+    },
+    onError: (e: Error) =>
+      toast({ title: 'Could not add member', description: e.message, variant: 'destructive' }),
+  })
+
+  return (
+    <div className="space-y-4">
+      <Card className="flex flex-col gap-3 border-stone-200 bg-stone-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 rounded-lg bg-amber-500/10 p-2">
+            <ShieldCheck className="h-4 w-4 text-amber-600" aria-hidden="true" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-stone-900">Roles keep accountability human.</p>
+            <p className="text-xs text-stone-500">
+              Supervisors verify evidence and review deliveries. Workers report from the field.
+              Only the owner approves payments.
+            </p>
+          </div>
+        </div>
+        {isOwner ? (
+          <Button className="h-11 shrink-0 bg-amber-500 text-stone-950 hover:bg-amber-600" onClick={() => setOpen(true)}>
+            <UserPlus className="mr-2 h-4 w-4" aria-hidden="true" /> Add member
+          </Button>
+        ) : (
+          <span className="text-xs text-stone-400 sm:self-center">Only the owner can add members</span>
+        )}
+      </Card>
+
+      {members.isLoading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+        </div>
+      ) : members.isError ? (
+        <Card className="flex flex-col items-center gap-3 border-stone-200 p-8 text-center">
+          <TriangleAlert className="h-8 w-8 text-stone-400" aria-hidden="true" />
+          <p className="text-sm text-stone-600">{(members.error as Error).message}</p>
+          <Button variant="outline" className="h-11" onClick={() => members.refetch()}>
+            <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" /> Retry
+          </Button>
+        </Card>
+      ) : (members.data ?? []).length === 0 ? (
+        <Card className="border-dashed border-stone-300 p-8 text-center text-sm text-stone-500">
+          No team members yet.
+        </Card>
+      ) : (
+        <>
+          {/* Desktop table */}
+          <div className="hidden overflow-hidden rounded-xl border border-stone-200 bg-white md:block">
+            <Table>
+              <TableHeader>
+                <TableRow className="border-stone-200">
+                  <TableHead>Name</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Joined</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(members.data ?? []).map((m) => (
+                  <TableRow key={m.id} className="border-stone-100">
+                    <TableCell className="font-medium text-stone-900">{m.name}</TableCell>
+                    <TableCell className="text-stone-500">{m.email}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={ROLE_BADGE[m.role] ?? ''}>{m.role}</Badge>
+                    </TableCell>
+                    <TableCell className="text-stone-500">
+                      {new Date(m.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {/* Mobile cards */}
+          <div className="space-y-2 md:hidden">
+            {(members.data ?? []).map((m) => (
+              <Card key={m.id} className="flex items-center justify-between gap-3 p-4">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-stone-900">{m.name}</p>
+                  <p className="truncate text-xs text-stone-500">{m.email}</p>
+                </div>
+                <Badge variant="outline" className={ROLE_BADGE[m.role] ?? ''}>{m.role}</Badge>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add team member</DialogTitle>
+            <DialogDescription>
+              Create an account for a supervisor or worker in your organization. They sign in with the
+              email and password you set here.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="member-name">Full name</Label>
+              <Input id="member-name" className="h-11" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Amina Supervisor" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="member-email">Email</Label>
+              <Input id="member-email" className="h-11" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="supervisor@company.co.ke" autoComplete="off" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="member-password">Temporary password</Label>
+              <Input id="member-password" className="h-11" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" autoComplete="new-password" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Role</Label>
+              <Select value={role} onValueChange={(v) => setRole(v as 'SUPERVISOR' | 'WORKER')}>
+                <SelectTrigger className="h-11 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="SUPERVISOR">Supervisor — verifies evidence and deliveries</SelectItem>
+                  <SelectItem value="WORKER">Worker — reports from the field</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              className="h-11 w-full bg-amber-500 text-stone-950 hover:bg-amber-600"
+              disabled={addMember.isPending || !name.trim() || !email.trim() || password.length < 8}
+              onClick={() => addMember.mutate()}
+            >
+              {addMember.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+              Create member account
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
