@@ -19,8 +19,8 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-009 | Procurement/deliveries/payments views + workforce/evidence views + auth view | Frontend | feat/views-commerce | DONE |
 | MJG-010 | SPA integration, page wiring, navigation & session routing | Frontend | feat/spa-integration | DONE |
 | MJG-011 | Hardcoded-data elimination audit & report | QA | chore/hardcoded-audit | DONE |
-| MJG-012 | End-to-end browser QA (golden journeys), regression & gates evidence | QA | chore/e2e-qa | IN_PROGRESS |
-| MJG-013 | Git consolidation: exactly `dev` + `main`, temp branch cleanup, final report | DevOps | chore/git-consolidation | TODO |
+| MJG-012 | End-to-end browser QA (golden journeys), regression & gates evidence | QA | chore/e2e-qa | DONE |
+| MJG-013 | Git consolidation: exactly `dev` + `main`, temp branch cleanup, final report | DevOps | chore/git-consolidation | DONE |
 | MJG-014 | Org member management: OWNER creates SUPERVISOR/WORKER members (discovered via E2E planning — without it the evidence segregation-of-duties journey is unreachable) | Security+Frontend | feat/org-members | DONE |
 | MJG-015 | Material catalogue UI: add-material dialog in inventory view (E2E gap — stock-in was impossible without catalogue entries) | Frontend | feat/material-ui | DONE |
 
