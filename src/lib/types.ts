@@ -183,6 +183,7 @@ export interface EvidenceDTO {
   milestoneName: string | null
   title: string
   description: string
+  photoUrl: string | null
   status: EvidenceStatus
   reportedById: string
   reportedByName: string
