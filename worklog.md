@@ -208,3 +208,20 @@ Stage Summary:
 - Design system held: warm stone-50 canvas, stone-900/950 type, amber-500/600 accent only; no blue/indigo/purple, no emojis, zero AI/auto-approval language — the workflow section explicitly frames verification as named human decisions, matching the API-level segregation-of-duties from MJG-006.
 - Landing page anchors: #pillars (features) and #how (workflow), both with scroll-mt-16 for the sticky-nav offset; footer nav buttons reuse the same smooth-scroll helper pattern.
 - Remaining for page wiring agents: render `<LandingView onExplore={...} onGetStarted={...} />` from src/app/page.tsx (or session router) — onGetStarted should route to auth; onExplore can be a no-op (in-view scroll handles Explore).
+
+---
+Task ID: MJG-012 + MJG-013 (final)
+Agent: Principal Orchestrator (main)
+Task: End-to-end browser QA, hardcoded-data audit, git consolidation, final report.
+
+Work Log:
+- Browser E2E (agent-browser): 18-step golden journey PASSED — register org → dashboard zeros → create site → add material → stock IN (200 BAG) → supplier → PO KES 70,000 DRAFT→SENT → delivery verified (stock auto 200→300, re-verify blocked) → duplicate delivery REJECTED (zero stock, named human) → worker → assignment ASSIGNED→ACTIVE → attendance (Present 1) → OWNER created SUPERVISOR member (MJG-014) → evidence reported → segregation guard verified (reporter's Verify/Reject disabled + API 403) → second browser session (supervisor) verified evidence ("Verified by Amina Supervisor") → payment PENDING→APPROVED→PAID (OWNER-only) → dashboard metrics all live (stock 210,000 / spend 70,000 / workforce 1 / real activity feed) → session persists on reload → logout → landing. Mobile 375px: hero + shell render, no horizontal overflow.
+- E2E-found bugs fixed at root: optionalDate rejected explicit null (POST /api/sites 400); react-hooks setState-in-effect in hero; EvidenceDTO.photoUrl contract gap. Flow blockers filed and fixed: MJG-014 (org member management), MJG-015 (material catalogue UI).
+- Hardcoded-data audit PASS → docs/HARDCODED_DATA_AUDIT.md (0 mock arrays, 0 secrets, 0 fabricated metrics; scaffold placeholders replaced).
+- Final report → docs/PRODUCTION_READINESS_REPORT.md (honest acceptance scoring; deployment is the only unmet item — requires external infra).
+- Git consolidation: release merge dev → main via plumbing; 17 temp branches deleted; verified exactly `dev` + `main` remain, trees identical, working tree clean, health endpoint {status:ok, database:connected}, landing 200.
+
+Stage Summary:
+- FINAL STATE: main b5261ad+ (release) == dev, 156 tracked files, 0 dirty, 2 orgs / 3 users of real persisted data, health green.
+- Acceptance: 11/14 criteria fully met with evidence; 3 explicitly limited (deployment ⛔ needs infra, backups ⚠️, staging ⚠️ stood in by dev validation) — all documented in the final report.
+- Delivered: production-ready MjengoOS (25 API routes, 18-model schema, 8 domain views + auth + 17s hero marketing site), issue-driven branch/merge history MJG-001..015, audit + report docs.
