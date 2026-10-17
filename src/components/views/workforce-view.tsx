@@ -1069,18 +1069,37 @@ function AttendanceTab({ onGoToAssignments }: { onGoToAssignments: () => void })
             })}
           </div>
 
+          {/* MJG-017: the batch save is deliberate by design — the dirty state
+              must be unmissable (amber emphasis + live announcement). */}
           <div className="sticky bottom-4 z-10">
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
-              <p className="flex items-center gap-2 text-sm text-stone-600">
-                <ClipboardList className="size-4 text-stone-400" aria-hidden />
+            <div
+              role="status"
+              aria-live="polite"
+              className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 backdrop-blur transition-colors ${
+                changedEntries.length > 0
+                  ? 'border-amber-300 bg-amber-50/95 shadow-lg shadow-amber-500/10'
+                  : 'border-stone-200 bg-white/95 shadow-lg'
+              }`}
+            >
+              <p
+                className={`flex items-center gap-2 text-sm ${
+                  changedEntries.length > 0 ? 'font-medium text-amber-900' : 'text-stone-600'
+                }`}
+              >
+                <ClipboardList
+                  className={`size-4 ${changedEntries.length > 0 ? 'text-amber-600' : 'text-stone-400'}`}
+                  aria-hidden
+                />
                 {changedEntries.length === 0
                   ? 'All records saved for this date'
-                  : `${changedEntries.length} change${changedEntries.length === 1 ? '' : 's'} ready`}
+                  : `${changedEntries.length} change${changedEntries.length === 1 ? '' : 's'} ready — not saved yet`}
               </p>
               <Button
                 onClick={() => saveAttendance.mutate(changedEntries)}
                 disabled={saveAttendance.isPending || changedEntries.length === 0}
-                className="h-11 bg-amber-500 text-stone-950 hover:bg-amber-600"
+                className={`h-11 bg-amber-500 text-stone-950 hover:bg-amber-600 ${
+                  changedEntries.length > 0 ? 'shadow-md shadow-amber-500/40' : ''
+                }`}
               >
                 {saveAttendance.isPending && <Loader2 className="animate-spin" aria-hidden />} Save
                 attendance ({changedEntries.length})
