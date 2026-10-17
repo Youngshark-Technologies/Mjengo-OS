@@ -15,9 +15,11 @@ import {
 import { api } from '@/lib/api-client'
 import { useAppStore } from '@/lib/store'
 import {
+  MATERIAL_UNIT_VALUES,
   MOVEMENT_TYPE_VALUES,
   formatMoney,
   type MaterialDTO,
+  type MaterialUnit,
   type MovementType,
   type SiteDTO,
   type StockLevelDTO,
@@ -91,6 +93,7 @@ export function InventoryView() {
   const { toast } = useToast()
   const [selectedSiteId, setSelectedSiteId] = useState<string>('')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [materialDialogOpen, setMaterialDialogOpen] = useState(false)
   const [form, setForm] = useState<MovementForm>(EMPTY_MOVEMENT)
 
   const sitesQ = useQuery({
@@ -207,14 +210,23 @@ export function InventoryView() {
             </SelectContent>
           </Select>
         </div>
-        <Button
-          className="h-11 bg-amber-600 text-white hover:bg-amber-500"
-          onClick={() => setDialogOpen(true)}
-          disabled={siteId === ''}
-        >
-          <PackagePlus className="size-4" />
-          Record movement
-        </Button>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <Button
+            className="h-11 bg-amber-600 text-white hover:bg-amber-500"
+            onClick={() => setMaterialDialogOpen(true)}
+          >
+            <Plus className="size-4" />
+            Add material
+          </Button>
+          <Button
+            className="h-11 bg-amber-600 text-white hover:bg-amber-500"
+            onClick={() => setDialogOpen(true)}
+            disabled={siteId === ''}
+          >
+            <PackagePlus className="size-4" />
+            Record movement
+          </Button>
+        </div>
       </div>
 
       {sitesQ.isError ? (
@@ -512,6 +524,91 @@ export function InventoryView() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Add material dialog */}
+      <AddMaterialDialog open={materialDialogOpen} onOpenChange={setMaterialDialogOpen} />
     </div>
+  )
+}
+
+/* ------------------------- Add material dialog ------------------------- */
+
+function AddMaterialDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const qc = useQueryClient()
+  const { toast } = useToast()
+  const [name, setName] = useState('')
+  const [unit, setUnit] = useState<MaterialUnit>('BAG')
+  const [category, setCategory] = useState('GENERAL')
+  const [unitCost, setUnitCost] = useState('')
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.post<MaterialDTO>('/api/materials', {
+        name: name.trim(),
+        unit,
+        category: category.trim() || 'GENERAL',
+        unitCost: unitCost === '' ? 0 : Number(unitCost),
+      }),
+    onSuccess: (m) => {
+      qc.invalidateQueries({ queryKey: ['materials'] })
+      onOpenChange(false)
+      setName(''); setUnit('BAG'); setCategory('GENERAL'); setUnitCost('')
+      toast({ title: 'Material added', description: `${m.name} is ready to receive stock.` })
+    },
+    onError: (e: Error) =>
+      toast({ title: 'Could not add material', description: e.message, variant: 'destructive' }),
+  })
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Add material</DialogTitle>
+          <DialogDescription>
+            Catalogue an item your sites buy, store and issue — with its unit and reference cost.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="grid gap-4"
+          onSubmit={(e: FormEvent) => {
+            e.preventDefault()
+            if (name.trim()) create.mutate()
+          }}
+        >
+          <div className="grid gap-2">
+            <Label htmlFor="material-name">Name</Label>
+            <Input id="material-name" className="h-11" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Cement (50kg)" />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label htmlFor="material-unit">Unit</Label>
+              <Select value={unit} onValueChange={(v) => setUnit(v as MaterialUnit)}>
+                <SelectTrigger id="material-unit" className="h-11 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {MATERIAL_UNIT_VALUES.map((u) => (
+                    <SelectItem key={u} value={u}>{u}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="material-cost">Unit cost (KES)</Label>
+              <Input id="material-cost" className="h-11" type="number" min="0" step="any" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="e.g. 700" />
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="material-category">Category</Label>
+            <Input id="material-category" className="h-11" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="GENERAL, CEMENT, STEEL…" />
+          </div>
+          <Button
+            type="submit"
+            className="h-11 bg-amber-600 text-white hover:bg-amber-500"
+            disabled={create.isPending || !name.trim()}
+          >
+            {create.isPending ? 'Saving…' : 'Add material'}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
