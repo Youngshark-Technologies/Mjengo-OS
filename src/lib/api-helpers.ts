@@ -104,6 +104,13 @@ export async function findOrgRecord<T>(
 }
 
 export const idSchema = z.string().min(1, 'id is required')
-export const optionalDate = z.union([z.string().datetime({ offset: true }), z.string().date(), z.literal('')])
+// Accepts absent key (outer z.optional when wrapped), explicit null, '' or an ISO date/datetime string.
+export const optionalDate = z
+  .union([
+    z.string().datetime({ offset: true }),
+    z.string().date(),
+    z.literal(''),
+    z.null(),
+  ])
   .optional()
   .transform(v => (v ? new Date(v) : null))
