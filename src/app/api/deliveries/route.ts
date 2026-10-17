@@ -25,6 +25,9 @@ const deliveryInclude = {
   items: { include: { material: true } },
   site: true,
   supplier: true,
+  // MJG-016: deliveries created against a PO may carry no explicit supplier;
+  // the PO's supplier is the display fallback (also repairs legacy rows).
+  purchaseOrder: { include: { supplier: true } },
 } satisfies Prisma.DeliveryInclude
 
 type DeliveryWithRelations = Prisma.DeliveryGetPayload<{ include: typeof deliveryInclude }>
@@ -35,7 +38,8 @@ function toDeliveryDTO(delivery: DeliveryWithRelations, verifiedByName: string |
     siteId: delivery.siteId,
     siteName: delivery.site.name,
     purchaseOrderId: delivery.purchaseOrderId,
-    supplierName: delivery.supplier?.name ?? null,
+    // MJG-016: explicit supplier wins, then the linked PO's supplier, then null.
+    supplierName: delivery.supplier?.name ?? delivery.purchaseOrder?.supplier?.name ?? null,
     status: delivery.status as DeliveryStatus,
     deliveredAt: delivery.deliveredAt.toISOString(),
     verifiedByName,
@@ -112,8 +116,12 @@ export async function POST(req: Request) {
 
     // Org-ownership checks (404 keeps cross-tenant ids indistinguishable).
     await findOrgRecord(db.site, body.siteId, user.organizationId, 'Site')
+    let poSupplierId: string | null = null
     if (body.purchaseOrderId) {
-      await findOrgRecord(db.purchaseOrder, body.purchaseOrderId, user.organizationId, 'Purchase order')
+      // MJG-016: the PO is loaded anyway for the ownership check — capture its
+      // supplier so the delivery denormalizes it when none is explicitly given.
+      const po = await findOrgRecord(db.purchaseOrder, body.purchaseOrderId, user.organizationId, 'Purchase order')
+      poSupplierId = po.supplierId
     }
     if (body.supplierId) {
       await findOrgRecord(db.supplier, body.supplierId, user.organizationId, 'Supplier')
@@ -133,7 +141,8 @@ export async function POST(req: Request) {
         organizationId: user.organizationId,
         siteId: body.siteId,
         purchaseOrderId: body.purchaseOrderId,
-        supplierId: body.supplierId,
+        // MJG-016: explicit supplier wins; otherwise inherit the PO's supplier.
+        supplierId: body.supplierId ?? poSupplierId,
         status: 'PENDING',
         notes: body.notes,
         items: {
