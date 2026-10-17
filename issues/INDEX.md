@@ -8,19 +8,21 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 
 | ID | Title | Team | Branch | Status |
 |----|-------|------|--------|--------|
-| MJG-001 | Construction-domain database schema (Prisma/SQLite) | Database | infra/db-schema | IN_PROGRESS |
-| MJG-002 | Real authentication & server-side authorization (sessions, scrypt) | Security | feat/auth-api | TODO |
-| MJG-003 | Dashboard API — metrics computed from live records (zero hardcoded stats) | Backend | feat/dashboard-api | TODO |
-| MJG-004 | Sites, materials, inventory & milestones APIs (org-scoped, zod-validated) | Backend | feat/api-sites-materials | TODO |
-| MJG-005 | Suppliers, purchase orders & deliveries APIs (human verification) | Backend | feat/api-procurement | TODO |
-| MJG-006 | Workforce, site evidence & payments APIs (human-only verification/approval red line) | Backend | feat/api-workforce-evidence-payments | TODO |
-| MJG-007 | Marketing landing + 17s six-scene hero animation (original choreography, a11y, reduced-motion) | Frontend | feat/marketing-hero | TODO |
-| MJG-008 | App shell + dashboard/sites/inventory views (live data, real empty/error states) | Frontend | feat/views-operations | TODO |
-| MJG-009 | Procurement/deliveries/payments views + workforce/evidence views + auth view | Frontend | feat/views-commerce | TODO |
-| MJG-010 | SPA integration, page wiring, navigation & session routing | Frontend | feat/spa-integration | TODO |
-| MJG-011 | Hardcoded-data elimination audit & report | QA | chore/hardcoded-audit | TODO |
-| MJG-012 | End-to-end browser QA (golden journeys), regression & gates evidence | QA | chore/e2e-qa | TODO |
-| MJG-013 | Git consolidation: exactly `dev` + `main`, temp branch cleanup, final report | DevOps | chore/git-consolidation | TODO |
+| MJG-001 | Construction-domain database schema (Prisma/SQLite) | Database | infra/db-schema | DONE |
+| MJG-002 | Real authentication & server-side authorization (sessions, scrypt) | Security | feat/auth-api | DONE |
+| MJG-003 | Dashboard API — metrics computed from live records (zero hardcoded stats) | Backend | feat/dashboard-api | DONE |
+| MJG-004 | Sites, materials, inventory & milestones APIs (org-scoped, zod-validated) | Backend | feat/api-sites-materials | DONE |
+| MJG-005 | Suppliers, purchase orders & deliveries APIs (human verification) | Backend | feat/api-procurement | DONE |
+| MJG-006 | Workforce, site evidence & payments APIs (human-only verification/approval red line) | Backend | feat/api-workforce-evidence-payments | DONE |
+| MJG-007 | Marketing landing + 17s six-scene hero animation (original choreography, a11y, reduced-motion) | Frontend | feat/marketing-hero | DONE |
+| MJG-008 | App shell + dashboard/sites/inventory views (live data, real empty/error states) | Frontend | feat/views-operations | DONE |
+| MJG-009 | Procurement/deliveries/payments views + workforce/evidence views + auth view | Frontend | feat/views-commerce | DONE |
+| MJG-010 | SPA integration, page wiring, navigation & session routing | Frontend | feat/spa-integration | DONE |
+| MJG-011 | Hardcoded-data elimination audit & report | QA | chore/hardcoded-audit | DONE |
+| MJG-012 | End-to-end browser QA (golden journeys), regression & gates evidence | QA | chore/e2e-qa | DONE |
+| MJG-013 | Git consolidation: exactly `dev` + `main`, temp branch cleanup, final report | DevOps | chore/git-consolidation | DONE |
+| MJG-014 | Org member management: OWNER creates SUPERVISOR/WORKER members (discovered via E2E planning — without it the evidence segregation-of-duties journey is unreachable) | Security+Frontend | feat/org-members | DONE |
+| MJG-015 | Material catalogue UI: add-material dialog in inventory view (E2E gap — stock-in was impossible without catalogue entries) | Frontend | feat/material-ui | DONE |
 
 ---
 
@@ -78,3 +80,9 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 ## MJG-013 — Git consolidation & final report
 **Scope:** exactly `dev` + `main` remain (temp branches deleted after --no-ff merges); dev → main after full QA; `docs/PRODUCTION_READINESS_REPORT.md` with verified results vs limitations; secrets scan (no committed credentials).
 **Accept:** `git branch` = dev, main; report complete; acceptance checklist answered honestly.
+
+## MJG-014 — Org member management (added during E2E planning)
+**Root cause:** registration creates OWNER only; evidence verification forbids self-verification (red line), so without SUPERVISOR accounts the verification journey could never run in production. **Fix:** `GET/POST /api/users` (POST OWNER-only, roles SUPERVISOR|WORKER, scrypt-hashed password, 409 duplicate) + "Team" tab in Workforce view (member table, add-member dialog gated to OWNER, role helper copy). **Accept:** OWNER adds supervisor → supervisor signs in → verifies worker's evidence; WORKER/SUPERVISOR see no Add-member button; API 403s non-OWNER creates.
+
+## MJG-015 — Material catalogue UI (added during E2E planning)
+**Root cause:** materials list endpoint existed and every dialog consumed it, but no view could CREATE a material — stock-in, POs and deliveries would be dead ends for a fresh org. **Fix:** "Add material" dialog in Inventory view (name, unit enum, category, unit cost) posting to `/api/materials` and invalidating the shared `['materials']` cache. **Accept:** fresh org can catalogue a material and immediately record an IN movement.

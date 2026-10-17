@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
@@ -14,25 +14,32 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Z.ai Code Scaffold - AI-Powered Development",
-  description: "Modern Next.js scaffold optimized for AI-powered development with Z.ai. Built with TypeScript, Tailwind CSS, and shadcn/ui.",
-  keywords: ["Z.ai", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "AI development", "React"],
-  authors: [{ name: "Z.ai Team" }],
-  icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
-  },
+  title: "MjengoOS — The evidence-backed operating system for construction",
+  description:
+    "Every site. Every milestone. Accounted for. MjengoOS connects procurement, inventory, workforce, deliveries, site evidence and owner-approved payments on one platform — with human verification at its core.",
+  keywords: [
+    "construction management",
+    "site evidence",
+    "procurement",
+    "inventory",
+    "workforce",
+    "payments",
+    "MjengoOS",
+  ],
+  authors: [{ name: "MjengoOS" }],
   openGraph: {
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
-    url: "https://chat.z.ai",
-    siteName: "Z.ai",
+    title: "MjengoOS — Build with clarity",
+    description:
+      "The evidence-backed operating system for construction. Every site. Every milestone. Accounted for.",
+    siteName: "MjengoOS",
     type: "website",
   },
-  twitter: {
-    card: "summary_large_image",
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
-  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#fafaf9",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

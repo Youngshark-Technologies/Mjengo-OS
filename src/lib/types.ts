@@ -183,6 +183,7 @@ export interface EvidenceDTO {
   milestoneName: string | null
   title: string
   description: string
+  photoUrl: string | null
   status: EvidenceStatus
   reportedById: string
   reportedByName: string
@@ -238,6 +239,14 @@ export interface DashboardData {
     meta: string
     at: string
   }[]
+}
+
+export interface OrgMemberDTO {
+  id: string
+  name: string
+  email: string
+  role: Role
+  createdAt: string
 }
 
 export function formatMoney(amount: number): string {
