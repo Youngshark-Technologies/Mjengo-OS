@@ -23,6 +23,11 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-013 | Git consolidation: exactly `dev` + `main`, temp branch cleanup, final report | DevOps | chore/git-consolidation | DONE |
 | MJG-014 | Org member management: OWNER creates SUPERVISOR/WORKER members (discovered via E2E planning — without it the evidence segregation-of-duties journey is unreachable) | Security+Frontend | feat/org-members | DONE |
 | MJG-015 | Material catalogue UI: add-material dialog in inventory view (E2E gap — stock-in was impossible without catalogue entries) | Frontend | feat/material-ui | DONE |
+| MJG-016 | Delivery supplier inherited from PO: server denormalization + display fallback (discovered in live walkthrough — PO-linked deliveries showed "No supplier recorded") | Backend | feat/delivery-supplier | DONE |
+| MJG-017 | Attendance save-bar visibility: dirty-state emphasis + aria-live (discovered in live walkthrough — queued changes were easy to miss; batch save stays by design) | Frontend | feat/attendance-savebar | DONE |
+| MJG-018 | SQLite backup & restore drill kit: VACUUM INTO backup, integrity check, count-verified restore, cron doc (report §7 item 2) | DevOps | chore/backup-kit | DONE |
+| MJG-019 | Deployment kit: Dockerfile + entrypoint, .env.example, docs/DEPLOYMENT.md, scripts/smoke.sh, /api health log typo (report §7 item 1 — sandbox-testable parts) | DevOps | chore/deploy-kit | DONE |
+| MJG-020 | Replayable API integration suite: bun:test against production server + isolated DB on :3111 (report §7 item 3) | QA | test/api-suite | DONE |
 
 ---
 
@@ -86,3 +91,30 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 
 ## MJG-015 — Material catalogue UI (added during E2E planning)
 **Root cause:** materials list endpoint existed and every dialog consumed it, but no view could CREATE a material — stock-in, POs and deliveries would be dead ends for a fresh org. **Fix:** "Add material" dialog in Inventory view (name, unit enum, category, unit cost) posting to `/api/materials` and invalidating the shared `['materials']` cache. **Accept:** fresh org can catalogue a material and immediately record an IN movement.
+
+## MJG-016 — Delivery supplier inherited from PO (discovered in live walkthrough)
+**Root cause:** `POST /api/deliveries` accepted `purchaseOrderId` and `supplierId` independently; a delivery created against a PO without explicitly re-picking the supplier stored `supplierId = null`, so the deliveries card rendered "No supplier recorded" even though the PO carried the supplier.
+**Fix (two layers):** (1) server denormalization — when `purchaseOrderId` is provided and `supplierId` is not, the PO is loaded anyway for the org-ownership check, so capture it and inherit `po.supplierId` into the created delivery (data integrity going forward); (2) display fallback — `deliveryInclude` adds `purchaseOrder.supplier`, and `toDeliveryDTO` resolves `supplierName` as `delivery.supplier?.name ?? delivery.purchaseOrder?.supplier?.name ?? null`, which also repairs pre-existing rows without a migration.
+**RED LINE:** no interaction with verification/approval flows — supplier metadata only.
+**Accept:** delivery created against a PO without explicit supplier shows the PO's supplier name (old and new rows); explicit supplierId still wins when provided; cross-tenant PO still 404; `tsc`/`lint` clean; regression covered by MJG-020 suite assertion.
+
+## MJG-017 — Attendance save-bar visibility (discovered in live walkthrough)
+**Root cause (UX, not functional):** attendance is an explicit batch save by design (draft → "Save attendance (n)" bar), but during the walkthrough the queued-changes bar rendered as a neutral grey footer below the fold — the OWNER clicked around, assumed auto-save, and the dashboard briefly showed 0 workers on site. Behavior was correct; discoverability was not.
+**Fix:** the sticky bar now signals dirty state with the brand's amber emphasis — when `changedEntries.length > 0`: amber-50 background, amber-300 border, amber-900 label, amber glow on the save button; neutral styling only when everything is saved. Status line gets `role="status" aria-live="polite"` so screen readers announce "N changes ready". Batch-save model itself is retained (deliberate design decision, documented in worklog WALKTHROUGH-01).
+**Accept:** dirty bar visually distinct in table (desktop) and card (mobile) layouts; `aria-live` present; saved state quiet; `tsc`/`lint` clean.
+
+## MJG-018 — SQLite backup & restore drill kit (report §7 item 2)
+**Scope:** `scripts/db-backup.ts` (bun + prisma): reads `DATABASE_URL`, runs SQLite `VACUUM INTO` to `db/backups/mjengo-<timestamp>.db` (consistent online backup — safe while the dev server holds the DB), then opens the backup with a second PrismaClient (`datasourceUrl` override) and runs `PRAGMA integrity_check` + per-table row counts. `scripts/db-restore.ts <backup> [--into <path>]`: verifies the backup, copies it to the target (default: scratch path — never touches the live DB unless explicitly told). `docs/BACKUPS.md`: cron schedule, retention guidance, restore drill steps.
+**Accept:** drill executed live in this sandbox: backup created → integrity ok → restored copy row counts match live DB; script exits non-zero on any check failure; cron line documented.
+**Deferred (needs external infra):** off-site replication, scheduled automated runs (cron exists in docs only), PITR (SQLite has no binlog — documented).
+
+## MJG-019 — Deployment kit (report §7 item 1 — sandbox-testable parts)
+**Scope:** multi-stage `Dockerfile` (bun deps → prisma generate → next build → slim runtime with `docker-entrypoint.sh` running `prisma db push` before `server.js`), `.dockerignore` (node_modules, .next, dev DBs, logs, walkthrough assets), `.env.example`, `docs/DEPLOYMENT.md` (docker path + bare-metal bun path + smoke + backup cron), `scripts/smoke.sh <base>` (checks `/api` health JSON `status:ok database:connected`, landing 200, `/api/sites` 401 unauthenticated — exit non-zero on any failure). Investigation note: a suspected error-log typo in the `/api` health route was ruled out at byte level (the source already reads `'[health]'`; the earlier reading was a terminal-rendering artifact) — no source change required there.
+**Accept:** smoke.sh executed live against :3000 → all checks pass; Dockerfile/entrypoint reviewed and consistent with the validated `build`/`start` scripts (docker daemon unavailable in sandbox — image build itself deferred to the deployment environment, documented).
+**Deferred (needs external infra):** the physical deployment act, domain/TLS, secrets management.
+
+## MJG-020 — Replayable API integration suite (report §7 item 3)
+**Scope:** `tests/api-mjengo.test.ts` (bun:test, zero new deps) + `scripts/api-tests.sh` + `package.json` script `test:api`. The script boots a **production server** (`next build` → standalone) on **:3111** with an **isolated SQLite DB** (`db/api-test.db`, `prisma db push` before boot; real env `DATABASE_URL` wins over bundled `.env`), waits for `/api` health, runs the suite, kills the server, removes the test DB. The :3000 dev server is never touched.
+**Suite (17 ordered cases, one linear journey):** health 200 → register org 201 (+ duplicate 409, wrong-password 401, unauthenticated 401) → site/material/stock IN (inventory math exact; OUT beyond stock 422) → supplier/PO DRAFT→SENT → **delivery against PO inherits supplier (MJG-016 regression)** → verify applies stock exactly once (re-verify 422) → worker/assignment/attendance → evidence self-verification **403** (segregation red line) → supervisor created + logs in + verifies → payment: supervisor approve 403, OWNER approve 200, mark-paid 200 → `/api/dashboard` totals assert every mutation.
+**Accept:** `bun run test:api` green end-to-end in this sandbox with the dev server still healthy on :3000 afterwards; suite is the CI-replayable artifact the readiness report asked for.
+**Deferred (needs external decisions):** component/E2E Playwright suite (browser CI), coverage thresholds.
