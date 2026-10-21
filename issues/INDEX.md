@@ -28,6 +28,8 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-018 | SQLite backup & restore drill kit: VACUUM INTO backup, integrity check, count-verified restore, cron doc (report §7 item 2) | DevOps | chore/backup-kit | DONE |
 | MJG-019 | Deployment kit: Dockerfile + entrypoint, .env.example, docs/DEPLOYMENT.md, scripts/smoke.sh, /api health log typo (report §7 item 1 — sandbox-testable parts) | DevOps | chore/deploy-kit | DONE |
 | MJG-020 | Replayable API integration suite: bun:test against production server + isolated DB on :3111 (report §7 item 3) | QA | test/api-suite | DONE |
+| MJG-021 | Gate determinism: lint-green + bare-tsc-green restored (recursive audit — MJG-020's bun-types path reference broke lint; sandbox artifact dirs broke bare tsc) | QA | fix/gate-determinism | DONE |
+| MJG-022 | Repo hygiene: untrack sandbox artifact dirs (`examples/`, `tool-results/`) committed by environment checkpoint commits | DevOps | chore/repo-hygiene | DONE |
 
 ---
 
@@ -118,3 +120,14 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 **Suite (17 ordered cases, one linear journey):** health 200 → register org 201 (+ duplicate 409, wrong-password 401, unauthenticated 401) → site/material/stock IN (inventory math exact; OUT beyond stock 422) → supplier/PO DRAFT→SENT → **delivery against PO inherits supplier (MJG-016 regression)** → verify applies stock exactly once (re-verify 422) → worker/assignment/attendance → evidence self-verification **403** (segregation red line) → supervisor created + logs in + verifies → payment: supervisor approve 403, OWNER approve 200, mark-paid 200 → `/api/dashboard` totals assert every mutation.
 **Accept:** `bun run test:api` green end-to-end in this sandbox with the dev server still healthy on :3000 afterwards; suite is the CI-replayable artifact the readiness report asked for.
 **Deferred (needs external decisions):** component/E2E Playwright suite (browser CI), coverage thresholds.
+
+## MJG-021 — Gate determinism: lint + bare tsc restored (recursive-audit finding)
+**Root cause (two independent regressions):** (1) MJG-020 added `/// <reference path="../node_modules/bun-types/index.d.ts" />` to `tests/api-mjengo.test.ts`; the `@typescript-eslint/triple-slash-reference` rule forbids `path`-style references by default, so `bun run lint` exited 1 — lint was evidently not re-run after that edit, making the shipped "gates green" claim stale. (2) `tsconfig.json` `include: ["**/*.ts", "**/*.tsx"]` with only `node_modules` excluded compiles **sandbox artifact dirs** — `examples/websocket/*` (imports `socket.io`/`socket.io-client`, not installed), `skills/*`, `tool-results/*` — so the registry's documented gate command `bunx tsc --noEmit` failed for reasons unrelated to the product; earlier sessions had masked this by manually scoping tsc to `src/`.
+**Fix (verified in working tree before filing):** (1) canonical Bun-documented form `/// <reference types="bun-types" />` — passes the rule's `types: "prefer-import"` option because bun-types is a types-only package; `bun:test` module resolution unchanged. (2) `tsconfig.json` exclude extended to `node_modules, examples, skills, tool-results` — bare tsc then compiles exactly the product scope (next-env, src, tests, scripts incl. db-backup/db-restore, .next/types); probe config run confirmed product dirs EXIT 0.
+**Accept:** bare `bun run lint` and bare `bunx tsc --noEmit` both green with no scoping tricks; `bun run test:api` still 21/21 (suite + production build unaffected); scripts/db-*.ts remain inside the type-checked scope.
+**Evidence:** lint clean; tsc clean; 21 pass / 0 fail / 63 expect() after the fix.
+
+## MJG-022 — Repo hygiene: untrack sandbox artifact directories
+**Root cause:** environment daemon checkpoint commits (UUID-named, e.g. `461dc2b`, `b946e23`) tracked non-product artifacts into the repository: `examples/websocket/{frontend,server}.tsx` (SDK samples referencing uninstalled deps — the very files that broke bare tsc) and `tool-results/read_*.txt` (raw tool output). They are not MjengoOS code, pollute `git ls-files` and future clones, and were the visible symptom behind MJG-021's tsc failure.
+**Fix:** `git rm -r --cached examples tool-results` (untrack; files remain on disk, daemon-owned; no `.gitignore` entries — the daemon may legitimately re-checkpoint them). Product evidence convention stays `download/` + `worklog.md`.
+**Accept:** `git ls-files examples tool-results` returns empty on both permanent branches; lint/tsc/test gates unaffected (eslint already ignored both dirs).
