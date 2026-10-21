@@ -34,16 +34,25 @@ function Root() {
   // MJG-028 — deep links: /#get-started and /#signin open the auth view.
   // This makes NEXT_PUBLIC_APP_URL-driven CTAs (same or cross origin) land
   // directly on authentication instead of the marketing landing.
+  // Two paths: (1) mount with the hash already present (direct deep link /
+  // cross-origin arrival), (2) same-page hash changes (the SPA does not
+  // remount on hash navigation, so `hashchange` must be handled too).
   useEffect(() => {
-    const { hash } = window.location
-    if (hash === '#get-started' || hash === '#signin') {
-      // Deferred (not synchronous in the effect body) — opening auth from a
-      // deep link is non-urgent and avoids cascading renders on mount.
+    const openAuthFromHash = () => {
+      if (window.location.hash !== '#get-started' && window.location.hash !== '#signin') return
+      // Deferred (not synchronous) — opening auth is non-urgent and avoids
+      // cascading renders on mount.
       const t = setTimeout(() => {
         setShowAuth(true)
         window.history.replaceState(null, '', window.location.pathname + window.location.search)
       }, 0)
       return () => clearTimeout(t)
+    }
+    const cleanupTimer = openAuthFromHash()
+    window.addEventListener('hashchange', openAuthFromHash)
+    return () => {
+      cleanupTimer?.()
+      window.removeEventListener('hashchange', openAuthFromHash)
     }
   }, [])
 
