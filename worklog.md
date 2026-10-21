@@ -343,3 +343,20 @@ Work Log:
 Stage Summary:
 - The recursive audit caught two stale-gate regressions that slipped through MJG-020's final run and closed them through the full pipeline (issue → branch → gates → merge → release).
 - Final state after VERIFICATION-01: 22/22 issues DONE; bare lint + bare tsc + 21-case API suite all green; repo tracks only product code + docs + evidence; exactly dev + main permanent branches.
+
+---
+Task ID: PROD-LAUNCH-01
+Agent: Principal Orchestrator (main)
+Task: Production launch preparation — demo/test data wipe, hardening, GitHub publish, Vercel handoff (MJG-023/024/025).
+
+Work Log:
+- Discovery: single runtime DB (db/custom.db); no seed scripts/uploads/caches/queues/indexes; mini-services empty; remote GitHub Youngshark-Technologies/Mjengo-OS reached via uploaded token (authenticated as Roy-Wanyoike, push:true; default main @774f06ec) — remote is a DIVERGENT lineage (unrelated histories, PRs #407-413, Supabase docs, seed-all.ts, ~457 src files/+89k lines not local).
+- SECURITY: upload/sharkpush.txt (the token) found tracked locally via daemon checkpoint — untracked in cleanup branch BEFORE any push; token used only via ephemeral credential helpers; rotation recommended.
+- MJG-023 (chore/prod-data-cleanup): scripts/db-audit-counts.ts (read-only: dynamic tables, integrity, FK orphans, --zero-required gate) + scripts/db-reset-with-backup.sh (flag-guarded, backup-mandatory). LIVE: backup mjengo-2026-10-21T11-44-48.db verified (integrity ok) → wipe 62→0 rows across 18 tables → zero-residual verified, 0 orphans. Rollback documented.
+- MJG-024 (security/prod-hardening): next.config.ts — ignoreBuildErrors:false (build passed with enforcement ON), reactStrictMode:true, security headers (nosniff, SAMEORIGIN, referrer-policy, permissions-policy) verified live via curl. Cookie secure flag already production-correct.
+- GATES on hardened tree: lint ✓, tsc ✓, test:api 21/21 (63 assertions, isolated DB, red lines incl.) ✓; empty-DB smoke on :3000 ✓ (health/landing/401 guards with zero rows).
+- Runbooks: DEPLOYMENT.md §First-time initialization & demo-data cleanup; BACKUPS.md §Reset drill; docs/PRODUCTION_LAUNCH_REPORT.md (full sign-off with before/after counts + residual risks).
+- MJG-025 (chore/github-release): NON-DESTRUCTIVE publish — dev pushed to NEW remote branch sandbox/prod-readiness-2026-10-21 (no force-push, remote history untouched) + PR → main with divergence brief and reconciliation options. Vercel redeploy blocked on credentials (no VERCEL_TOKEN/CLI in sandbox) — handoff documented (PR merge → Vercel git integration auto-deploy; carry remote #409 plain-next-build fix into whichever tree ships).
+
+Stage Summary:
+- Runtime DB is ZERO-RESIDUAL (62→0), reversible, audited; app hardened and fully gate-green on an empty database; GitHub publish delivered without destroying either lineage; the one destructive decision (which lineage becomes main) escalated to the team via PR with full evidence.
