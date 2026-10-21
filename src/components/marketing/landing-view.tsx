@@ -7,13 +7,16 @@ import { Hero } from './hero';
 import { MarketingFooter } from './marketing-footer';
 import { ProductPillars } from './product-pillars';
 import { WorkflowSection } from './workflow-section';
+import { CtaLink } from './cta-link';
 
 type LandingViewProps = {
   onExplore: () => void;
   onGetStarted: () => void;
+  /** MJG-028 — when set, Get Started CTAs navigate to the app instead of toggling in-page auth. */
+  getStartedHref?: string | null;
 };
 
-export default function LandingView({ onExplore, onGetStarted }: LandingViewProps) {
+export default function LandingView({ onExplore, onGetStarted, getStartedHref = null }: LandingViewProps) {
   const scrollToPillars = useCallback(() => {
     document.getElementById('pillars')?.scrollIntoView({ behavior: 'smooth' });
   }, []);
@@ -50,19 +53,19 @@ export default function LandingView({ onExplore, onGetStarted }: LandingViewProp
             >
               Explore
             </button>
-            <button
-              type="button"
-              onClick={onGetStarted}
+            <CtaLink
+              href={getStartedHref}
+              onActivate={onGetStarted}
               className="inline-flex h-9 items-center justify-center rounded-lg bg-amber-500 px-4 text-sm font-semibold text-stone-950 transition-colors hover:bg-amber-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
             >
               Get Started
-            </button>
+            </CtaLink>
           </div>
         </div>
       </header>
 
       <main className="flex-1">
-        <Hero onExplore={scrollToPillars} onGetStarted={onGetStarted} />
+        <Hero onExplore={scrollToPillars} onGetStarted={onGetStarted} getStartedHref={getStartedHref} />
         <div id="pillars" className="scroll-mt-16">
           <ProductPillars />
         </div>
@@ -71,7 +74,7 @@ export default function LandingView({ onExplore, onGetStarted }: LandingViewProp
         </div>
       </main>
 
-      <MarketingFooter onGetStarted={onGetStarted} />
+      <MarketingFooter onGetStarted={onGetStarted} getStartedHref={getStartedHref} />
     </div>
   );
 }
