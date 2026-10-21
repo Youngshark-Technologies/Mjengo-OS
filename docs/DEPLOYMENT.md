@@ -195,8 +195,27 @@ Database migrations are **versioned Postgres SQL** in `prisma/migrations/`
 - Rate limiting is not in-app by design (MJG-024 disclosure) — enable Vercel
   Firewall / Render rate limiting or put Cloudflare in front.
 - `/api` health remains public by design; every business route enforces the
-  session + org scoping server-side (verified by the 21-case suite, which
+  session + org scoping server-side (verified by the 30-case suite, which
   also runs against Postgres: `bun run test:api:pg`).
+
+### Partner organizations (MJG-035)
+
+Registration supports three organization types — **Constructor**, **Supplier**
+and **Logistics** (`Organization.type`, default Constructor). Anyone can
+self-register as a supplier or logistics partner from the same sign-up form;
+partner sessions land in a dedicated read-only **partner portal** instead of
+the constructor operating system:
+
+- Supplier orgs see the purchase orders constructors addressed to them —
+  and only after a constructor links its supplier record to the partner's
+  organization (`PATCH /api/suppliers/{id}`, directory via
+  `GET /api/partners?type=SUPPLIER`). DRAFT orders never leave the
+  constructor org.
+- Logistics orgs get registration + profile today; delivery-task assignment
+  ships in a later release (registry MJG-036).
+
+No extra environment configuration is required — the partner model is pure
+application logic on the same database and session model.
 
 ### Self-hosted alternative (unchanged)
 

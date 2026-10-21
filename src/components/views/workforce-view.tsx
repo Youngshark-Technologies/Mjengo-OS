@@ -98,6 +98,15 @@ const assignmentStatusClass: Record<AssignmentStatus, string> = {
   COMPLETED: 'border-emerald-300 bg-emerald-50 text-emerald-700',
 }
 
+// MJG-032 — client-side mirror of the server FSM on PATCH /api/assignments/[id]
+// (ASSIGNED → ACTIVE → COMPLETED; COMPLETED is terminal). Only legal next
+// statuses are offered, so the UI can never trigger a 422 transition.
+const ASSIGNMENT_TRANSITIONS: Record<AssignmentStatus, AssignmentStatus[]> = {
+  ASSIGNED: ['ACTIVE'],
+  ACTIVE: ['COMPLETED'],
+  COMPLETED: [],
+}
+
 const attendanceStatusClass: Record<AttendanceStatus, string> = {
   PRESENT: 'border-emerald-300 bg-emerald-50 text-emerald-700',
   ABSENT: 'border-red-300 bg-red-50 text-red-700',
@@ -602,7 +611,7 @@ function AssignmentsTab() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuLabel>Update status</DropdownMenuLabel>
-                          {ASSIGNMENT_STATUS_VALUES.filter((s) => s !== a.status).map((s) => (
+                          {ASSIGNMENT_TRANSITIONS[a.status].map((s) => (
                             <DropdownMenuItem
                               key={s}
                               onClick={() => setStatus.mutate({ id: a.id, status: s })}
@@ -610,6 +619,9 @@ function AssignmentsTab() {
                               Mark {humanize(s).toLowerCase()}
                             </DropdownMenuItem>
                           ))}
+                          {ASSIGNMENT_TRANSITIONS[a.status].length === 0 && (
+                            <DropdownMenuItem disabled>No further transitions</DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -639,7 +651,7 @@ function AssignmentsTab() {
                   </span>
                 </div>
                 <div className="flex gap-2 border-t border-stone-100 pt-3">
-                  {ASSIGNMENT_STATUS_VALUES.filter((s) => s !== a.status).map((s) => (
+                  {ASSIGNMENT_TRANSITIONS[a.status].map((s) => (
                     <Button
                       key={s}
                       variant="outline"
@@ -650,6 +662,11 @@ function AssignmentsTab() {
                       Mark {humanize(s).toLowerCase()}
                     </Button>
                   ))}
+                  {ASSIGNMENT_TRANSITIONS[a.status].length === 0 && (
+                    <p className="w-full pt-1 text-center text-xs text-stone-400">
+                      Assignment completed — no further actions.
+                    </p>
+                  )}
                 </div>
               </Card>
             ))}
