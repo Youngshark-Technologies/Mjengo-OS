@@ -379,3 +379,45 @@ Stage Summary:
 - Registry 30/34 issues DONE-or-OPEN as designed (MJG-026..029 DONE this sprint; MJG-030/032/033/034 OPEN awaiting product/backend decisions).
 - The product is hostable: versioned Postgres migrations + render.yaml + vercel.json + main-only deployment policy + CTA routing to https://mjengoupdate.vercel.app.
 - Remaining user actions: set NEXT_PUBLIC_APP_URL=https://mjengoupdate.vercel.app (Vercel env), BACKEND_URL=<render-url>, deploy Render blueprint, rotate the GitHub token (still recommended), enable branch protection (token lacks admin).
+
+---
+Task ID: HOSTING-01-PUSH
+Agent: Principal Orchestrator (main)
+Task: MJG-031 execution evidence — GitHub lineage adoption completed.
+
+Work Log:
+- Squash: main tree 6267f41 → orphan a4da977 → history-bridge 1600308 (parents: orphan + remote main 774f06ec) — secret scan 0 hits, no forbidden paths.
+- Push: force-pushed bridge to PR #414 head `sandbox/prod-readiness-2026-10-21` (push protection PASSED — no tainted blobs crossed the wire).
+- Decision comment posted on PR #414 (Option 1 adopted per product-owner directives; hosting handoff + security notes).
+- PR #414 MERGED (merge commit f8e8c4e) → remote main content = validated hosting-ready tree.
+- Remote `dev` created at bridge 1600308 (same tree; future dev→main PRs have clean ancestry).
+- Verification: remote main tree 6267f41 == local main tree 6267f41 — IDENTICAL.
+- Temp branch `sandbox/prod-readiness-2026-10-21` deleted post-merge (temporary-branch governance; main/dev permanent).
+
+Stage Summary:
+- Remote state: main @ f8e8c4e + dev @ 1600308, both carrying the hosting-ready product; history-bridge preserved the remote lineage in the graph.
+- Local refs: main @ bbc396e, dev ⊇ main, invariant restored.
+- Token: push-scoped, no admin — branch protection + Vercel/Render deploys are repo-owner actions (runbooks in docs/DEPLOYMENT.md).
+
+---
+Task ID: OPEN-ISSUES-02
+Agent: Principal Orchestrator (main) + dispatched squads (Database, Backend, Frontend, Security, QA)
+Task: "continue. fix all issues" — close MJG-030/032/033/034 via MJG-035 (partner access model implementation) + MJG-036 follow-up filing.
+
+Work Log:
+- Decision record: "fix all issues" = product-owner approval of the MJG-030 partner design; implementation filed as MJG-035, phase-2 remainder (constructor-endpoint org-type guard, logistics delivery tasks, PO acknowledge) filed as MJG-036 (OPEN, deliberately deferred per the phased design).
+- MJG-035 schema (additive-only, both prisma twins + PG migration 20261022000000_partner_org_types): Organization.type (CONSTRUCTOR|SUPPLIER|LOGISTICS, default CONSTRUCTOR) + Supplier.partnerOrganizationId FK ("PartnerOrgSuppliers", SetNull) + index; parity gate green (314 normalized lines identical).
+- MJG-035 API: register accepts organizationType (zod union, default CONSTRUCTOR); SessionUser gains organizationType (requireUser, login, register); NEW PATCH /api/suppliers/[id] (OWNER/SUPERVISOR; validates partner org exists AND type=SUPPLIER; 404 unknown, 422 wrong type); NEW GET /api/partners?type= (OWNER/SUPERVISOR directory, ids+names+types only); NEW GET /api/partner/purchase-orders (SUPPLIER-orgs only → 403 otherwise; only POs linked via supplier records AND status != DRAFT; newest first; items + constructor org name).
+- MJG-032: assignments PATCH FSM (ASSIGNED→ACTIVE→COMPLETED, COMPLETED terminal, endDate on completion) mirroring PO ALLOWED_TRANSITIONS; workforce-view offers only legal transitions (desktop dropdown + mobile cards, explicit terminal states).
+- MJG-033: POST /api/suppliers requireUser(['OWNER','SUPERVISOR']); suppliers-tab manage controls hidden for WORKER (server 403 backstop).
+- MJG-034: removed next-auth/uuid/z-ai-web-dev-sdk (zero-import re-verified incl. dynamic usage), bun.lock regenerated; gates re-run on pruned tree — no collateral damage.
+- Frontend: auth-view org-type radio-card selector (Constructor/Supplier/Logistics, per-type copy); NEW partner-view.tsx portal (supplier PO inbox + logistics honest roadmap note; brand-panel layout, a11y h-11, skeleton/error/empty states); app-shell branches BETWEEN components (AppShell → PartnerView | ConstructorShell — keeps hook order stable); procurement suppliers tab gains Partner org column + link/unlink dialog fed by /api/partners.
+- Suite grown 21→30 cases (63→114 assertions): partner registration (SUPPLIER+LOGISTICS), partner tenancy (empty cross-org lists), WORKER supplier-create 403 + OWNER 201, partner directory type filtering, link/unlink + 404/422 rejections, SENT-visibility with DRAFT privacy + newest-first ordering, assignment FSM (jump 422 / adjacent 200 / endDate / reopen 422), partner-portal 403 for CONSTRUCTOR and LOGISTICS sessions.
+- QA battery: parity OK; lint clean; tsc clean; test:api 30/30 (114 assertions, SQLite, production build, isolated DB :3111); test:api:pg PASSED (embedded PG 18.4 → migrate deploy applied BOTH migrations → 30/30 against migrated Postgres; first attempt timed out on leftover process locks from an earlier crashed run — clean re-run passed in ~90s); smoke green on :3000; runtime DB re-verified zero-residual after E2E (18 tables, 0 rows).
+- E2E evidence (agent-browser): 45-register-orgtype-selector.png, 46-partner-portal-empty.png, 47-partner-portal-po-visible.png (supplier registers via UI → portal → constructor links supplier record + sends PO → PO card visible with org/site/items/total). E2E seed/cleanup scripts persisted (scripts/e2e-seed-partner.sh, scripts/e2e-cleanup-partner.ts — bottom-up deletion required: Restrict edges (PO→Supplier, POItem→Material) fire mid-cascade if an Organization deleteMany relies on cascade alone).
+- docs/DEPLOYMENT.md: new "Partner organizations (MJG-035)" section; suite-count references updated to 30-case.
+
+Stage Summary:
+- Registry: 35/36 DONE-or-OPEN as designed — MJG-030/032/033/034/035 DONE this sprint; MJG-036 OPEN (phase-2 remainder, single tracked follow-up).
+- The product owner's four asks are now closed end-to-end: (1) CTAs route to mjengoupdate (HOSTING-01); (2) frontend↔backend communication audited + hosted split shipped (HOSTING-01); (3) versioned migrations + Vercel/Render configs shipped (HOSTING-01) and now EXTENDED with the partner migration verified on real Postgres; (4) supplier/logistics registration is implemented — self-registration via org type, partner portal, PO visibility via supplier-record linking.
+- Remaining user actions (unchanged from HOSTING-01): set NEXT_PUBLIC_APP_URL on Vercel, BACKEND_URL pairing, deploy Render blueprint, rotate the GitHub token, enable branch protection (token lacks admin).
