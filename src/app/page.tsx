@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query'
 import { HardHat } from 'lucide-react'
 import LandingView from '@/components/marketing/landing-view'
 import { AuthView } from '@/components/views/auth-view'
 import { AppShell } from '@/components/app/app-shell'
 import { api, ApiClientError } from '@/lib/api-client'
+import { getStartedHref } from '@/lib/app-url'
 import type { SessionUser } from '@/lib/types'
 
 type MeResult = SessionUser | null
@@ -29,6 +30,31 @@ function BootSplash() {
 function Root() {
   const queryClient = useQueryClient()
   const [showAuth, setShowAuth] = useState(false)
+
+  // MJG-028 — deep links: /#get-started and /#signin open the auth view.
+  // This makes NEXT_PUBLIC_APP_URL-driven CTAs (same or cross origin) land
+  // directly on authentication instead of the marketing landing.
+  // Two paths: (1) mount with the hash already present (direct deep link /
+  // cross-origin arrival), (2) same-page hash changes (the SPA does not
+  // remount on hash navigation, so `hashchange` must be handled too).
+  useEffect(() => {
+    const openAuthFromHash = () => {
+      if (window.location.hash !== '#get-started' && window.location.hash !== '#signin') return
+      // Deferred (not synchronous) — opening auth is non-urgent and avoids
+      // cascading renders on mount.
+      const t = setTimeout(() => {
+        setShowAuth(true)
+        window.history.replaceState(null, '', window.location.pathname + window.location.search)
+      }, 0)
+      return () => clearTimeout(t)
+    }
+    const cleanupTimer = openAuthFromHash()
+    window.addEventListener('hashchange', openAuthFromHash)
+    return () => {
+      cleanupTimer?.()
+      window.removeEventListener('hashchange', openAuthFromHash)
+    }
+  }, [])
 
   const me = useQuery({
     queryKey: ['me'],
@@ -76,6 +102,7 @@ function Root() {
         document.getElementById('pillars')?.scrollIntoView({ behavior: 'smooth' })
       }}
       onGetStarted={() => setShowAuth(true)}
+      getStartedHref={getStartedHref}
     />
   )
 }

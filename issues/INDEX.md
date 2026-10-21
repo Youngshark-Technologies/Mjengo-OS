@@ -33,6 +33,15 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-023 | Production demo/test data wipe: read-only audit tooling, backup-mandatory guarded reset, zero-residual verification, runbook (62→0 rows) | Database | chore/prod-data-cleanup | DONE |
 | MJG-024 | Production hardening: type-enforced builds (`ignoreBuildErrors:false`), strict mode, baseline security headers | Security | security/prod-hardening | DONE |
 | MJG-025 | GitHub publish (non-destructive branch + reconciliation PR — remote main is a divergent Supabase-lineage state) + Vercel redeploy handoff | DevOps | chore/github-release | DONE |
+| MJG-026 | PostgreSQL migration track: dual-schema + versioned migrations + `migrate deploy` pipeline (hosting prerequisite — no migrations existed, `db push` only) | Database | feat/pg-migrations | DONE |
+| MJG-027 | Hosted deployment: Vercel (frontend/website) + Render (backend/Postgres), API proxy rewrites, env matrix, deploy-from-main-only policy | DevOps | feat/hosting-configs | DONE |
+| MJG-028 | CTA routing: Get Started / Sign in navigate to the app (NEXT_PUBLIC_APP_URL) + `#get-started`/`#signin` deep links | Frontend | feat/cta-routing | DONE |
+| MJG-029 | Runtime hygiene: gate SQL query logging to development; untrack `.env` + runtime `db/custom.db` from git | Security | chore/runtime-hygiene | DONE |
+| MJG-030 | Partner access model: supplier & logistics registration (design proposal — product decision required) | Product | — | OPEN |
+| MJG-031 | GitHub lineage adoption: push hosting-ready tree as PR #414 head, close reconciliation per product-owner direction, align local main/dev | DevOps | chore/lineage-adoption | DONE |
+| MJG-032 | Assignment status FSM: PATCH /api/assignments/[id] accepts any status jump (POs have a guarded FSM; assignments do not) | Backend | — | OPEN |
+| MJG-033 | Role policy inconsistency: POST /api/suppliers is any-role while PO create is OWNER/SUPERVISOR | Backend | — | OPEN |
+| MJG-034 | Remove unused dependencies (next-auth, uuid, z-ai-web-dev-sdk — installed, never imported) | Backend | — | OPEN |
 
 ---
 
@@ -152,3 +161,44 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 **Security:** `upload/sharkpush.txt` (the token) was tracked locally by a daemon checkpoint — untracked in chore/prod-data-cleanup BEFORE any push; token used only via ephemeral credential helpers (nothing persisted); **rotation recommended**.
 **Vercel:** no token/CLI in sandbox → redeploy cannot be executed locally. Handoff: merge the PR (or choose option) → Vercel git integration (per remote PR #408/#409 the repo is Vercel-connected) auto-deploys; note remote #409 changed `build` to plain `next build` for Vercel — reconciliation must carry that fix into whichever tree ships.
 **Accept:** branch pushed; PR opened with divergence brief; no force-push; no token leakage; Vercel steps documented.
+
+## MJG-026 — PostgreSQL migration track (hosting prerequisite)
+**Problem:** schema changes ship via `prisma db push` only; **zero versioned migrations exist**. Render Postgres (and any hosted Postgres) requires replayable migration SQL; the datasource provider is `sqlite`, which cannot even connect to a hosted Postgres URL.
+**Constraint (no collateral damage):** the sandbox runtime, dev DB, Docker path and the 21-case suite all run on SQLite — the switch must NOT break them (MJG-001..025 investments stay green).
+**Fix (dual-schema pattern):** `prisma/schema.postgres.prisma` (provider `postgresql`, models identical) alongside the untouched SQLite `prisma/schema.prisma`; versioned migrations in `prisma/migrations/` (Postgres-owned, `migration_lock.toml` provider=postgresql) generated with `prisma migrate diff --from-empty --to-schema-datamodel`; `db:migrate:deploy` script (non-interactive `prisma migrate deploy --schema prisma/schema.postgres.prisma`); `scripts/check-schema-parity.ts` (normalized diff of both schemas, exit 1 on drift) wired into the QA gate; live verification = embedded Postgres → `migrate deploy` on a real server → full 21-case API suite against the migrated Postgres DB (fallback if binaries unavailable: SQL generation + validate + honest disclosure).
+**Accept:** migration SQL generated & applied to a real Postgres; suite green against migrated PG DB; SQLite path (dev/sandbox/Docker/test suite) unchanged and green; parity gate in place; runbook documents the schema-change flow for both providers.
+
+## MJG-027 — Hosted deployment: Vercel (frontend) + Render (backend)
+**Problem:** no hosting configs exist (`vercel.json`, `render.yaml` absent); SQLite-on-Vercel is ephemeral (MJG-025 residual risk #3); the product owner requires **frontend on Vercel, backend on Render, deploys from `main` only**.
+**Architecture (Solution Architect decision):** one codebase, two targets — **Vercel** serves the UI (landing/website + app views); when `BACKEND_URL` is set, `next.config.ts` rewrites `/api/:path*` → `${BACKEND_URL}/api/:path*` so the browser stays same-origin (cookie model unchanged, no CORS needed); **Render** runs the same app as the API service with Render Postgres (`DATABASE_URL`), applying versioned migrations (`prisma migrate deploy`, MJG-026) on every deploy; on Render `BACKEND_URL` is unset so `/api/*` resolves locally.
+**Config:** `vercel.json` (framework nextjs, `buildCommand: next build` — carries remote PR #409's plain-build fix); `render.yaml` blueprint (runtime node, `branch: main`, autoDeploy, build = npm install + prisma generate (postgres schema) + next build, start = migrate deploy + node standalone server, health check `/api`); `.env.example` + `NEXT_PUBLIC_APP_URL` (app URL for CTAs, MJG-028) + `BACKEND_URL`; DEPLOYMENT.md hosted-deployment section with step-by-step for both platforms, env matrix, main-only policy, rollback, edge rate-limiting note.
+**Accept:** configs present and internally consistent; `next build` + full gates green with rewrites code present (no-op without BACKEND_URL); smoke green; deploy-from-main-only documented and enforced by config (Render `branch: main`, Vercel production branch = main documented).
+
+## MJG-028 — CTA routing to the app (Get Started / Sign in)
+**Problem (live audit):** all five conversion CTAs (header, hero end frame ×2, footer ×2) are state-toggle buttons with no href — on a split frontend the marketing page cannot send users to the app; "mjengoupdate" (the product owner's app URL) appears nowhere in config.
+**Fix:** `NEXT_PUBLIC_APP_URL` env (via new `src/lib/app-url.ts`): when set, CTAs render as anchors to `${APP_URL}/#get-started` (and `/#signin`); when unset, current in-page toggle behavior is preserved byte-for-byte (sandbox default). `page.tsx` honors the hashes on mount (`#get-started`/`#signin` → open auth view) so the deep link works both same-origin and cross-origin.
+**Accept:** with env set, clicking Get Started navigates to the app and opens auth (browser-verified evidence); with env unset, landing/auth flows unchanged; lint/tsc/suite green.
+
+## MJG-029 — Runtime hygiene: query logging + tracked secrets/DB
+**Problem (FE/BE audit findings):** (1) `src/lib/db.ts` enables `log: ['query']` unconditionally — full SQL logging (with any embedded values) in production: log noise + potential data leakage; (2) `.env` is git-tracked (predates the `.env*` ignore rule) and the runtime `db/custom.db` is git-tracked — both violate secrets/data hygiene and taint clones.
+**Fix:** gate query logging to `NODE_ENV === 'development'`; `git rm --cached .env db/custom.db` (files remain on disk for the sandbox runtime/packager) + explicit `.gitignore` entries; keep `.env.example` committed.
+**Accept:** production server logs no SQL (verified via suite run output); `git ls-files` shows neither `.env` nor `db/custom.db`; gates green; sandbox boot unaffected (file still on disk).
+
+## MJG-030 — Partner access model: supplier & logistics registration (OPEN — product decision required)
+**Current-state answer to the product owner's question:** roles are exactly `OWNER | SUPERVISOR | WORKER` (`src/lib/types.ts`), assigned only as: register → OWNER of a NEW org; OWNER creates SUPERVISOR/WORKER members (`POST /api/users`, OWNER-only). **Suppliers are data records, not identities** (`Supplier` model + `/api/suppliers`, managed by org staff; no login, no portal, no cross-org relationship). **Logistics/transport does not exist anywhere** in schema or code.
+**Proposed design (for decision):** Phase 1 — add `Organization.type` (`CONSTRUCTOR | SUPPLIER | LOGISTICS`) + partner self-registration (creates partner-type org + OWNER); Phase 2 — cross-org PO visibility: supplier-org users see POs addressed to them, accept/acknowledge, optionally log shipments; logistics orgs receive delivery tasks. Segregation and tenancy rules carry over (partner sees only own relationships). Phased to avoid breaking the verified tenant model.
+**Accept (of this issue):** design reviewed & approved by product owner → implementation issues filed. NOT implemented in this sprint (no silent scope creep).
+
+## MJG-031 — GitHub lineage adoption & push (execution)
+**Basis:** product owner directed "push the changes to GitHub" + "deployment from main only" + hosting prep — this is the PR #414 Option 1 decision (sandbox lineage becomes the product).
+**Plan:** re-squash the hosting-ready tree (secret-scan first: no `.env`, no tokens, no runtime DB) onto the PR #414 head branch; comment the PR with the decision record; merge PR #414 via API (merge commit → remote main content = validated tree, remote history preserved in graph); align local `main`/`dev` to the published remote state (content-identical); push `dev`; temp branches deleted.
+**Accept:** remote main = hosting-ready validated tree; PR #414 merged/closed with decision evidence; local and remote lineage converged; push protection clean (secret-scan 0 hits before push).
+
+## MJG-032 — Assignment status FSM (OPEN — audit finding)
+**Finding:** `PATCH /api/assignments/[id]` accepts any enum value from any current state (ASSIGNED/ACTIVE/COMPLETED jumps), unlike `PATCH /api/purchase-orders/[id]` which enforces `ALLOWED_TRANSITIONS`. Risk: completed assignments reopened, or active set on completed without `endDate` semantics. **Fix proposal:** mirror the PO FSM (ASSIGNED→ACTIVE→COMPLETED, guard endDate). Not implemented this sprint (behavior change requires product sign-off + suite coverage).
+
+## MJG-033 — Supplier creation role policy (OPEN — audit finding)
+**Finding:** `POST /api/suppliers` accepts ANY role (WORKERs can create supplier records) while `POST /api/purchase-orders` (which consumes suppliers) is OWNER/SUPERVISOR-gated. Inconsistent privilege surface. **Decision required:** either gate supplier creation to OWNER/SUPERVISOR or document the deliberate looseness. Not changed this sprint (would alter tested behavior — suite asserts supplier creation in the golden journey under the OWNER session, so gating would pass, but policy call belongs to product).
+
+## MJG-034 — Dependency hygiene (OPEN — audit finding)
+**Finding:** `next-auth@4.24.11`, `uuid@11`, `z-ai-web-dev-sdk` are declared dependencies with **zero imports** in `src/` (grep-verified). Each enlarges install surface (and `next-auth` pins old tooling). Remove in a dedicated hygiene PR after confirming no dynamic usage. Not done this sprint (install-surface change late in launch cycle = avoidable risk).

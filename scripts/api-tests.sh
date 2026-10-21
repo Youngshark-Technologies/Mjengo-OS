@@ -12,6 +12,9 @@
 set -euo pipefail
 cd /home/z/my-project
 
+echo "[api-tests] 0/5 schema parity gate (MJG-026)"
+bun scripts/check-schema-parity.ts
+
 PORT=3111
 BASE="http://localhost:$PORT"
 TEST_DB="$PWD/db/api-test.db"
