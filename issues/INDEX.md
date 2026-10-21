@@ -38,7 +38,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-028 | CTA routing: Get Started / Sign in navigate to the app (NEXT_PUBLIC_APP_URL) + `#get-started`/`#signin` deep links | Frontend | feat/cta-routing | DONE |
 | MJG-029 | Runtime hygiene: gate SQL query logging to development; untrack `.env` + runtime `db/custom.db` from git | Security | chore/runtime-hygiene | DONE |
 | MJG-030 | Partner access model: supplier & logistics registration (design proposal — product decision required) | Product | — | OPEN |
-| MJG-031 | GitHub lineage adoption: push hosting-ready tree as PR #414 head, close reconciliation per product-owner direction, align local main/dev | DevOps | chore/lineage-adoption | IN PROGRESS |
+| MJG-031 | GitHub lineage adoption: push hosting-ready tree as PR #414 head, close reconciliation per product-owner direction, align local main/dev | DevOps | chore/lineage-adoption | DONE |
 | MJG-032 | Assignment status FSM: PATCH /api/assignments/[id] accepts any status jump (POs have a guarded FSM; assignments do not) | Backend | — | OPEN |
 | MJG-033 | Role policy inconsistency: POST /api/suppliers is any-role while PO create is OWNER/SUPERVISOR | Backend | — | OPEN |
 | MJG-034 | Remove unused dependencies (next-auth, uuid, z-ai-web-dev-sdk — installed, never imported) | Backend | — | OPEN |
