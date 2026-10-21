@@ -61,3 +61,9 @@ api-test-server.log
 
 # MJG-019 — the template IS committed; real env files stay ignored
 !.env.example
+
+# MJG-023/025 — never ship runtime upload area (held credentials/pasted content)
+upload/
+# daemon artifact dirs re-tracked by checkpoints (MJG-022 recurrence guard)
+examples/
+tool-results/

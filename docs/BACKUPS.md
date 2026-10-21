@@ -62,3 +62,17 @@ Retention guidance (manual, or a small find -delete cron):
   the recovery granularity is the backup schedule itself.
 - **Automated restore alerts** — cron above logs only; wire an alert channel when
   a notification provider is selected.
+
+---
+
+## Reset drill (pre-wipe backup) — added MJG-023
+
+Before any `db-reset-with-backup.sh` run, this kit's backup step executes
+automatically and is verified (integrity + row counts vs live) before a single
+row is deleted. To roll back a wipe:
+
+```bash
+bun scripts/db-restore.ts db/backups/mjengo-<timestamp>.db --into db/custom.db
+```
+
+Launch-wipe rollback artifact: `db/backups/mjengo-2026-10-21T11-44-48.db`.
