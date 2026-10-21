@@ -1,10 +1,14 @@
 'use client';
 
+import { CtaLink } from './cta-link';
+
 type MarketingFooterProps = {
   onGetStarted: () => void;
+  /** MJG-028 — when set, Get Started CTAs navigate to the app instead of toggling in-page auth. */
+  getStartedHref?: string | null;
 };
 
-export function MarketingFooter({ onGetStarted }: MarketingFooterProps) {
+export function MarketingFooter({ onGetStarted, getStartedHref = null }: MarketingFooterProps) {
   const scrollToSection = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -25,13 +29,13 @@ export function MarketingFooter({ onGetStarted }: MarketingFooterProps) {
             Start with one site — record real deliveries, stock and attendance, and let named
             supervisors verify every report before it counts.
           </p>
-          <button
-            type="button"
-            onClick={onGetStarted}
+          <CtaLink
+            href={getStartedHref}
+            onActivate={onGetStarted}
             className="mt-8 inline-flex h-11 items-center justify-center rounded-lg bg-amber-500 px-6 text-sm font-semibold text-stone-950 shadow-[0_12px_28px_-12px_rgba(245,158,11,0.65)] transition-colors hover:bg-amber-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
           >
             Get Started
-          </button>
+          </CtaLink>
         </div>
       </div>
 
@@ -59,13 +63,13 @@ export function MarketingFooter({ onGetStarted }: MarketingFooterProps) {
             >
               How it works
             </button>
-            <button
-              type="button"
-              onClick={onGetStarted}
+            <CtaLink
+              href={getStartedHref}
+              onActivate={onGetStarted}
               className="text-sm text-stone-500 transition-colors hover:text-stone-900"
             >
               Get started
-            </button>
+            </CtaLink>
           </nav>
         </div>
         <p className="mt-8 text-xs text-stone-400">
