@@ -59,6 +59,9 @@ db/api-test.db-journal
 db/restore-drill-*.db
 api-test-server.log
 
+# MJG-026 — embedded Postgres verification data dir
+db/pg-test-data/
+
 # MJG-019 — the template IS committed; real env files stay ignored
 !.env.example
 
