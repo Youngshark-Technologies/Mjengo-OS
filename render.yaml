@@ -1,0 +1,44 @@
+# MJG-027 — Render blueprint: BACKEND service + managed PostgreSQL.
+#
+# Architecture: Vercel hosts the frontend/website (see vercel.json) and proxies
+# /api/* to this service via the BACKEND_URL rewrite (next.config.ts). This
+# service serves /api/* in-process and owns the database.
+#
+# Deploy policy: this blueprint deploys ONLY the `main` branch (production).
+# Do not point auto-deploys at dev; dev is validated locally before release.
+#
+# Apply with:  Render Dashboard → New → Blueprint → point at this repo (main).
+services:
+  - type: web
+    name: mjengoos-api
+    runtime: node
+    plan: free            # NOTE: free Postgres expires after 30 days — upgrade the database to starter for production use
+    branch: main          # deploy-from-main-only (MJG-027 acceptance)
+    autoDeploy: true      # every push to main = one deploy; PRs/branches never deploy
+    buildCommand: npm install && npx prisma generate --schema prisma/schema.postgres.prisma && npm run build
+    # Free plans have no preDeployCommand, so the versioned migrations (MJG-026)
+    # are applied idempotently before boot. `migrate deploy` is a no-op when
+    # the database is already up to date.
+    startCommand: npx prisma migrate deploy --schema prisma/schema.postgres.prisma && node .next/standalone/server.js
+    healthCheckPath: /api
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mjengoos-db
+          property: connectionString
+      # Public app origin (Vercel frontend) — inlined into the client bundle for CTA routing (MJG-028).
+      # Example: https://mjengoupdate.vercel.app
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      # Deliberately NOT set here: BACKEND_URL must remain unset on the backend —
+      # /api/* resolves in-process on this service. Setting it would create a proxy loop.
+
+databases:
+  - name: mjengoos-db
+    plan: free            # upgrade to starter+ for production (free tier databases expire)
+    databaseName: mjengoos
+    user: mjengo
