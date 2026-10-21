@@ -4,7 +4,8 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { handle, ok, parseBody, ApiError } from '@/lib/api-helpers'
 import { hashPassword, createSession, SESSION_COOKIE, sessionCookieOptions } from '@/lib/auth'
-import type { SessionUser } from '@/lib/types'
+import type { OrganizationType, SessionUser } from '@/lib/types'
+import { ORGANIZATION_TYPE_VALUES } from '@/lib/types'
 
 const registerSchema = z.object({
   name: z.string().trim().min(1, 'Name is required'),
@@ -13,6 +14,9 @@ const registerSchema = z.object({
     .transform(v => v.trim().toLowerCase()),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   organizationName: z.string().trim().min(1, 'Organization name is required'),
+  // MJG-035 — partner self-registration: a SUPPLIER or LOGISTICS organization
+  // registers exactly like a constructor; only the org type differs.
+  organizationType: z.enum(ORGANIZATION_TYPE_VALUES).default('CONSTRUCTOR'),
 })
 
 export async function POST(req: NextRequest) {
@@ -29,7 +33,7 @@ export async function POST(req: NextRequest) {
     try {
       created = await db.$transaction(async (tx) => {
         const organization = await tx.organization.create({
-          data: { name: body.organizationName },
+          data: { name: body.organizationName, type: body.organizationType },
         })
         const user = await tx.user.create({
           data: {
@@ -47,6 +51,7 @@ export async function POST(req: NextRequest) {
           role: 'OWNER',
           organizationId: organization.id,
           organizationName: organization.name,
+          organizationType: body.organizationType as OrganizationType,
         }
         return { user: sessionUser }
       })

@@ -27,6 +27,15 @@ const patchSchema = z.object({
   status: z.enum(ASSIGNMENT_STATUS_VALUES),
 })
 
+// MJG-032 — guarded status machine, mirroring PATCH /api/purchase-orders/[id]:
+// ASSIGNED → ACTIVE → COMPLETED. COMPLETED is terminal (no reopening);
+// endDate is set exactly when the assignment completes.
+const ALLOWED_TRANSITIONS: Record<AssignmentStatus, AssignmentStatus[]> = {
+  ASSIGNED: ['ACTIVE'],
+  ACTIVE: ['COMPLETED'],
+  COMPLETED: [],
+}
+
 // PATCH /api/assignments/[id] — move an assignment through ASSIGNED → ACTIVE → COMPLETED.
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
@@ -36,9 +45,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const existing = await db.assignment.findFirst({
       where: { id, organizationId: user.organizationId },
-      select: { id: true },
+      select: { id: true, status: true },
     })
     if (!existing) throw new ApiError(404, 'Assignment not found')
+
+    if (!ALLOWED_TRANSITIONS[existing.status as AssignmentStatus].includes(body.status)) {
+      throw new ApiError(422, `Invalid status transition from ${existing.status} to ${body.status}`)
+    }
 
     const assignment = await db.assignment.update({
       where: { id: existing.id },

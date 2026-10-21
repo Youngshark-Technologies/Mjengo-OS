@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     // Same 401 message for unknown email and wrong password — no user enumeration.
     const user = await db.user.findUnique({
       where: { email },
-      include: { organization: { select: { name: true } } },
+      include: { organization: { select: { name: true, type: true } } },
     })
     if (!user || !verifyPassword(body.password, user.passwordHash)) {
       throw new ApiError(401, 'Invalid email or password')
@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
       role: user.role as Role,
       organizationId: user.organizationId,
       organizationName: user.organization.name,
+      organizationType: user.organization.type as SessionUser['organizationType'],
     }
 
     const { token, expiresAt } = await createSession(user.id)

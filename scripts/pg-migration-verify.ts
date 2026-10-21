@@ -2,7 +2,7 @@
 // Sequence: embedded Postgres (real binaries, port 3112) → `prisma migrate deploy`
 // (applies prisma/migrations/** against the PG server) → regenerate the Prisma
 // client from the postgres schema → boot the production standalone server on
-// :3113 against the migrated PG database → run the full 21-case API golden-journey
+// :3113 against the migrated PG database → run the full 30-case API golden-journey
 // suite → teardown (server killed, PG stopped, SQLite client restored).
 // Any phase failure exits non-zero.
 import { spawn, spawnSync } from 'node:child_process'
@@ -77,7 +77,7 @@ async function main(): Promise<void> {
 
   // 5 — full API golden-journey suite against the migrated Postgres database
   run('bun', ['test', 'tests/api-mjengo.test.ts'],
-    { MJENGO_API_BASE: API_BASE, DATABASE_URL: PG_URL }, '21-case API suite on Postgres')
+    { MJENGO_API_BASE: API_BASE, DATABASE_URL: PG_URL }, '30-case API suite on Postgres')
 
   // 6 — teardown
   console.log('[pg-verify] 6/6 teardown')
