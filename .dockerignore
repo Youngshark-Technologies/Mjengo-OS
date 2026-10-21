@@ -1,0 +1,23 @@
+# MJG-019 — keep the build context lean and data out of images
+node_modules
+.next
+.git
+db/*.db
+db/*.db-journal
+db/backups
+db/restore-drill-*.db
+download
+upload
+dev.log
+server.log
+worklog.md
+docs
+issues
+examples
+skills
+tests
+scripts
+mini-services
+.env
+.env.*
+!.env.example

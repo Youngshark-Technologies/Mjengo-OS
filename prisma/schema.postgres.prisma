@@ -1,0 +1,378 @@
+// MjengoOS — PostgreSQL schema (MJG-026 dual-schema track).
+// Models MUST stay identical to prisma/schema.prisma (SQLite local/dev target).
+// scripts/check-schema-parity.ts enforces parity and runs in the QA gate.
+// Hosted targets: Render Postgres (render.yaml), Neon/Supabase — see docs/DEPLOYMENT.md.
+
+// MjengoOS — evidence-backed operating system for construction
+// SQLite via Prisma. Prisma enums are not supported on SQLite:
+// status/role columns are String columns validated by zod unions at the API layer (src/lib/types.ts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Identity & tenancy ───────────────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users         User[]
+  sites         Site[]
+  suppliers     Supplier[]
+  materials     Material[]
+  stockLevels   StockLevel[]
+  stockMovements StockMovement[]
+  purchaseOrders PurchaseOrder[]
+  deliveries    Delivery[]
+  workers       Worker[]
+  assignments   Assignment[]
+  attendance    Attendance[]
+  milestones    Milestone[]
+  evidenceReports EvidenceReport[]
+  payments      Payment[]
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String
+  passwordHash   String
+  role           String   @default("WORKER") // OWNER | SUPERVISOR | WORKER
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sessions       Session[]
+  reportedEvidence EvidenceReport[] @relation("Reporter")
+  verifiedEvidence EvidenceReport[] @relation("Verifier")
+  recordedPayments Payment[]        @relation("Recorder")
+  approvedPayments Payment[]        @relation("Approver")
+  loggedMovements  StockMovement[]
+  createdSites     Site[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ─── Sites & milestones ───────────────────────────────────────────────────────
+
+model Site {
+  id             String    @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  location       String
+  status         String    @default("PLANNING") // PLANNING | ACTIVE | ON_HOLD | COMPLETED
+  startDate      DateTime?
+  targetEndDate  DateTime?
+  createdById    String?
+  createdBy      User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  stockLevels    StockLevel[]
+  stockMovements StockMovement[]
+  purchaseOrders PurchaseOrder[]
+  deliveries     Delivery[]
+  assignments    Assignment[]
+  attendance     Attendance[]
+  milestones     Milestone[]
+  evidenceReports EvidenceReport[]
+  payments       Payment[]
+
+  @@index([organizationId, status])
+}
+
+model Milestone {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId         String
+  site           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  name           String
+  status         String   @default("PENDING") // PENDING | IN_PROGRESS | COMPLETED
+  dueDate        DateTime?
+  order          Int      @default(0)
+  evidenceReports EvidenceReport[]
+  payments       Payment[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, siteId])
+}
+
+// ─── Materials & inventory ────────────────────────────────────────────────────
+
+model Material {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  unit           String   // BAG | TON | KG | M3 | L | PCS | ROLL | PACK
+  category       String   @default("GENERAL")
+  unitCost       Float    @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  stockLevels    StockLevel[]
+  stockMovements StockMovement[]
+  poItems        POItem[]
+  deliveryItems  DeliveryItem[]
+
+  @@index([organizationId])
+}
+
+model StockLevel {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId         String
+  site           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  materialId     String
+  material       Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  quantity       Float    @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([siteId, materialId])
+  @@index([organizationId])
+}
+
+model StockMovement {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId         String
+  site           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  materialId     String
+  material       Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  type           String   // IN | OUT | ADJUST
+  quantity       Float
+  reason         String   @default("")
+  deliveryId     String?  @unique
+  delivery       Delivery? @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
+  userId         String?
+  user           User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, siteId])
+  @@index([organizationId, createdAt])
+}
+
+// ─── Procurement ──────────────────────────────────────────────────────────────
+
+model Supplier {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  phone          String?
+  email          String?
+  category       String   @default("GENERAL")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  purchaseOrders PurchaseOrder[]
+  deliveries     Delivery[]
+
+  @@index([organizationId])
+}
+
+model PurchaseOrder {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId         String
+  site           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  supplierId     String
+  supplier       Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  status         String   @default("DRAFT") // DRAFT | SENT | RECEIVED | CANCELLED
+  orderDate      DateTime @default(now())
+  expectedDate   DateTime?
+  notes          String   @default("")
+  items          POItem[]
+  deliveries     Delivery[]
+  payments       Payment[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, status])
+}
+
+model POItem {
+  id              String   @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  materialId      String
+  material        Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  quantity        Float
+  unitCost        Float    @default(0)
+
+  @@index([purchaseOrderId])
+}
+
+// ─── Deliveries (human verification) ──────────────────────────────────────────
+
+model Delivery {
+  id              String   @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId          String
+  site            Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  purchaseOrderId String?
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  supplierId      String?
+  supplier        Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  status          String   @default("PENDING") // PENDING | VERIFIED | REJECTED
+  deliveredAt     DateTime @default(now())
+  verifiedById    String?
+  verifiedAt      DateTime?
+  notes           String   @default("")
+  items           DeliveryItem[]
+  stockMovements  StockMovement[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([organizationId, status])
+}
+
+model DeliveryItem {
+  id                String  @id @default(cuid())
+  deliveryId        String
+  delivery          Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  materialId        String
+  material          Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  quantityDelivered Float
+  quantityAccepted  Float   @default(0)
+
+  @@index([deliveryId])
+}
+
+// ─── Workforce ────────────────────────────────────────────────────────────────
+
+model Worker {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  phone          String?
+  trade          String   @default("LABORER") // MASON | CARPENTER | STEEL_FIXER | ELECTRICIAN | PLUMBER | PAINTER | WELDER | FOREMAN | LABORER | OTHER
+  dailyRate      Float    @default(0)
+  active         Boolean  @default(true)
+  assignments    Assignment[]
+  attendance     Attendance[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model Assignment {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workerId       String
+  worker         Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  siteId         String
+  site           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  status         String   @default("ASSIGNED") // ASSIGNED | ACTIVE | COMPLETED
+  startDate      DateTime @default(now())
+  endDate        DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, siteId])
+  @@index([workerId])
+}
+
+model Attendance {
+  id          String   @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId      String
+  site        Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  workerId    String
+  worker      Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  date        DateTime
+  status      String   @default("PRESENT") // PRESENT | ABSENT | HALF_DAY
+  hoursWorked Float    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([workerId, siteId, date])
+  @@index([organizationId, date])
+}
+
+// ─── Evidence (verified by humans, never auto-approved) ───────────────────────
+
+model EvidenceReport {
+  id             String    @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId         String
+  site           Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  milestoneId    String?
+  milestone      Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  title          String
+  description    String    @default("")
+  photoUrl       String?
+  status         String    @default("REPORTED") // REPORTED | VERIFIED | REJECTED
+  reportedById   String
+  reportedBy     User      @relation("Reporter", fields: [reportedById], references: [id], onDelete: Restrict)
+  verifiedById   String?
+  verifiedBy     User?     @relation("Verifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  verifiedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([organizationId, status])
+  @@index([siteId])
+}
+
+// ─── Payments (approved by humans, never auto-approved) ───────────────────────
+
+model Payment {
+  id              String    @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId          String
+  site            Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  purchaseOrderId String?
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  milestoneId     String?
+  milestone       Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  category        String    @default("MATERIAL") // MATERIAL | LABOUR | EQUIPMENT | OTHER
+  method          String    @default("MPESA")   // MPESA | BANK | CASH | CHEQUE
+  amount          Float
+  status          String    @default("PENDING") // PENDING | APPROVED | PAID | REJECTED
+  reference       String    @default("")
+  notes           String    @default("")
+  recordedById    String
+  recordedBy      User      @relation("Recorder", fields: [recordedById], references: [id], onDelete: Restrict)
+  approvedById    String?
+  approvedBy      User?     @relation("Approver", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt      DateTime?
+  paidAt          DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([organizationId, status])
+  @@index([siteId])
+}
