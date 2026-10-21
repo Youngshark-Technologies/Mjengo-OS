@@ -64,6 +64,11 @@ db/pg-test-data/
 
 # MJG-019 — the template IS committed; real env files stay ignored
 !.env.example
+# MJG-029 — runtime secrets + the runtime database are never tracked
+.env
+.env.local
+db/custom.db
+db/custom.db-journal
 
 # MJG-023/025 — never ship runtime upload area (held credentials/pasted content)
 upload/
