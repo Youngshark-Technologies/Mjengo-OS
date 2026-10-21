@@ -15,7 +15,7 @@
 | 4 | Production hardening (`next.config.ts`) | Type-enforced builds, strict mode, 4 baseline security headers — verified live |
 | 5 | Full gate battery on hardened tree | lint ✓ · tsc ✓ · 21/21 API cases (63 assertions) ✓ incl. production build with type enforcement ON |
 | 6 | Empty-DB live validation | Smoke green (health + landing + 401 guards) on a zero-row database; headers present on responses |
-| 7 | GitHub publish | Non-destructive: `sandbox/prod-readiness-2026-10-21` branch + reconciliation PR (remote `main` is a divergent lineage — see §5) |
+| 7 | GitHub publish | Non-destructive: squashed-tree branch `sandbox/prod-readiness-2026-10-21` + **reconciliation PR #414** (full-history push declined by push protection — token in initial commit; remote `main` untouched) |
 | 8 | Runbook updates | `docs/DEPLOYMENT.md` §First-time initialization; `docs/BACKUPS.md` §Reset drill |
 
 ## 2. Before / after data counts
@@ -51,7 +51,7 @@ Referential integrity: fresh schema via `prisma db push --force-reset`; FK check
 
 ## 5. Residual risks & required decisions (honest disclosure)
 
-1. **GitHub lineage divergence (DECISION REQUIRED).** Remote `main` (774f06ec, PRs #407–413) is a **different, larger implementation lineage** (Supabase-based docs, ~457 src files/+89k lines, `prisma/seed-all.ts`) with **no common git ancestor** to the validated sandbox product. Force-pushing either side destroys work. Mitigation shipped: sandbox `dev` pushed to `sandbox/prod-readiness-2026-10-21` + PR → `main` describing both reconciliation options. **The team must choose via PR review before main/Vercel ship.** Note: if the remote lineage ever ships, ITS seed data and Supabase stores need the same MJG-023 treatment.
+1. **GitHub lineage divergence (DECISION REQUIRED — PR #414).** Remote `main` (774f06ec, PRs #407–413) is a **different, larger implementation lineage** (Supabase-based docs, ~457 src files/+89k lines, `prisma/seed-all.ts`) with **no common git ancestor** to the validated sandbox product. Force-pushing either side destroys work. Mitigation shipped: validated tree pushed to `sandbox/prod-readiness-2026-10-21` (squashed, secret-free) and **PR #414** opened describing both reconciliation options. **The team must choose via PR review before main/Vercel ship.** Note: if the remote lineage ever ships, ITS seed data and Supabase stores need the same MJG-023 treatment.
 2. **Vercel redeploy (BLOCKED — needs credentials).** No Vercel token/CLI in this environment. Once the PR decision lands, Vercel's git integration deploys automatically; or provide `VERCEL_TOKEN` and the org executes `vercel --prod`. Remote PR #409 changed `build` to plain `next build` for Vercel — the reconciliation must carry that fix into whichever tree ships.
 3. **SQLite on Vercel (architectural caveat).** Serverless filesystems are ephemeral — SQLite suits the Docker/bare-metal path; for Vercel, use a hosted DB (Supabase/Postgres per the remote design docs) or persistent-volume hosting. Documented in DEPLOYMENT.md.
 4. **Rate limiting** not implemented in-app — enforce at the edge (Vercel firewall/WAF, Cloudflare, or reverse-proxy limits).
@@ -69,5 +69,5 @@ Referential integrity: fresh schema via `prisma db push --force-reset`; FK check
 | Backup / DR / rollback | ✅ verified backup + restore drill kit + docs |
 | Data integrity post-cleanup | ✅ integrity_check ok, FK check clean |
 | Documentation & runbooks | ✅ DEPLOYMENT/BACKUPS updated, this report |
-| GitHub publish | ✅ non-destructive branch + PR (main decision escalated) |
+| GitHub publish | ✅ branch pushed; PR #414 opened (non-destructive; push-protection-compliant) |
 | Vercel redeploy | ⏳ blocked on credentials / PR decision |
