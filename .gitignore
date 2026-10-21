@@ -75,3 +75,7 @@ upload/
 # daemon artifact dirs re-tracked by checkpoints (MJG-022 recurrence guard)
 examples/
 tool-results/
+
+# MJG-048 — sprint evidence + per-agent worklog drafts are sandbox-local
+download/
+worklog-entries/
