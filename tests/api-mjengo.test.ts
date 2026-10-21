@@ -10,7 +10,7 @@
 // The dev server on :3000 is never touched. The database file is removed by
 // the orchestrating script after the run.
 
-/// <reference path="../node_modules/bun-types/index.d.ts" />
+/// <reference types="bun-types" />
 import { describe, expect, test } from 'bun:test'
 
 const BASE = process.env.MJENGO_API_BASE ?? 'http://localhost:3111'

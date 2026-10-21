@@ -324,3 +324,22 @@ Work Log:
 
 Stage Summary:
 - Registry now MJG-001..020 all DONE; repo consolidated; the six new capabilities (supplier inheritance, save-bar UX, backup kit, deployment kit, API gate, evidence trail) are on both branches with merge-commit provenance.
+
+---
+Task ID: VERIFICATION-01
+Agent: Principal Orchestrator (main)
+Task: Recursive audit after MJG-001..020 completion (operating loop: RE-AUDIT → verify claims independently → close gaps). Triggered by "work on all listed issues" re-confirmation of the full Principal Engineering Organization operating prompt.
+
+Work Log:
+- Independent state check: registry 20/20 DONE; dev 528ac6c fully contained in main b946e23 (release path intact); working tree clean; UUID-named commits (461dc2b, b946e23, c4e18ab) identified as environment-daemon artifact checkpoints (tool-results txt, walkthrough screenshots, mode churn) — no source drift.
+- GATE 1 re-run (lint): FAIL — tests/api-mjengo.test.ts:13 `/// <reference path=...>` violates @typescript-eslint/triple-slash-reference. Regression from MJG-020; lint had not been re-run after that edit (stale gate claim).
+- GATE 2 re-run (bare `bunx tsc --noEmit`): FAIL — errors in examples/websocket/* (socket.io not installed) and skills/* — sandbox artifact dirs pulled in by tsconfig include **/*.ts; earlier sessions had masked this by manually scoping tsc to src/.
+- Probe: tsconfig.scratch restricted to product scope (src, tests, scripts) → EXIT 0, proving failures were scope artifacts, not product type errors.
+- MJG-021 filed + fixed on fix/gate-determinism: canonical `/// <reference types="bun-types" />` (passes types:"prefer-import" — bun-types is types-only) + tsconfig exclude extended to node_modules, examples, skills, tool-results. Verified bare: eslint . clean, tsc --noEmit clean.
+- MJG-022 filed + fixed on chore/repo-hygiene: `git rm -r --cached examples tool-results` — sandbox artifacts untracked from the product repo (daemon-owned dirs stay on disk).
+- GATE 3+5+6 re-run (`bun run test:api`): 21 pass / 0 fail / 63 expect() on the fixed tree, incl. production build, isolated DB on :3111, both red lines (self-verify 403, supervisor-approve 403); dev server untouched.
+- Registry updated to 22/22 DONE (MJG-021 fix/gate-determinism, MJG-022 chore/repo-hygiene) on chore/audit-filing. Merge sequence: fix/gate-determinism → dev (16e6c55); daemon artifact checkpoints on main-only (tool-results, 461dc2b/b946e23) backwards-synced into dev (5b4741c) to restore the dev ⊇ main invariant; chore/repo-hygiene → dev (0d645d3, untracks examples/ + tool-results/); chore/audit-filing → dev; release dev→main; all temp branches deleted.
+
+Stage Summary:
+- The recursive audit caught two stale-gate regressions that slipped through MJG-020's final run and closed them through the full pipeline (issue → branch → gates → merge → release).
+- Final state after VERIFICATION-01: 22/22 issues DONE; bare lint + bare tsc + 21-case API suite all green; repo tracks only product code + docs + evidence; exactly dev + main permanent branches.
