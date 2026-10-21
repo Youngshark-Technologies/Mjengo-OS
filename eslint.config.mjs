@@ -44,26 +44,7 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "no-useless-escape": "off",
   },
 }, {
-  // Sandbox artifacts, build output and the isolated marketing website
-  // (which carries its own eslint config + ignores) stay out of this lint.
-  ignores: [
-    "node_modules/**",
-    ".next/**",
-    "out/**",
-    "build/**",
-    "next-env.d.ts",
-    "examples/**",
-    "skills/**",
-    "mjengoos-website/**",
-    "tool-results/**",
-    ".zscripts/**",
-    "tests/**",
-    "agent-ctx/**",
-    "upload/**",
-    "download/**",
-    "docs/**",
-    "mini-services/**",
-  ],
+  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills"]
 }];
 
 export default eslintConfig;

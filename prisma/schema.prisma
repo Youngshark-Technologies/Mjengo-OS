@@ -1,1648 +1,373 @@
+// MjengoOS — evidence-backed operating system for construction
+// SQLite via Prisma. Prisma enums are not supported on SQLite:
+// status/role columns are String columns validated by zod unions at the API layer (src/lib/types.ts).
+
 generator client {
   provider = "prisma-client-js"
 }
 
-// MONEY CONVENTION (issue #122 — integer-cents, "the ledger never lies"):
-//   · every money column is `BigInt` holding KES CENTS (6500050 = KSh 65,000.50)
-//   · boundaries convert once: parse with src/backend/lib/money.ts
-//     (parseMoneyCents/assertMoneyCents IN, centsToKes OUT) — KSh decimals
-//     never travel deeper than the first parse
-//   · quantities stay Float (site quantities are not money; Supabase path
-//     uses numeric(18,3) — ADR-0002)
-//   · the Supabase/Postgres path stores NUMERIC(18,2) KES and converts to
-//     cents at the repository boundary; this module is the canonical form
-//
-// STATUS LADDERS (issue #129 — DB-10): the ladder columns below (status /
-// role / type / kind / method / … vocabularies) are enforced at the DB
-// level by CHECK constraints — migration 19_status_ladder_checks, built
-// from the Supabase design's vocabulary CHECKs (divergences documented in
-// that migration's header). THE PER-COLUMN COMMENTS ARE THE SINGLE SOURCE
-// OF TRUTH: each lists the legal values, and the CHECKs mirror them.
-// Adding a ladder value is a three-step contract — update the comment here,
-// add the value in the migration that ships it, and extend the TS union /
-// Zod enum at the API boundary. A typo'd value now dies at INSERT/UPDATE
-// time instead of silently corrupting a state machine. Deliberately open
-// (unconstrained, matching the Supabase design): AuditEvent.kind,
-// Notification.kind, JobRecord.type, Attachment.entityType (caller-supplied
-// provenance pointer), Material.unit, CatalogItem.category/unit,
-// BoqLine.category.
 datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
-model Project {
-  id                  String              @id @default(cuid())
-  shareToken          String              @unique @default(cuid())
-  // SEC-3r (issue #172): when the current shareToken dies. Nullable on
-  // purpose — NULL = a grandfathered token minted before the expiry feature
-  // (pre-migration-11 rows, seeds): those keep the old never-expires contract
-  // and pick up a TTL the moment the link is rotated via share.regenerate.
-  // Every NEW mint (project creation, share.regenerate) stamps now+TTL
-  // (SHARE_TOKEN_TTL_DAYS, default 90).
-  shareTokenExpiresAt DateTime?
-  name                String
-  client              String
-  clientType          String              @default("diaspora") // diaspora, local, company
-  location            String
-  budget              BigInt // cents — integer money (issue #122; was Float KSh)
-  startDate           DateTime
-  targetDate          DateTime
-  status              String              @default("active") // active, completed, on_hold
-  // REC-1 (issue #359): recurring stock-count cadence for the site store, in
-  // whole days (e.g. 7 = weekly). NULL = no cadence (the pre-#359 contract:
-  // counts happen when someone chooses to run one). nextCountDue is NOT
-  // stored — it is derived on read (modules/inventory/count-cadence.ts,
-  // last count + interval) so no cron and no drift-prone schedule row exists.
-  countIntervalDays   Int?
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
-  phases              Phase[]
-  workers             Worker[]
-  deliveries          Delivery[]
-  consumptions        Consumption[]
-  photos              SitePhoto[]
-  alerts              Alert[]
-  attendances         Attendance[]
-  transactions        Transaction[]
-  recaps              Recap[]
-  auditEvents         AuditEvent[]
-  escrowWallet        EscrowWallet?
-  milestones          Milestone[]
-  variations          VariationOrder[]
-  photoComments       PhotoComment[]
-  zones               SiteZone[]
-  notifications       Notification[]
-  // Backend wave: professional staffing roster (distinct from app Users)
-  team                ProjectTeam[]
-  // v2 domain slices (land, supply, invoices, intel)
-  landParcels         LandParcel[]
-  materialRequests    MaterialRequest[]
-  approvalRules       ApprovalRule[]
-  approvals           Approval[]
-  purchaseOrders      PurchaseOrder[]
-  invoices            Invoice[]
-  riskAssessments     RiskAssessment[]
-  mjengoScores        MjengoScore[]
-  intelDigests        IntelDigest[]
-  // v3 domain slices (money core, inventory, platform)
-  paymentRequests     PaymentRequest[]
-  ledgerAccounts      LedgerAccount[]
-  ledgerTransactions  LedgerTransaction[]
-  inventoryItems      InventoryItem[]
-  stockMovements      StockMovement[]
-  stockCounts         StockCount[]
-  boqs                Boq[]
-  savedSuppliers      SavedSupplier[]
-  attachments         Attachment[]
-  domainEvents        DomainEvent[]
-  jobRecords          JobRecord[]
-  healthSnapshots     ProjectHealth[]
-  // Wave 4 (W4-1): diaspora evidence draw packs — immutable proof bundles
-  // frozen at milestone release, served through the share link.
-  drawPacks           DrawPack[]
-  // Wave 6 (W6-1): AI draw review notes — advisory, append-only, never a
-  // decision (AI flags, humans decide — the columns for the human verdict
-  // exist and stay null until a human writes them).
-  aiReviewNotes       AiReviewNote[]
-  // Wave 6 (W6-3): advisory authenticity findings (dHash duplicates + vision
-  // phase-consistency) — append-only, decision fields never written in Wave 6.
-  aiInsights          AiInsight[]
-  // Wave 6 (W6-2): the weekly bilingual trust digests — deterministic row-
-  // composed text + optional TTS voice note, append-only, served through the
-  // share link.
-  trustDigests        TrustDigest[]
-  // Issue #174 (SEC-6): the site-team read-scope grant rows — which users
-  // work on which projects. Only the membership-ROLES (supervisor /
-  // procurement / qs / finance) resolve their readable projects through
-  // these rows; contractor/admin keep the explicit portfolio-wide grant.
-  memberships         ProjectMembership[]
+// ─── Identity & tenancy ───────────────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users         User[]
+  sites         Site[]
+  suppliers     Supplier[]
+  materials     Material[]
+  stockLevels   StockLevel[]
+  stockMovements StockMovement[]
+  purchaseOrders PurchaseOrder[]
+  deliveries    Delivery[]
+  workers       Worker[]
+  assignments   Assignment[]
+  attendance    Attendance[]
+  milestones    Milestone[]
+  evidenceReports EvidenceReport[]
+  payments      Payment[]
 }
 
-// ProjectMembership (issue #174 / SEC-6) — the site-team project grant.
-// One row says: user X works on project Y holding role-on-project R. Read
-// paths resolve the membership set for supervisor/procurement/qs/finance
-// sessions (src/backend/lib/membership-scope.ts) and scope to EXACTLY that
-// set — FAIL CLOSED: a membership-role session with zero rows sees the
-// honest empty portfolio, never everything. contractor/admin keep the
-// explicit portfolio-wide grant (they run the business, not one site — the
-// W1-PERM role matrix); client/supplier pin through their own session
-// stamps (guard.ts). Distinct from ProjectTeam (the Doc A §54 staffing
-// ROSTER: named humans in professional capacities, no app login, no authz
-// meaning) — this model is the AUTHZ grant, keyed to app Users.
-// SINGLE-ORG ACCEPTED RISK (SEC-6, issue #174): the seed plants every
-// site-team persona on every seeded project so the demo journeys do not
-// regress; revisit when onboarding becomes multi-org or external
-// professionals get accounts (see SECURITY.md).
-// No code path updates or deletes a membership row yet — grant/revoke
-// tooling is the follow-up; rows are created by the seed (and, until the
-// tooling lands, by operators with direct db access, which the uniform
-// audit trail does not yet cover — also recorded in SECURITY.md).
-model ProjectMembership {
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String
+  passwordHash   String
+  role           String   @default("WORKER") // OWNER | SUPERVISOR | WORKER
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sessions       Session[]
+  reportedEvidence EvidenceReport[] @relation("Reporter")
+  verifiedEvidence EvidenceReport[] @relation("Verifier")
+  recordedPayments Payment[]        @relation("Recorder")
+  approvedPayments Payment[]        @relation("Approver")
+  loggedMovements  StockMovement[]
+  createdSites     Site[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model Session {
   id        String   @id @default(cuid())
+  token     String   @unique
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  role      String // the role they hold ON this project: supervisor, procurement, qs, finance, …
+  expiresAt DateTime
   createdAt DateTime @default(now())
 
-  @@unique([userId, projectId])
-  @@index([projectId])
+  @@index([userId])
 }
 
-model Phase {
-  id                String        @id @default(cuid())
-  projectId         String
-  project           Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name              String
-  order             Int
-  budget            BigInt // cents — integer money (issue #122; was Float KSh)
-  status            String        @default("pending") // pending, in_progress, done
-  progressManual    Int? // manual override; falls back to tasks average
-  tasks             Task[]
-  photos            SitePhoto[]
-  // Real phase cost-codes on money (issue #39): transactions the posting seam
-  // KNEW the phase for carry the link here (milestone releases, milestone
-  // payment requests, payer-attributed invoice payments). Null = no real
-  // attribution (legacy rows, wages, unattributed expenses) — the reports
-  // module falls back to its documented budget-share estimate for those.
-  codedTransactions Transaction[] @relation("TransactionPhase")
-}
+// ─── Sites & milestones ───────────────────────────────────────────────────────
 
-model Task {
-  id              String    @id @default(cuid())
-  phaseId         String
-  phase           Phase     @relation(fields: [phaseId], references: [id], onDelete: Cascade)
-  title           String
-  status          String    @default("pending") // pending, in_progress, done, blocked
-  progress        Int       @default(0)
-  dueDate         DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  // Task management v2 (Doc A §11) — priority, assignment, dependencies,
-  // blockers with a recorded reason, and the verification trail. All additive:
-  // existing rows default (priority 'normal', no assignee, no blocker, unverified).
-  priority        String    @default("normal") // low, normal, high, urgent
-  assignedToId    String?
-  assignedTo      Worker?   @relation("TaskAssignedWorker", fields: [assignedToId], references: [id], onDelete: SetNull)
-  blockedById     String?
-  blockedBy       Task?     @relation("TaskBlockedBy", fields: [blockedById], references: [id], onDelete: SetNull)
-  blockedBlocking Task[]    @relation("TaskBlockedBy") // tasks that list this one as their blocker
-  blockedReason   String? // why work stopped — required when a task is blocked
-  verifiedAt      DateTime? // when the completed work was verified
-  verifiedByName  String? // who verified (name snapshot — honest + simple)
-  // Offline-sync entity version (issue "Outbox conflict metadata + entity
-  // versions"): bumped by EVERY applier that mutates the row (online
-  // /api/actions, USSD and offline /api/sync flushes share the appliers). An
-  // outbox item whose payload carries baseVersion < version is REJECTED
-  // 'stale-version' by /api/sync — never a silent last-write-wins overwrite.
-  version         Int       @default(1)
-}
+model Site {
+  id             String    @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  location       String
+  status         String    @default("PLANNING") // PLANNING | ACTIVE | ON_HOLD | COMPLETED
+  startDate      DateTime?
+  targetEndDate  DateTime?
+  createdById    String?
+  createdBy      User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-model Worker {
-  id                    String       @id @default(cuid())
-  projectId             String
-  project               Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name                  String
-  role                  String // Fundi wa Mawe (Mason), Foreman, Mtumishi (Labourer)...
-  phone                 String
-  pin                   String? // 4-digit kiosk PIN (worker identity on shared site device)
-  dailyRate             BigInt // cents — integer money (issue #122; was Float KSh)
-  active                Boolean      @default(true)
-  // Worker record depth (Doc A §14, backend wave): identity + skills +
-  // employment terms + who to call when something happens on site.
-  idNumber              String? // national ID (stored as given; no verification claim)
-  employmentType        String? // casual | contract | full_time
-  skills                String? // JSON array of trade skills
-  emergencyContactName  String?
-  emergencyContactPhone String?
-  attendances           Attendance[]
-  // Task assignment inverse (Task v2, Doc A §11) — required opposite side of
-  // the "TaskAssignedWorker" relation. Additive; nothing else on Worker changes.
-  tasksAssigned         Task[]       @relation("TaskAssignedWorker")
-}
+  stockLevels    StockLevel[]
+  stockMovements StockMovement[]
+  purchaseOrders PurchaseOrder[]
+  deliveries     Delivery[]
+  assignments    Assignment[]
+  attendance     Attendance[]
+  milestones     Milestone[]
+  evidenceReports EvidenceReport[]
+  payments       Payment[]
 
-model Attendance {
-  id              String    @id @default(cuid())
-  workerId        String
-  worker          Worker    @relation(fields: [workerId], references: [id], onDelete: Cascade)
-  projectId       String
-  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  date            String // YYYY-MM-DD
-  checkIn         DateTime?
-  checkOut        DateTime?
-  status          String    @default("present") // present, absent, half_day, excused
-  method          String    @default("geofence") // geofence, ussd, app, kiosk_pin, qr_card, manager
-  wage            BigInt // cents — integer money (issue #122; was Float KSh)
-  paid            Boolean   @default(false)
-  synced          Boolean   @default(true)
-  // Workforce Trust: reported vs verified presence
-  verification    String    @default("reported") // verified (worker/kiosk evidence), reported (manager says), exception (needs review)
-  evidence        String? // JSON array of evidence signals (gps, pin, qr, photo, supervisor)
-  exceptionReason String? // phone_damaged, battery_dead, network, forgot, new_worker, emergency, other
-  exceptionNote   String?
-  overrideLog     String? // JSON array of {at, by, from, to, reason} — append-only, never erased
-  recordedBy      String? // who created this record (name/role)
-  createdAt       DateTime  @default(now())
-  // Offline-sync entity version (issue "Outbox conflict metadata + entity
-  // versions"): same contract as Task.version — bumped by every applier that
-  // mutates the day-row (check-in/out, status, exceptions, overrides, payroll
-  // paid stamp), checked against payload baseVersion by /api/sync.
-  version         Int       @default(1)
-
-  // DB-7: one attendance day-row per (worker, date). Until now this was
-  // convention-only (findFirst-then-create in the appliers) — a concurrent
-  // check-in / USSD / offline-sync pair could create duplicate day rows and
-  // double-count wages. The unique index makes the invariant DB-enforced.
-  @@unique([workerId, date])
-  // DB-6: hot path — project payload slices and payroll group by project+day.
-  @@index([projectId, date])
-}
-
-model Material {
-  id           String        @id @default(cuid())
-  name         String
-  unit         String // bag, tonne, piece, roll, kg, metre
-  unitPrice    BigInt // cents (issue #122) — indicative KES price
-  deliveries   Delivery[]
-  consumptions Consumption[]
-}
-
-model Delivery {
-  id            String   @id @default(cuid())
-  projectId     String
-  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  materialId    String
-  material      Material @relation(fields: [materialId], references: [id])
-  quantity      Float
-  unitCost      BigInt // cents — integer money (issue #122; was Float KSh)
-  totalCost     BigInt // cents — integer money (issue #122; was Float KSh)
-  supplier      String
-  date          DateTime
-  source        String   @default("manual") // manual, voice, photo, mpesa
-  rawTranscript String?
-  createdAt     DateTime @default(now())
-}
-
-model Consumption {
-  id         String   @id @default(cuid())
-  projectId  String
-  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  materialId String
-  material   Material @relation(fields: [materialId], references: [id])
-  quantity   Float
-  phaseName  String?
-  date       DateTime
-  note       String?
-  createdAt  DateTime @default(now())
-}
-
-model SitePhoto {
-  id          String         @id @default(cuid())
-  projectId   String
-  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  phaseId     String?
-  phase       Phase?         @relation(fields: [phaseId], references: [id], onDelete: SetNull)
-  zoneId      String?
-  url         String
-  caption     String?
-  analysis    String? // JSON string with VLM analysis
-  progressPct Int?
-  createdAt   DateTime       @default(now())
-  comments    PhotoComment[]
-}
-
-model Alert {
-  id           String   @id @default(cuid())
-  projectId    String
-  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  type         String // anomaly, budget, safety, attendance, progress, info
-  severity     String   @default("info") // info, warning, critical
-  title        String
-  message      String
-  acknowledged Boolean  @default(false)
-  createdAt    DateTime @default(now())
-}
-
-model Transaction {
-  id          String   @id @default(cuid())
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  type        String // wage, material, transport, other, invoice, milestone, payment_request, reversal (compensating rows, #213)
-  amount      BigInt // cents — integer money (issue #122; was Float KSh)
-  method      String   @default("mpesa") // mpesa, cash, bank, card, wallet
-  reference   String?
-  costCode    String? // finance cost-code dimension (spec §36)
-  // Phase cost-code (issue #39) — REAL attribution stamped by the posting seam
-  // when the money action KNOWS the phase (milestone → its phase; invoice.pay /
-  // payment payloads that reference a phase; reversals copy the original row).
-  // Nullable on purpose: legacy rows and non-phase spend (wages, unattributed
-  // expenses) stay null and the reports module estimates those by budget share.
-  // Deleting a phase releases its codes to null (SetNull) — spend falls back to
-  // the documented estimate instead of dangling. Money math is untouched: this
-  // is an attribution dimension, amounts/ledger/balances are byte-identical.
-  phaseId     String?
-  phase       Phase?   @relation("TransactionPhase", fields: [phaseId], references: [id], onDelete: SetNull)
-  // Soft FK → LedgerTransaction, now CONSTRAINED (issue #127 / DB-9: the
-  // comment's uniqueness claim is finally held by the schema). Every writer
-  // stamps a ledger txn minted in the same Prisma transaction (1:1); a
-  // second Transaction naming the same ledger txn now fails P2002 at the
-  // write site. NULL = local-money rows with no ledger link (legal, many).
-  // The rest of the soft-link inventory: docs/adr/0010-soft-fk-registry.md.
-  ledgerTxnId String? @unique
-  note        String?
-  date        DateTime
-  createdAt   DateTime @default(now())
-}
-
-model Recap {
-  id        String   @id @default(cuid())
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  day       Int
-  content   String // WhatsApp-style recap message
-  createdAt DateTime @default(now())
-}
-
-// ---------------- MjengoOS Trust & Money platform models ----------------
-
-// Bias-Free Ledger: chronological, append-only record of everything that happened.
-// v3: richer context per spec §43 (entity/entityId/before/after/ip/userAgent/requestId).
-model AuditEvent {
-  id        String   @id @default(cuid())
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  kind      String // delivery, wage, attendance, milestone, variation, escrow, photo, comment, export, project, expense, share, auth, inventory, boq, payment, wallet, ledger...
-  actor     String // who did it
-  role      String // contractor, foreman, client, system, ai, finance, supervisor
-  summary   String // human-readable one-liner
-  meta      String? // JSON extra detail
-  entity    String? // entity type acted on (e.g. StockMovement)
-  entityId  String? // id of the entity
-  before    String? // JSON snapshot before (mutations only)
-  after     String? // JSON snapshot after (mutations only)
-  ip        String? // request origin IP
-  userAgent String? // request user-agent
-  requestId String? // correlation id
-  createdAt DateTime @default(now())
-
-  // DB-6 hot path (issue #144, migration 15): the project timeline / mjengo
-  // payload / audit keyset all filter projectId and order createdAt DESC.
-  @@index([projectId, createdAt])
-}
-
-// MjengoPay — milestone-based escrow (simulated money, real workflow).
-// Balance is mirrored from the double-entry ledger (see modules/ledger); the
-// ledger is the source of truth, this field is a projection kept in the same
-// db.$transaction so it can never drift silently.
-model EscrowWallet {
-  id              String   @id @default(cuid())
-  projectId       String   @unique
-  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  balance         BigInt   @default(0) // cents (issue #122) — KES held in escrow (ledger-derived projection)
-  ledgerAccountId String? // backing LedgerAccount (liability account)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  @@index([organizationId, status])
 }
 
 model Milestone {
-  id               String    @id @default(cuid())
-  projectId        String
-  project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  phaseId          String?
-  name             String
-  amount           BigInt // cents (issue #122) — KES to release on completion
-  status           String    @default("locked") // locked, evidence_submitted, release_requested, approved, released, rejected
-  evidencePhotoIds String    @default("[]") // JSON array of SitePhoto ids (proof-of-work)
-  requestedAt      DateTime?
-  decidedAt        DateTime?
-  decidedBy        String? // client name who approved/rejected
-  decisionNote     String?
-  releasedAt       DateTime?
-  createdAt        DateTime  @default(now())
-  // W4-1: the evidence pack frozen at release (null until the milestone is
-  // released — one-to-one, DB-enforced by DrawPack.milestoneId UNIQUE).
-  drawPack         DrawPack?
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId         String
+  site           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  name           String
+  status         String   @default("PENDING") // PENDING | IN_PROGRESS | COMPLETED
+  dueDate        DateTime?
+  order          Int      @default(0)
+  evidenceReports EvidenceReport[]
+  payments       Payment[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, siteId])
 }
 
-// Variation orders: plan changes that move the budget — client approves on web
-model VariationOrder {
-  id           String    @id @default(cuid())
-  projectId    String
-  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  phaseId      String?
-  title        String
-  description  String
-  budgetImpact BigInt // cents (issue #122) — + increase, - saving (KES)
-  status       String    @default("submitted") // submitted, approved, rejected
-  submittedBy  String?
-  decidedBy    String?
-  decisionNote String?
-  decidedAt    DateTime?
-  createdAt    DateTime  @default(now())
-}
+// ─── Materials & inventory ────────────────────────────────────────────────────
 
-// DrawPack (issue W4-1) — immutable, hash-stamped evidence bundle frozen at
-// the moment a milestone is released (milestone.decide → approve). ONE row
-// per milestone, ever: `milestoneId` is UNIQUE at the schema level and the
-// release status ladder is single-shot, so a second pack can never exist.
-// IMUTABILITY CONTRACT (mirrors the MjengoScore/RiskAssessment append-only
-// precedent, stricter): the row is written ONCE — no service function updates
-// or deletes a pack, the model has no @updatedAt, and the migration is a
-// single CREATE TABLE. `contentHash` = SHA-256 over the canonical JSON of the
-// pack content (src/backend/modules/drawpack/service.ts), so a diaspora
-// client can re-verify a forwarded bundle offline. The pack is a PROJECTION,
-// never money: the ledger transaction it cites stays the source of truth and
-// creating a pack moves nothing. `mjengoScore` is NULL when no score was
-// computed at release — honest, never a fake 0.
-model DrawPack {
-  id                String         @id @default(cuid())
-  milestoneId       String         @unique // exactly one pack per milestone — DB-enforced
-  milestone         Milestone      @relation(fields: [milestoneId], references: [id])
-  projectId         String
-  project           Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  milestoneName     String // frozen at decision time
-  amount            BigInt // cents (issue #122) — KES released (frozen)
-  currency          String         @default("KES")
-  ledgerRef         String // frozen ledger transaction ref of the release (LX-…)
-  ledgerTxnId       String // frozen ledger transaction id
-  evidencePhotoIds  String         @default("[]") // JSON array of SitePhoto ids — frozen proof-of-work set
-  variationsOpen    String         @default("[]") // JSON snapshot: variation orders awaiting the client at decision time
-  attendanceSummary String // JSON: attendance counts for the request→decide window
-  mjengoScore       String? // JSON snapshot { score, confidence, ruleVersion, computedAt } — null when not computed
-  contentHash       String // SHA-256 hex over canonical JSON of the pack content
-  schemaVersion     Int            @default(1)
-  createdAt         DateTime       @default(now())
-  // W6-1: the append-only AI review notes over this frozen pack (advisory
-  // only — the pack itself never changes).
-  aiReviewNotes     AiReviewNote[]
-}
+model Material {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  unit           String   // BAG | TON | KG | M3 | L | PCS | ROLL | PACK
+  category       String   @default("GENERAL")
+  unitCost       Float    @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-// Contextual photo commenting — client pins a question on a site photo
-model PhotoComment {
-  id        String    @id @default(cuid())
-  photoId   String
-  photo     SitePhoto @relation(fields: [photoId], references: [id], onDelete: Cascade)
-  projectId String
-  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  author    String
-  role      String // client, contractor, foreman
-  message   String
-  resolved  Boolean   @default(false)
-  createdAt DateTime  @default(now())
-}
-
-// Interactive site map zones (schematic coords over a plan image, 0-100 %)
-model SiteZone {
-  id        String   @id @default(cuid())
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name      String // e.g. Master Bedroom, Kitchen, Foundation zone
-  x         Float // percent from left
-  y         Float // percent from top
-  w         Float // percent width
-  h         Float // percent height
-  createdAt DateTime @default(now())
-}
-
-// Notification center (in-app) + WhatsApp delivery log stub
-model Notification {
-  id             String    @id @default(cuid())
-  projectId      String?
-  project        Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  kind           String // recap, milestone, variation, anomaly, comment, attendance, share, system, approval.requested, delivery.discrepancy, invoice.submitted, price.alert, stock.low...
-  title          String
-  body           String
-  channel        String    @default("in_app") // in_app, whatsapp, sms, push, email
-  deliveryStatus String    @default("logged") // logged (in-app row only), sent, failed — honest channel state
-  deliveredAt    DateTime? // when an external channel actually delivered
-  deliveryDetail String? // honest outcome detail from the channel attempt (HTTP status / timeout / skip reason); null = plain in-app row
-  recipient      String? // e.g. client name/phone
-  audienceRole   String? // role the notification targets (client, contractor, supervisor, finance...)
-  read           Boolean   @default(false)
-  readAt         DateTime? // when the target read it (analytics / digest)
-  createdAt      DateTime  @default(now())
-
-  // DB-6 hot paths (issue #144, migration 15): the list/timeline reads filter
-  // projectId and order createdAt DESC (createdAt also carries the API's
-  // `before` keyset cursor); the unread badge + markRead updateMany filter
-  // (projectId, read).
-  @@index([projectId, createdAt])
-  @@index([projectId, read])
-}
-
-// Authentication (NextAuth.js v4 credentials + JWT sessions)
-model User {
-  id                String              @id @default(cuid())
-  email             String              @unique
-  passwordHash      String
-  name              String
-  role              String              @default("contractor") // contractor, client, admin, finance, supervisor, procurement, qs, supplier
-  projectId         String? // the client user's project (client-role login boots that project)
-  // W5-3 supplier-side portal: for supplier-role users, the Supplier row this
-  // account IS. Plain scalar link (no FK relation by design — the migration
-  // is ALTER TABLE ADD COLUMN only, house rule for additive migrations); a
-  // dangling id fails closed at session shaping ("no supplier linked").
-  supplierId        String?
-  // Issue #181 (audit SEC-15): server-side session revocation — the per-user
-  // TOKEN VERSION. The JWT embeds it at sign-in (auth.ts jwt callback) and
-  // every guarded request compares the token's claim against this column
-  // (guard.ts via lib/session-revocation.ts): a mismatch means the token
-  // predates a revocation → the session is rejected (401). Bumping this row
-  // invalidates EVERY session the user has — sign-out does it (next-auth's
-  // events.signOut hook), and incident response can do it with one UPDATE
-  // (SECURITY.md's "revoke all sessions for user X" runbook line).
-  // Deliberately NOT a session-jti table: every bump trigger this app has
-  // (sign-out, the future password/role/pin changes, incident response) is
-  // user-scoped, and a per-user counter answers "revoke all" with one row.
-  tokenVersion      Int                 @default(0)
-  createdAt         DateTime            @default(now())
-  // Notification preferences (Doc A §42, backend wave): per-kind opt-in map
-  // stored as JSON — the in-app channel is always on, prefs gate future channels.
-  notificationPrefs String? // JSON { kind: { inApp: true, ... } }
-  // Web push subscriptions this user recorded via POST /api/push/subscribe
-  // (W5-1). Virtual back-relation — no User table change; the FK lives on
-  // PushSubscription.
-  pushSubscriptions PushSubscription[]
-  // Issue #174 (SEC-6): the projects this user works on (the site-team
-  // read-scope grant). Virtual back-relation — the FK lives on
-  // ProjectMembership.
-  memberships       ProjectMembership[]
-}
-
-// Web push subscriptions (W5-1) — the honest push channel's address book.
-// One row per (user, endpoint): POST /api/push/subscribe upserts on the
-// endpoint (a browser push subscription belongs to exactly one browser; when
-// a different signed-in user subscribes from the same browser the row is
-// re-owned — the previous owner silently stops receiving there, which is the
-// honest statement of "this browser now belongs to that session").
-// POST /api/push/unsubscribe deletes the session user's row. Rows are ALSO
-// pruned automatically when the push service answers 404/410 (subscription
-// gone) — the notify service deletes dead endpoints, never keeps pushing at
-// them. With no VAPID env configured, rows are still stored but every send
-// honestly stays 'logged' (fail-closed — same posture as the SMS providers).
-model PushSubscription {
-  id             String    @id @default(cuid())
-  userId         String
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  endpoint       String    @unique // browser push-service URL — the upsert key
-  p256dh         String // subscription.keys.p256dh (client public key, base64url)
-  auth           String // subscription.keys.auth (client auth secret, base64url)
-  expirationTime DateTime? // subscription.expirationTime, when the browser supplies one
-  userAgent      String? // honest device hint for the settings surface ("Chrome on Windows")
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-}
-
-// Project staffing roster (Doc A §54/§10, backend wave): who is attached to
-// the project in which professional capacity — distinct from app Users.
-model ProjectTeam {
-  id        String   @id @default(cuid())
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name      String
-  role      String // contractor, supervisor, qs, architect, engineer, surveyor, client_rep
-  phone     String?
-  email     String?
-  note      String?
-  joinedAt  DateTime @default(now())
-}
-
-// ---------------- MjengoOS v2 — Land & Property (module: land) ----------------
-
-// A land parcel tied to a project. Status is honest: SEARCHING while the title
-// search is in flight, VERIFIED when documents + registry agree, FLAGGED when
-// an anomaly needs human review. MjengoOS records evidence — it never claims
-// government verification.
-model LandParcel {
-  id          String             @id @default(cuid())
-  projectId   String
-  project     Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  plotNumber  String // e.g. "LR No. 2090/1234"
-  county      String
-  town        String?
-  lat         Float?
-  lng         Float?
-  approxArea  String? // e.g. "0.25 ha", "50x100 ft"
-  tenureType  String? // freehold, leasehold
-  status      String             @default("searching") // searching, verified, flagged
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-  documents   ParcelDocument[]
-  searches    TitleSearch[]
-  assignments ParcelAssignment[]
-}
-
-// Document attached to a parcel (title deed, search cert, survey map…).
-// extractedText is the transcription used for the consistency check.
-model ParcelDocument {
-  id            String     @id @default(cuid())
-  parcelId      String
-  parcel        LandParcel @relation(fields: [parcelId], references: [id], onDelete: Cascade)
-  kind          String // title_deed, search_cert, survey_map, other
-  fileName      String
-  storageKey    String // /uploads/... or /documents/... path
-  extractedText String? // transcription (used for transcription-vs-registry match)
-  issuedOn      DateTime?
-  createdAt     DateTime   @default(now())
-}
-
-// Registry title search against a parcel. transcriptionMatch compares the
-// document transcription to the registry result summary — MISMATCH is an
-// anomaly flag for review, never an accusation.
-model TitleSearch {
-  id                 String     @id @default(cuid())
-  parcelId           String
-  parcel             LandParcel @relation(fields: [parcelId], references: [id], onDelete: Cascade)
-  searchRef          String // registry search reference
-  resultSummary      String? // what the registry returned
-  transcriptionMatch String     @default("pending") // pending, consistent, mismatch
-  status             String     @default("requested") // requested, received, reviewed
-  requestedAt        DateTime   @default(now())
-  receivedAt         DateTime?
-  reviewedAt         DateTime?
-  createdAt          DateTime   @default(now())
-}
-
-// ---------------- MjengoOS v2 — Professionals directory (module: professionals) ----------------
-
-// Global directory of built-environment professionals. verificationState is a
-// ladder (0 unrecorded → 6 platform-trusted) computed from recorded credential
-// checks + platform history — never a government certification claim.
-model Professional {
-  id                String             @id @default(cuid())
-  name              String
-  category          String // surveyor, advocate, engineer, qty_surveyor, architect
-  organisation      String?
-  phone             String?
-  email             String?
-  county            String?
-  licenceNumber     String?
-  licenceBody       String? // LSK, EBK, BORAQS, other
-  verificationState Int                @default(0) // 0-6 honest ladder
-  reliabilityScore  Int                @default(50) // 0-100 from platform history
-  notes             String?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  credentialChecks  CredentialCheck[]
-  assignments       ParcelAssignment[]
-}
-
-// One recorded credential check on a professional (who checked, how, what they
-// found). Findings are honest observations — "licence expired — renewal pending".
-model CredentialCheck {
-  id             String       @id @default(cuid())
-  professionalId String
-  professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
-  checkedBy      String // name of the person recording the check
-  method         String // document_review, reference_call, registry_lookup
-  finding        String
-  recordedAt     DateTime     @default(now())
-}
-
-// Assignment of a professional to a parcel for a project.
-model ParcelAssignment {
-  id             String       @id @default(cuid())
-  parcelId       String
-  parcel         LandParcel   @relation(fields: [parcelId], references: [id], onDelete: Cascade)
-  professionalId String
-  professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
-  role           String // surveyor, advocate, engineer, qty_surveyor
-  status         String       @default("active") // active, completed, withdrawn
-  note           String?
-  createdAt      DateTime     @default(now())
-}
-
-// ---------------- MjengoOS v2 — Supply & procurement / Finder (module: supply) ----------------
-
-// Supplier in the procurement network. verificationState is a ladder
-// (unverified → registered → identity/business/location/transaction verified →
-// trusted) based on platform activity — never conflated with government
-// certification.
-model Supplier {
-  id                String          @id @default(cuid())
-  businessName      String
-  county            String
-  town              String?
-  lat               Float?
-  lng               Float?
-  phone             String?
-  email             String?
-  warehouseLocation String?
-  deliveryZones     String          @default("") // CSV of zones/counties served
-  deliveryFeeBase   BigInt          @default(0) // cents (issue #122) — KES base delivery fee
-  freeDeliveryOver  BigInt? // cents (issue #122) — free delivery above this order value (KES)
-  minimumOrder      BigInt          @default(0) // cents (issue #122) — minimum order value (KES)
-  verificationState Int             @default(0) // 0-5 ladder
-  reliabilityScore  Int             @default(50) // 0-100 from transaction history
-  responseHours     Int             @default(24) // average quote response time
-  operatingHours    String? // e.g. "Mon-Sat 07:00-18:00" (spec §31)
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-  catalogItems      CatalogItem[]
-  quotes            Quote[]
-  purchaseOrders    PurchaseOrder[]
-  invoices          Invoice[]
-  savedBy           SavedSupplier[]
-}
-
-// One catalog item a supplier sells (name/unit/price/stock/min order).
-model CatalogItem {
-  id            String   @id @default(cuid())
-  supplierId    String
-  supplier      Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  name          String
-  category      String? // cement, steel, timber, roofing, plumbing, electrical, paint, tiles, sand, ballast, blocks, tools, equipment, finishes (spec §29)
-  brand         String? // e.g. "Simba", "Devki", "Bamburi"
-  specification String? // e.g. "42.5N 50kg bag", "Y12 deformed bar"
-  unit          String // bag, length, tonne, roll, sheet
-  unitPrice     BigInt // cents (issue #122) — KES
-  stockQty      Float    @default(0)
-  minOrderQty   Float    @default(1)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt // surfaced as "stock as of …" (spec §31)
-}
-
-// Purchase/material request — the "don't immediately charge the wallet" step.
-// Status ladder: draft → submitted → approved/rejected → converted (to a PO).
-model MaterialRequest {
-  id              String                @id @default(cuid())
-  projectId       String
-  project         Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  requestCode     String // e.g. MR-1042
-  requestedByRole String // supervisor, contractor, client, procurement, finance
-  requestedByName String
-  notes           String?
-  status          String                @default("draft") // draft, submitted, approved, rejected, converted, cancelled (withdrawn pre-conversion — #206; request.cancel settles PENDING approvals as 'withdrawn')
-  createdAt       DateTime              @default(now())
-  updatedAt       DateTime              @updatedAt
-  lines           MaterialRequestLine[]
-  quotes          Quote[]
-  orders          PurchaseOrder[]
-
-  // DB-8 (deliberately NOT unique): requestCode has two generators —
-  // supply/service.ts nextRequestCode() is per-project max+1 (MR-1046…)
-  // while inventory/service.ts boqToRequest() is per-project count-based
-  // (MR-1005…) — the ranges can overlap, so uniqueness cannot be enforced
-  // until the generators are unified.
-}
-
-// Line-level BOQ lineage (#203 / ADR 0011): boqLineId is the FIRST hop of
-// the traceability chain BoqLine → MaterialRequestLine → PurchaseOrderLine →
-// OrderDeliveryLine, with StockMovement.requestLineId closing the loop from
-// consumption back to the request line. Nullable + SetNull on BOTH ends:
-// deleting (or re-drafting) a BOQ line never breaks a request — the line
-// survives as a legacy/name-only row (the documented fallback), exactly like
-// PurchaseOrder.requestId's SetNull on the header hop. Stamped by
-// inventory/service.ts boqToRequest (one request line per selected BOQ line).
-model MaterialRequestLine {
-  id           String          @id @default(cuid())
-  requestId    String
-  request      MaterialRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  materialName String
-  unit         String
-  qty          Float
-  boqLineId    String? // #203 lineage hop 1 — the BoqLine this line was generated from (boqToRequest stamps it); null = legacy/name-only row
-  boqLine      BoqLine?        @relation(fields: [boqLineId], references: [id], onDelete: SetNull)
-  // #203 lineage hop 2 — purchase order lines sourced from this request line
-  // (supply/service.ts createOrder stamps one PO line per request line).
-  orderLines   PurchaseOrderLine[]
-  // #203 lineage hop 3 — consumption movements attributed to this request
-  // line (inventory/service.ts consumeStock stamps the operator's pick).
+  stockLevels    StockLevel[]
   stockMovements StockMovement[]
+  poItems        POItem[]
+  deliveryItems  DeliveryItem[]
 
-  // DB-6-style hot path: the lineage reads (BOQ-vs-actual per line) filter on
-  // this column — same discipline as StockMovement's inventoryItemId index.
-  @@index([boqLineId])
+  @@index([organizationId])
 }
 
-// Project-configurable approval policy (Finder spec §11): the FIRST active rule
-// whose amount band contains the total decides which role approves.
-model ApprovalRule {
-  id           String   @id @default(cuid())
-  projectId    String
-  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  minAmount    BigInt   @default(0) // cents (issue #122) — KES lower bound (inclusive)
-  maxAmount    BigInt? // cents (issue #122) — KES upper bound (inclusive); null = no ceiling
-  approverRole String // supervisor, contractor, client, finance
-  priority     Int      @default(0) // lower = evaluated first
-  active       Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+model StockLevel {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId         String
+  site           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  materialId     String
+  material       Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  quantity       Float    @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([siteId, materialId])
+  @@index([organizationId])
 }
 
-// A concrete approval decision (pending/approved/rejected) on any entity.
-// entityType/entityId are plain strings by design — no FK; the trail is audited
-// via the Bias-Free Ledger (AuditEvent) like every action.
-model Approval {
-  id           String    @id @default(cuid())
-  projectId    String
-  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  entityType   String // material_request, purchase_order, invoice
-  entityId     String // id of the entity (no FK — audited via ledger)
-  approverRole String // supervisor, contractor, client, finance
-  approverName String
-  decision     String    @default("pending") // pending, approved, rejected, withdrawn (#206: request.cancel settles PENDING rows as 'withdrawn' — the requester pulled the request, nobody decided)
-  note         String?
-  decidedAt    DateTime?
-  createdAt    DateTime  @default(now())
+model StockMovement {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId         String
+  site           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  materialId     String
+  material       Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  type           String   // IN | OUT | ADJUST
+  quantity       Float
+  reason         String   @default("")
+  deliveryId     String?  @unique
+  delivery       Delivery? @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
+  userId         String?
+  user           User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, siteId])
+  @@index([organizationId, createdAt])
 }
 
-// A supplier quote against a material request — inputs to the landed-cost
-// engine (product + delivery + transport + fees = total landed).
-model Quote {
-  id           String          @id @default(cuid())
-  requestId    String
-  request      MaterialRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  supplierId   String
-  supplier     Supplier        @relation(fields: [supplierId], references: [id])
-  unitPrice    BigInt // cents (issue #122) — KES — primary line unit price (single-line compare)
-  deliveryFee  BigInt          @default(0) // cents — integer money (issue #122; was Float KSh)
-  transportFee BigInt          @default(0) // cents — integer money (issue #122; was Float KSh)
-  fees         BigInt          @default(0) // cents — integer money (issue #122; was Float KSh)
-  totalLanded  BigInt // cents (issue #122) — KES — full landed cost for the requested quantities
-  deliveryEta  String? // e.g. "2 days", "same day"
-  validUntil   DateTime? // quote validity window (spec §32)
-  terms        String? // payment/delivery terms text (spec §32)
-  stockOk      Boolean         @default(true)
-  status       String          @default("requested") // requested, received, declined, expired
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  lines        QuoteLine[]
+// ─── Procurement ──────────────────────────────────────────────────────────────
+
+model Supplier {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  phone          String?
+  email          String?
+  category       String   @default("GENERAL")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  purchaseOrders PurchaseOrder[]
+  deliveries     Delivery[]
+
+  @@index([organizationId])
 }
 
-// Per-line quote detail (spec §32 multi-line bids). v1 compare used the first
-// line only; lines carry the full per-material breakdown.
-model QuoteLine {
-  id        String @id @default(cuid())
-  quoteId   String
-  quote     Quote  @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  name      String
-  unit      String
-  qty       Float
-  unitPrice BigInt // cents — integer money (issue #122; was Float KSh)
-  lineTotal BigInt // cents — integer money (issue #122; was Float KSh)
-}
-
-// Purchase order — approved request + selected supplier.
 model PurchaseOrder {
-  id            String              @id @default(cuid())
-  orderCode     String // e.g. PO-2026-000012
-  projectId     String
-  project       Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  requestId     String?
-  request       MaterialRequest?    @relation(fields: [requestId], references: [id], onDelete: SetNull)
-  supplierId    String
-  supplier      Supplier            @relation(fields: [supplierId], references: [id])
-  subtotal      BigInt // cents — integer money (issue #122; was Float KSh)
-  deliveryFee   BigInt              @default(0) // cents — integer money (issue #122; was Float KSh)
-  total         BigInt // cents — integer money (issue #122; was Float KSh)
-  status        String              @default("draft") // draft, pending_approval, approved, sent, confirmed, delivering, delivered, closed, cancelled
-  paymentSource String              @default("client") // client, contractor, project_wallet, finance
-  createdByRole String // who placed the order
-  note          String?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  lines         PurchaseOrderLine[]
-  deliveries    OrderDelivery[]
-  invoices      Invoice[]
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId         String
+  site           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  supplierId     String
+  supplier       Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  status         String   @default("DRAFT") // DRAFT | SENT | RECEIVED | CANCELLED
+  orderDate      DateTime @default(now())
+  expectedDate   DateTime?
+  notes          String   @default("")
+  items          POItem[]
+  deliveries     Delivery[]
+  payments       Payment[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  // DB-8: order codes are per-project sequential (supply/service.ts
-  // nextOrderCode = max+1 on THIS project); cross-project reuse is by design
-  // (detail routes look up by id first), so uniqueness is scoped to the pair.
-  @@unique([projectId, orderCode])
+  @@index([organizationId, status])
 }
 
-model PurchaseOrderLine {
-  id            String              @id @default(cuid())
-  orderId       String
-  order         PurchaseOrder       @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  name          String
-  unit          String
-  qty           Float
-  unitPrice     BigInt // cents — integer money (issue #122; was Float KSh)
-  lineTotal     BigInt // cents — integer money (issue #122; was Float KSh)
-  // #203 / ADR 0011 lineage hop 2 — the MaterialRequestLine this PO line was
-  // priced from (createOrder builds one PO line per request line and stamps
-  // the link). Nullable + SetNull: a request-line rewrite or request deletion
-  // never breaks the PO — the line survives, attributed only via the header
-  // (order.requestId), the pre-#203 shape. Legacy PO lines stay null.
-  requestLineId String?
-  requestLine   MaterialRequestLine? @relation(fields: [requestLineId], references: [id], onDelete: SetNull)
-  deliveryLines OrderDeliveryLine[]
-}
-
-// Physical delivery against a PO (ground truth). Named OrderDelivery because
-// the materials-domain Delivery (stock intake) already exists.
-model OrderDelivery {
-  id           String              @id @default(cuid())
-  orderId      String
-  order        PurchaseOrder       @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  status       String              @default("dispatched") // dispatched, in_transit, arrived, received, discrepancy, cancelled (#206: voided dispatch — order.cancel from delivering, or delivery.void; not receivable, no stock posted)
-  dispatchedAt DateTime?
-  receivedAt   DateTime?
-  receivedBy   String? // who confirmed receipt on the ground
-  note         String? // delivery note (ground truth)
-  // Spec §34 sketched photo evidence as a JSON array of URLs — never wired.
-  // REAL photo evidence (issue "Photo attachments on delivery verification")
-  // rides the DeliveryPhoto join below: one row per /api/upload Attachment
-  // linked at receive time (the same storage site photos and documents use —
-  // Attachment.storageKey serves the bytes). Column kept for row compatibility;
-  // nothing reads it.
-  photoUrls    String              @default("[]") // superseded — see DeliveryPhoto
-  // Denormalized mirror of the DeliveryPhoto rows linked to THIS delivery
-  // (recomputed by receiveDelivery — an honest count of real attachments; a
-  // client-supplied count is ignored). Seeded/legacy rows may carry a count
-  // with no links (the pre-photo-link era) — the UI says so honestly.
-  photoCount   Int                 @default(0) // count of linked DeliveryPhoto rows
-  gpsLat       Float?
-  gpsLng       Float?
-  createdAt    DateTime            @default(now())
-  // Driver / dispatch leg (Doc A §26, backend wave): who is bringing it,
-  // in what, when it left, when it is expected, when it arrived.
-  driverName   String?
-  driverPhone  String?
-  vehicleReg   String?
-  etaAt        DateTime?
-  departedAt   DateTime?
-  arrivedAt    DateTime?
-  lines        OrderDeliveryLine[]
-  photos       DeliveryPhoto[]
-}
-
-// Per-line physical count: ordered vs received → discrepancy records.
-model OrderDeliveryLine {
-  id          String            @id @default(cuid())
-  deliveryId  String
-  delivery    OrderDelivery     @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
-  orderLineId String
-  orderLine   PurchaseOrderLine @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
-  qtyOrdered  Float
-  qtyReceived Float
-  qtyRejected Float             @default(0) // explicitly rejected on inspection (spec §34)
-  damageNote  String? // damage/condition observations
-  condition   String            @default("ok") // ok, damaged, partial — inspection result
-  photos      DeliveryPhoto[]
-}
-
-// Delivery evidence photo link (issue "Photo attachments on delivery
-// verification"). delivery.receive accepts attachment ids from PRIOR
-// /api/upload calls (document mode, category 'other', entityType
-// 'order_delivery') and links them here — the §30 SavedSupplier join style:
-// a plain FK pair + @@unique, no new linkage idiom. Line-scoped rows
-// (deliveryLineId set) are the DISCREPANCY evidence for that inspected line;
-// a null scope means whole-delivery evidence. unique(deliveryId, attachmentId)
-// makes linking IDEMPOTENT — createMany skipDuplicates can never double a
-// link, which is what "re-verify must not duplicate links" pins on.
-model DeliveryPhoto {
-  id             String             @id @default(cuid())
-  deliveryId     String
-  delivery       OrderDelivery      @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
-  attachmentId   String
-  attachment     Attachment         @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
-  deliveryLineId String? // null = whole-delivery evidence; set = evidence for that line's count/inspection
-  deliveryLine   OrderDeliveryLine? @relation(fields: [deliveryLineId], references: [id], onDelete: Cascade)
-  attachedBy     String // name snapshot of who linked it (receive's receivedBy)
-  createdAt      DateTime           @default(now())
-
-  @@unique([deliveryId, attachmentId])
-  @@index([deliveryLineId])
-}
-
-// ---------------- MjengoOS v2 — Invoices (module: invoices) ----------------
-
-// Supplier invoice lifecycle: draft → submitted → approved/rejected/disputed →
-// paid. Payment recording (2-d) writes the Transaction ledger entry.
-model Invoice {
-  id               String         @id @default(cuid())
-  invoiceCode      String // e.g. INV-2026-000031
-  projectId        String
-  project          Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  orderId          String?
-  order            PurchaseOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  supplierId       String?
-  supplier         Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
-  status           String         @default("draft") // draft, submitted, approved, rejected, paid, disputed
-  subtotal         BigInt         @default(0) // cents — integer money (issue #122; was Float KSh)
-  tax              BigInt         @default(0) // cents — integer money (issue #122; was Float KSh)
-  total            BigInt         @default(0) // cents — integer money (issue #122; was Float KSh)
-  dueDate          DateTime?
-  issuedAt         DateTime?
-  submittedAt      DateTime?
-  decidedAt        DateTime?
-  decidedBy        String? // who approved/rejected/disputed
-  paidAt           DateTime?
-  paidByRole       String? // client, contractor, finance
-  paymentMethod    String? // mpesa, bank, card, wallet, cash
-  paymentReference String? // e.g. MPESA-8HKT4Q2A
-  createdBy        String? // supplier / system name
-  note             String?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-  lines            InvoiceLine[]
-
-  // DB-8: invoice codes are per-project sequential (invoices/service.ts
-  // nextInvoiceCode = max+1 on THIS project), so uniqueness is scoped to the
-  // pair — a global unique would break the multi-project generator contract.
-  @@unique([projectId, invoiceCode])
-}
-
-model InvoiceLine {
-  id        String  @id @default(cuid())
-  invoiceId String
-  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  name      String
-  qty       Float
-  unitPrice BigInt // cents — integer money (issue #122; was Float KSh)
-  lineTotal BigInt // cents — integer money (issue #122; was Float KSh)
-}
-
-// ---------------- MjengoOS v2 — Intel (module: intel) ----------------
-
-// Deterministic risk assessment for a project (recomputed by the 2-e rule
-// engine). findings is a JSON string array of rule hits.
-model RiskAssessment {
-  id           String   @id @default(cuid())
-  projectId    String
-  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  computedAt   DateTime @default(now())
-  overallScore Int      @default(0) // 0-100 (higher = more attention needed)
-  findings     String   @default("[]") // JSON array of rule hits
-  ruleVersion  String   @default("v1")
-}
-
-// MjengoScore — deterministic contractor trust score (issue W3-3).
-// Append-only history EXACTLY like RiskAssessment: every `score.recompute`
-// intel action appends a row, the UI reads the latest, no row is ever updated.
-// HONESTY RULES: the score describes, humans decide — it gates nothing,
-// approves nothing, and is only ever computed on an explicit action.
-// `score` is NULL (never a fake 0 or 100) when too few components have data;
-// `notes` carries the explanation. components = JSON array of breakdowns.
-model MjengoScore {
-  id          String   @id @default(cuid())
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  computedAt  DateTime @default(now())
-  score       Int? // 0-100 (null = honest low-confidence: not enough rows yet)
-  confidence  String   @default("low") // low, medium, high — how many components carry data
-  components  String   @default("[]") // JSON array of ScoreComponent breakdowns
-  notes       String? // explanation when score is null (never a fake 0 or 100)
-  ruleVersion String   @default("v1")
-}
-
-// Weekly project digest. items is a JSON string array.
-model IntelDigest {
-  id        String   @id @default(cuid())
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  weekStart String // ISO date (Monday) of the digest week
-  summary   String
-  items     String   @default("[]") // JSON array of digest items
-  createdAt DateTime @default(now())
-}
-
-// Regional price intelligence point (materialName + region trend input).
-model PricePoint {
-  id           String   @id @default(cuid())
-  materialName String // e.g. "Cement 50kg", "Steel bar Y12"
-  region       String // Nairobi, Kiambu, Machakos
-  unitPrice    BigInt // cents (issue #122) — KES
-  recordedAt   DateTime @default(now())
-  source       String   @default("seed") // order, manual, seed
-}
-
-// ---------------- MjengoOS v3 — Money core: double-entry ledger (module: ledger/wallet) ----------------
-
-// A chart-of-accounts entry. Accounts are either platform-global (projectId
-// null, e.g. CASH_MPESA pool) or project-scoped (escrow, project expense).
-// A wallet is simply an account with ownerType='wallet' — balances are ALWAYS
-// derived from LedgerEntry sums, never stored (spec §39).
-model LedgerAccount {
-  id         String        @id @default(cuid())
-  code       String        @unique // e.g. "CASH_MPESA", "ESCROW:<projectId>", "W-0001"
-  name       String
-  kind       String // asset, liability, revenue, expense, equity
-  normalSide String        @default("debit") // debit, credit
-  projectId  String? // null = platform-global account
-  project    Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  ownerType  String? // wallet, escrow, project, platform
-  ownerId    String? // id of the owning entity (WalletAccount.id etc.)
-  active     Boolean       @default(true)
-  createdAt  DateTime      @default(now())
-  entries    LedgerEntry[]
-}
-
-// Immutable double-entry transaction. Every financial movement posts here with
-// balanced debit/credit legs. Reversals are new transactions linked via
-// reversalOfId — history is never edited or deleted (spec §39).
-//
-// DB-3 (#124, migration 14_ledger_invariants): the lifecycle is DB-enforced —
-// rows are BORN 'pending' (a trigger rejects any other birth status), legs
-// may only attach while pending, and the pending→'posted' UPDATE is the
-// balance gate (Σdebits = Σcredits asserted by trigger).
-//
-// DB-11 (#133, migration 21_ledger_reversals_as_rows): that posting
-// transition is now the ONLY legal mutation — reversals are NEW rows whose
-// reversalOfId points back at the original, and "was this reversed?" is
-// DERIVED from that link (ledger service findReversalOf/isReversed), never
-// stamped onto the original. The status/reversalRef columns are kept as
-// LEGACY (additive house rule — no destructive migration): pre-#133 rows
-// may still carry status 'reversed' + reversalRef stamps; nothing writes
-// them anymore and the update guard freezes them in place.
-model LedgerTransaction {
-  id             String        @id @default(cuid())
-  ref            String        @unique // LX-2026-000001
-  projectId      String?
-  project        Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  description    String
-  occurredAt     DateTime      @default(now())
-  postedBy       String // actor name
-  postedRole     String // contractor, client, finance, system
-  status         String        @default("posted") // pending → posted (DB-enforced, migration 14); 'reversed' is LEGACY/derived — never written since #133
-  reversalOfId   String?       @unique // if this txn reverses an earlier one — UNIQUE: one reversal per original (DB-enforced, migration 21 / DB-11)
-  reversalRef    String? // LEGACY (pre-#133 stamp of the reversing txn's ref) — no longer written; derive via reversalOfId
-  idempotencyKey String?       @unique // natural idempotency (spec §57)
-  createdAt      DateTime      @default(now())
-  entries        LedgerEntry[]
-}
-
-// One debit or credit leg of a ledger transaction. Σdebits = Σcredits per txn.
-// DB-3 (#124, migration 14): append-only (UPDATE/DELETE rejected by trigger)
-// with CHECKs side ∈ {debit, credit} and amount > 0 — the SQLite twin of the
-// Supabase ledger_entries DDL (0001_schema.sql L984-985).
-model LedgerEntry {
-  id        String            @id @default(cuid())
-  txnId     String
-  txn       LedgerTransaction @relation(fields: [txnId], references: [id], onDelete: Cascade)
-  accountId String
-  account   LedgerAccount     @relation(fields: [accountId], references: [id])
-  side      String // debit, credit (DB CHECK, migration 14)
-  amount    BigInt // cents (issue #122) — positive KES (DB CHECK amount > 0, migration 14)
-  memo      String?
-  createdAt DateTime          @default(now())
-
-  // DB-6: hot path — balances are derived by loading an account's entries
-  // (ledger + wallet services); without this index every lookup is a scan.
-  @@index([accountId])
-}
-
-// DB-3 (#124): one-row maintenance flag — the SQLite twin of the Supabase
-// design's mjengo.allow_maintenance GUC (0002_rls.sql §5.3/§9). While
-// (id=1, allow=true) exists, the migration-14 triggers pause their
-// append-only / birth-state / whitelist guards for archival operations
-// (seeds, supervised backfills). The posting-gate balance assertion and the
-// CHECK constraints are NOT bypassed. Writers must ALWAYS restore allow=false
-// (see prisma/seed-extras/ledger-maintenance.ts).
-model LedgerMaintenance {
-  id    Int     @id @default(1)
-  allow Boolean @default(false)
-}
-
-// Idempotency guard (spec §57): repeated Idempotency-Key requests replay the
-// original response instead of double-applying money movements.
-// #177 (SEC-10): the replay keyspace is scoped PER PRINCIPAL — the composite
-// unique (principal, scope, key) replaced the old GLOBAL unique on `key`, so
-// one actor's caller-chosen key can never collide with, claim or replay
-// another actor's record. `principal` is derived at the ONE seam
-// (src/backend/lib/idempotency.ts): `user:<email>[|<resource>]` for sessions
-// (resource = the wallet/payment/project the route acts on), `share:<sha256>`
-// for share-link callers, `sync:<projectId|global>` for the offline-outbox
-// dedupe markers, `system` for server-generated Daraja markers. Legacy
-// pre-#177 rows were backfilled by migration 17 (derivable sync/system rows
-// keep their namespace; caller-key rows → 'legacy', unreachable by the new
-// namespaced lookups — fail-closed, no cross-actor oracle).
-model IdempotencyRecord {
-  id           String   @id @default(cuid())
-  principal    String   @default("") // whose key this is — see the #177 note above
-  key          String // caller-chosen (header) or server-generated key
-  scope        String // action type / route the key applies to
-  projectId    String?
-  responseBody String? // JSON string of the original result
-  createdAt    DateTime @default(now())
-
-  @@unique([principal, scope, key]) // #177: per-principal keyspace (was: key @unique — global)
-}
-
-// Universal wallet account (spec §37/§38) — reusable financial infrastructure.
-// Balance is derived from the backing LedgerAccount's entries, never stored.
-model WalletAccount {
+model POItem {
   id              String   @id @default(cuid())
-  code            String   @unique // W-0001
-  label           String // "Project Escrow", "Org Float"
-  ownerType       String // project, organization, supplier, user
-  ownerId         String?
-  currency        String   @default("KES")
-  status          String   @default("active") // active, frozen, closed
-  ledgerAccountId String? // backing LedgerAccount — balance derived from entries
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  materialId      String
+  material        Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  quantity        Float
+  unitCost        Float    @default(0)
+
+  @@index([purchaseOrderId])
+}
+
+// ─── Deliveries (human verification) ──────────────────────────────────────────
+
+model Delivery {
+  id              String   @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId          String
+  site            Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  purchaseOrderId String?
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  supplierId      String?
+  supplier        Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  status          String   @default("PENDING") // PENDING | VERIFIED | REJECTED
+  deliveredAt     DateTime @default(now())
+  verifiedById    String?
+  verifiedAt      DateTime?
+  notes           String   @default("")
+  items           DeliveryItem[]
+  stockMovements  StockMovement[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  @@index([organizationId, status])
 }
 
-// Payment request (spec §36/§59): milestone.release → PaymentRequest created →
-// finance/client approves → payment recorded via the ledger.
-model PaymentRequest {
-  id                String    @id @default(cuid())
-  requestCode       String // PR-2026-000007
-  projectId         String
-  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  requestedByRole   String // contractor, supervisor, finance, client
-  requestedByName   String
-  description       String
-  amount            BigInt // cents (issue #122) — KES
-  payee             String // who gets paid
-  method            String    @default("mpesa") // mpesa, bank, card, wallet, cash
-  status            String    @default("pending") // pending, approved, rejected, paid
-  relatedEntityType String? // milestone, invoice, purchase_order, wages, none
-  relatedEntityId   String?
-  decidedBy         String?
-  decidedAt         DateTime?
-  decisionNote      String?
-  paidAt            DateTime?
-  paidTxnId         String? // Transaction id once paid
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+model DeliveryItem {
+  id                String  @id @default(cuid())
+  deliveryId        String
+  delivery          Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  materialId        String
+  material          Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  quantityDelivered Float
+  quantityAccepted  Float   @default(0)
+
+  @@index([deliveryId])
 }
 
-// ---------------- MjengoOS v3 — Inventory & BOQ (module: inventory) ----------------
+// ─── Workforce ────────────────────────────────────────────────────────────────
 
-// A project's stock line per material+location. Closing stock is ALWAYS the
-// sum of movements — never stored (spec §33).
-model InventoryItem {
-  id           String          @id @default(cuid())
-  projectId    String
-  project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  materialName String
-  unit         String
-  materialId   String? // optional link to the global Material catalog
-  location     String          @default("Site Store") // site store / zone name
-  supplierId   String?
-  // #207: explicit low-stock threshold — derived closing ≤ level ⇒ low. Null
-  // falls back to the documented default (closing ≤ 10% of everything that
-  // ever flowed in — modules/inventory/low-stock.ts, ONE definition).
-  reorderLevel Int?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  movements    StockMovement[]
-  countItems   StockCountItem[]
+model Worker {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  phone          String?
+  trade          String   @default("LABORER") // MASON | CARPENTER | STEEL_FIXER | ELECTRICIAN | PLUMBER | PAINTER | WELDER | FOREMAN | LABORER | OTHER
+  dailyRate      Float    @default(0)
+  active         Boolean  @default(true)
+  assignments    Assignment[]
+  attendance     Attendance[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  @@unique([projectId, materialName, location])
+  @@index([organizationId])
 }
 
-// Append-only inventory movement ledger (spec §33). Types: opening, received,
-// consumed, transferred_in, transferred_out, returned, damaged, adjusted.
-// Closing = opening + received + returned + transferred_in − consumed −
-// damaged − transferred_out ± adjusted.
-model StockMovement {
-  id              String        @id @default(cuid())
-  projectId       String
-  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  inventoryItemId String
-  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
-  type            String // opening, received, consumed, transferred_in, transferred_out, returned, damaged, adjusted
-  quantity        Float // positive KES qty; sign semantics by type
-  unitCost        BigInt? // integer KSh CENTS end-to-end (issues #122, #282) — KSh only at the boundaries: inventory service parseUnitCost converts the KSh action payload (frontend contract "Unit cost (KSh)"); supply postDeliveryToInventory stores the PO line's cents untouched; loadInventorySlice reads back via centsToKes
-  reference       String? // PO code / delivery id / consumption id
-  // #203 / ADR 0011 lineage hop 3 — STRUCTURED consumption attribution: the
-  // MaterialRequestLine this consumption draws against (the BOQ-vs-actual
-  // view's "consumed" column). `reference` above stays free text for humans;
-  // this column is what queries join on. Nullable + SetNull: the movement
-  // ledger is append-only and must SURVIVE request deletion (an audit-grade
-  // trail outliving its subject — the ADR 0010 #15 posture), losing only its
-  // attribution. Stamped by consumeStock from the operator's pick; null =
-  // unattributed (legacy rows, or consumption with no known source line).
-  requestLineId   String?
-  requestLine     MaterialRequestLine? @relation(fields: [requestLineId], references: [id], onDelete: SetNull)
-  note            String?
-  recordedBy      String // name/role
-  createdAt       DateTime      @default(now())
+model Assignment {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workerId       String
+  worker         Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  siteId         String
+  site           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  status         String   @default("ASSIGNED") // ASSIGNED | ACTIVE | COMPLETED
+  startDate      DateTime @default(now())
+  endDate        DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  // DB-6: hot path — derived closing stock sums an item's movement log.
-  @@index([inventoryItemId])
+  @@index([organizationId, siteId])
+  @@index([workerId])
 }
 
-// Stock reconciliation (issue #194): a physical stock count session per
-// project — ground truth from the site. One row records who counted, when,
-// and the note; the per-item lines live in StockCountItem. expectedQty is
-// SNAPSHOTTED at count time (the derived closing then), so later movements
-// can never rewrite what the system believed when the count happened.
-// variance is NOT a column: it is always expectedQty − countedQty (one
-// definition, modules/inventory/repository.ts). status is the posting gate:
-// 'open' (count recorded, adjustments not yet posted) → 'posted' (the
-// count-linked `adjusted` movements were appended, postedAt/postedBy record
-// the transition). The transition appends movements — it never edits them
-// (the ledger stays append-only, spec §33). Lineage convention: movements
-// posted from a count carry reference = 'count:<countId>' (the same
-// source-link convention StockMovement.reference uses for PO/delivery ids).
-model StockCount {
-  id        String           @id @default(cuid())
-  projectId String
-  project   Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  countedBy String // name/role of whoever ran the physical count
-  countedAt DateTime // when the physical count happened
-  note      String?
-  // REC-1 (issue #359): this session ran BLIND — the counter never saw the
-  // book (expected) quantities while entering the count, only after saving
-  // (the variance view). Pinned on the row so the reconciliation history and
-  // the CSV export carry the evidential weight of a blind count. Default
-  // false: sessions recorded through the pre-#359 flow were not blind.
-  blind     Boolean          @default(false)
-  status    String           @default("open") // open (recorded) | posted (adjustments applied)
-  postedAt  DateTime?
-  postedBy  String?
-  createdAt DateTime         @default(now())
-  items     StockCountItem[]
-
-  // DB-6-style hot path: the reconciliation history read filters projectId
-  // and orders createdAt DESC.
-  @@index([projectId, createdAt])
-}
-
-// One counted line: the physical qty for one InventoryItem (material ×
-// location) inside one count session. countedQty is what the site counted
-// (ground truth); expectedQty is the derived-closing snapshot at count time;
-// postedQty records the adjustment actually posted from this line (null
-// until the count posts; zero-variance lines post 0 and no movement row).
-model StockCountItem {
-  id              String        @id @default(cuid())
-  countId         String
-  count           StockCount    @relation(fields: [countId], references: [id], onDelete: Cascade)
-  inventoryItemId String
-  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
-  countedQty      Float // physical count — ground truth from the site
-  expectedQty     Float // derived closing at count time (snapshot, never rewritten)
-  postedQty       Float? // adjustment posted from this line (counted − expected)
-
-  @@unique([countId, inventoryItemId])
-}
-
-// Bill of Quantities (spec §28 chain head): project + versioned lines. Lines
-// convert into MaterialRequests ("generate material requirement").
-model Boq {
-  id        String    @id @default(cuid())
-  projectId String
-  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name      String
-  version   Int       @default(1)
-  status    String    @default("draft") // draft, approved, superseded
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  lines     BoqLine[]
-}
-
-model BoqLine {
-  id           String  @id @default(cuid())
-  boqId        String
-  boq          Boq     @relation(fields: [boqId], references: [id], onDelete: Cascade)
-  materialName String
-  unit         String
-  qty          Float
-  estUnitPrice BigInt  @default(0) // cents — integer money (issue #122; was Float KSh). #285: writers normalized — payload is KSh, converted at the service write boundary (createBoq/upsertBoqLine → nonNegativeKesToCents)
-  category     String? // structural, finishes, plumbing, electrical...
-  note         String?
-  // #203 / ADR 0011: the request lines generated from this line (the lineage
-  // back-relation — boqToRequest stamps MaterialRequestLine.boqLineId).
-  requestLines MaterialRequestLine[]
-}
-
-// Saved/favorite suppliers per project (spec §30 "save supplier").
-model SavedSupplier {
-  id         String   @id @default(cuid())
-  projectId  String
-  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  supplierId String
-  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  savedBy    String
-  note       String?
-  createdAt  DateTime @default(now())
-
-  @@unique([projectId, supplierId])
-}
-
-// Universal file attachment (spec §32/§42): quotes, POs, invoices, deliveries,
-// BOQs, payment requests. DB stores metadata; storageKey points at the file.
-model Attachment {
-  id                   String          @id @default(cuid())
-  entityType           String // quote, purchase_order, invoice, delivery, boq, payment_request, document
-  entityId             String
-  fileName             String
-  storageKey           String // /uploads/... or /photos/... path
-  // #159 (audit API-8): the RAW storage-driver key (upp-<ts>-<hex>.<ext>) —
-  // the natural dedupe key for POST /api/upload/confirm. storageKey itself
-  // is NOT usable as that key: it records publicUrl(key), which on s3-compat
-  // without S3_PUBLIC_BASE is a per-call presigned GET (fresh SigV4 date,
-  // 7-day expiry) — two confirms of one object mint two different strings.
-  // objectKey is set ONLY by the confirm flow; every other writer (document
-  // mode, seeds) leaves it NULL, and SQLite unique indexes skip NULLs, so
-  // the constraint is additive over the legacy corpus by construction.
-  objectKey            String?         @unique
-  kind                 String? // delivery_photo (linked via DeliveryPhoto), quote_doc, invoice_doc...
-  uploadedBy           String
-  projectId            String?
-  project              Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdAt            DateTime        @default(now())
-  // Document intelligence (Doc A §60, backend wave): category, provenance,
-  // extraction + human review. Extracted data NEVER writes official records —
-  // reviewStatus gates any use (spec: AI assists, humans decide).
-  category             String? // contract | drawing | permit | receipt | boq | invoice | quote | other
-  mimeType             String?
-  sizeBytes            Int?
-  title                String?
-  version              Int             @default(1)
-  expiresAt            DateTime? // permits and insurance expire — surfaced before they do
-  ocrText              String? // extracted plain text (searchable)
-  extractedJson        String? // structured extraction { lines, total, supplier, ... }
-  extractionConfidence Float?
-  extractionModel      String? // which model produced it (provenance)
-  reviewStatus         String          @default("pending") // pending | approved | rejected
-  reviewedBy           String?
-  reviewedAt           DateTime?
-  deliveryPhotos       DeliveryPhoto[]
-}
-
-// ---------------- MjengoOS v3 — Platform: events, jobs, flags, health (module: events/jobs) ----------------
-
-// Internal domain event record (spec §59) — MaterialDelivered →
-// InventoryUpdated → ProjectCostUpdated → NotificationCreated chains.
-// Emitted after the state change commits; consumers run in-process.
-model DomainEvent {
-  id          String    @id @default(cuid())
-  projectId   String?
-  project     Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  type        String // material.delivered, inventory.updated, payment.approved, milestone.released...
-  payload     String    @default("{}") // JSON
-  occurredAt  DateTime  @default(now())
-  processedAt DateTime?
-  createdAt   DateTime  @default(now())
-}
-
-// Background job record (spec §58) — anomaly scans, digests, recaps,
-// reconciliation, notification dispatch. A cron-callee route drains the queue.
-model JobRecord {
-  id            String    @id @default(cuid())
-  type          String // anomaly_scan, digest.weekly, recap.daily, reconciliation, notification.dispatch
-  projectId     String?
-  project       Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  status        String    @default("queued") // queued, running, done, failed, retrying
-  payload       String    @default("{}")
-  result        String?
-  attempts      Int       @default(0)
-  lastError     String?
-  runAt         DateTime  @default(now())
-  startedAt     DateTime?
-  finishedAt    DateTime?
-  createdAt     DateTime  @default(now())
-  // Failure handling (Doc A §48, backend wave): bounded retries with
-  // exponential backoff, then an honest terminal 'failed' — no silent loss.
-  maxAttempts   Int       @default(3)
-  lastAttemptAt DateTime?
-
-  // DB-6 hot path (issue #144, migration 15): runDueJobs drains
-  // status IN (queued, retrying) AND runAt <= now, ordered by runAt —
-  // every drain call (the 5-min drainer + on-demand POSTs) hits this.
-  @@index([status, runAt])
-}
-
-// Feature flags (spec §81): ai_progress, ai_voice, wallet, marketplace,
-// land_verification. DB-backed, cached in-process (low_data was removed —
-// task 9-a decision, see modules/intel/flags.ts).
-model FeatureFlag {
+model Attendance {
   id          String   @id @default(cuid())
-  key         String   @unique
-  enabled     Boolean  @default(true)
-  description String?
-  updatedAt   DateTime @updatedAt
-}
-
-// Project health snapshot (spec §48): 6 transparent dimensions — progress,
-// budget, schedule, procurement, issues, evidence — with per-dimension grades.
-model ProjectHealth {
-  id         String   @id @default(cuid())
-  projectId  String
-  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  computedAt DateTime @default(now())
-  overall    Int      @default(0) // 0-100 (higher = healthier)
-  dimensions String   @default("[]") // JSON: [{key, score, grade, summary}]
-}
-
-// W6-1 — AI draw review note: a confidence-labeled ADVISORY review of one
-// frozen DrawPack (vision pass over its capped evidence-photo set + an LLM
-// cross-check against the pack's milestone/invoice/budget context), written
-// by the ai.drawReview action. House rules (the modules/ai/draw-review.ts
-// header is the long form):
-//   · APPEND-ONLY — reviewing twice appends a new row (latest wins in the
-//     share/view surfaces, history stays queryable); there is no update path
-//     and no delete path anywhere in Wave-6 code.
-//   · ADVISORY ONLY — AI describes and flags; it NEVER approves. The note
-//     gates nothing: milestone.decide, payments and every other action
-//     ignore these rows entirely.
-//   · THE LEDGER DECIDES NUMBERS — every figure quoted next to a note comes
-//     from the rows fed in (inputsHash pins them); model-authored text has
-//     digit runs redacted before storage, so no number the reader sees was
-//     invented by the model.
-//   · HUMAN DECISION COLUMNS STAY NULL — reviewedBy/reviewedAt/decisionNote
-//     are present-but-unwritten in Wave 6: a human reads the note and
-//     decides elsewhere (the approval click stays human).
-model AiReviewNote {
-  id           String    @id @default(cuid())
-  drawPackId   String
-  drawPack     DrawPack  @relation(fields: [drawPackId], references: [id], onDelete: Cascade)
-  projectId    String
-  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  providerId   String // which AI answered (e.g. 'zai')
-  modelLabel   String // provider label captured at run time (surface copy)
-  ruleVersion  Int       @default(1) // AI_DRAW_REVIEW_RULE_VERSION — prompt + parse contract
-  verdict      String // consistent | advisory | escalate (sanitized at parse)
-  summary      String // one-line advisory summary (figures redacted)
-  confidence   String    @default("low") // low, medium, high — the model's own honest label, sanitized
-  findings     String    @default("[]") // JSON: [{ category, severity, text }] (figures redacted)
-  inputsHash   String // SHA-256 over canonical JSON of the exact rows fed in
-  // Human decision fields — present but NEVER written by Wave-6 code paths.
-  reviewedBy   String?
-  reviewedAt   DateTime?
-  decisionNote String?
-  createdAt    DateTime  @default(now())
-}
-
-// PhotoHash (W6-3 evidence authenticity screen) — the 64-bit dHash of a
-// SitePhoto's stored bytes, computed at draw-pack freeze or on the on-demand
-// backfill run. APPEND-ONLY like MjengoScore: no Wave-6 code path updates or
-// deletes a row (a photo's perceptual fingerprint is immutable history); the
-// photoId UNIQUE constraint makes the backfill idempotent (second screen run
-// → cache hit, nothing recomputed). Deliberately a PLAIN photoId/packId
-// column, not FK relations: the house rule for parallel-wave schema work is
-// append-at-end model blocks (no edits to the existing SitePhoto/DrawPack
-// blocks), and packs are themselves never deleted so nothing dangles.
-model PhotoHash {
-  id         String   @id @default(cuid())
-  photoId    String   @unique // the SitePhoto whose bytes were hashed
-  projectId  String // scoping for cross-pack comparison queries
-  storageKey String // the SitePhoto.url the bytes were resolved from (driver keyFor input)
-  hashHex    String // 16-char dHash (lib/perceptual-hash.ts) — pure math, deterministic
-  width      Int? // photo pixel width at hash time (honest null when unknown)
-  height     Int? // photo pixel height at hash time (honest null when unknown)
-  packId     String? // the DrawPack whose freeze computed this row (null = on-demand/backfill run)
-  computedAt DateTime @default(now())
-}
-
-// AiInsight (W6-3 evidence authenticity screen) — one ADVISORY finding from
-// the screen: a dHash duplicate hit (source 'dhash', rule-computed,
-// deterministic) or a vision phase-consistency/render-tell flag (source
-// 'vision', model-computed, confidence-labeled). APPEND-ONLY, and the
-// human-decision columns (decidedBy/decision/decidedAt) are present-but-NULL
-// BY CONTRACT: AI describes and flags, it NEVER approves — the decide action
-// is an explicit Wave-7 follow-up, and no Wave-6 code path writes these
-// columns (grep-pinned in tests/unit/ai-authenticity.test.ts). Insight rows
-// gate nothing: no action outcome, no score, no money path reads them.
-model AiInsight {
-  id         String    @id @default(cuid())
-  projectId  String
-  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  targetType String // 'site_photo' | 'draw_pack'
-  targetId   String // the SitePhoto / DrawPack the finding is about
-  packId     String? // the pack context the finding was made in (null = on-demand run)
-  kind       String // 'duplicate' | 'phase_mismatch' | 'render_suspect'
-  source     String // 'dhash' (rule, deterministic) | 'vision' (model, confidence-labeled)
-  severity   String    @default("warning") // info, warning, critical
-  detail     String // JSON: the structured finding (matched photo/pack, hamming distance, phase shown…)
-  confidence String? // low | medium | high — vision rows only (null on dhash rows: rules carry no confidence)
-  decidedBy  String? // HUMAN decision fields — Wave-7 follow-up, no Wave-6 code path writes them
-  decision   String? // 'confirmed' | 'dismissed' | … — set only by the (future) decide action
-  decidedAt  DateTime?
-  createdAt  DateTime  @default(now())
-}
-
-// TrustDigest (W6-2 diaspora trust digest) — one weekly "what your money
-// did" digest row per (project, language): DETERMINISTIC text composed
-// purely from rows (releases + ledger refs from DrawPack, evidence photo
-// count, the two latest MjengoScore rows for the delta, advisory AI flag
-// counts from AiReviewNote/AiInsight, budget pace from Transaction sums) —
-// ZERO model-authored figures; the model's only role is TTS: SPEAKING the
-// deterministic text via the AiProvider.speak() seam. `textHash` = SHA-256
-// over the canonical JSON of the exact rows composed from, so identical
-// rows produce a byte-identical text + hash (the inputsHash discipline).
-// AUDIO HONESTY: audioBase64 is NULL when the voice note was never
-// attempted (flag on but provider unavailable) or attempted and failed —
-// audioStatus says which ('unavailable' | 'failed' | 'ready') and audioError
-// carries the leak-free reason; the TEXT is the product and never degrades
-// on audio failure. APPEND-ONLY (the MjengoScore/AiReviewNote discipline):
-// no Wave-6 code path updates or deletes a digest row — regenerating
-// appends a new row (latest per (projectId, lang) wins in the read
-// surfaces); there is deliberately no updated-at column.
-model TrustDigest {
-  id          String   @id @default(cuid())
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  lang        String // 'en' | 'sw' — one digest row per language per window
-  windowStart DateTime // inclusive start of the rows window (now − sinceDays)
-  windowEnd   DateTime // inclusive end (the generation moment)
-  text        String // the deterministic bilingual digest text (the product)
-  textHash    String // SHA-256 over canonical JSON of the exact rows composed from
-  audioBase64 String? // null = never synthesized or failed — honest, never a fake
-  audioMime   String? // 'audio/wav' when audioBase64 is present
-  audioStatus String   @default("unavailable") // unavailable | failed | ready
-  audioError  String? // leak-free reason when the synthesis failed
-  providerId  String? // which AI voiced it (null = no attempt was possible)
-  ruleVersion Int      @default(1) // DIGEST_RULE_VERSION — the template contract
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId      String
+  site        Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  workerId    String
+  worker      Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  date        DateTime
+  status      String   @default("PRESENT") // PRESENT | ABSENT | HALF_DAY
+  hoursWorked Float    @default(0)
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([workerId, siteId, date])
+  @@index([organizationId, date])
+}
+
+// ─── Evidence (verified by humans, never auto-approved) ───────────────────────
+
+model EvidenceReport {
+  id             String    @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId         String
+  site           Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  milestoneId    String?
+  milestone      Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  title          String
+  description    String    @default("")
+  photoUrl       String?
+  status         String    @default("REPORTED") // REPORTED | VERIFIED | REJECTED
+  reportedById   String
+  reportedBy     User      @relation("Reporter", fields: [reportedById], references: [id], onDelete: Restrict)
+  verifiedById   String?
+  verifiedBy     User?     @relation("Verifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  verifiedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([organizationId, status])
+  @@index([siteId])
+}
+
+// ─── Payments (approved by humans, never auto-approved) ───────────────────────
+
+model Payment {
+  id              String    @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  siteId          String
+  site            Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  purchaseOrderId String?
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  milestoneId     String?
+  milestone       Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  category        String    @default("MATERIAL") // MATERIAL | LABOUR | EQUIPMENT | OTHER
+  method          String    @default("MPESA")   // MPESA | BANK | CASH | CHEQUE
+  amount          Float
+  status          String    @default("PENDING") // PENDING | APPROVED | PAID | REJECTED
+  reference       String    @default("")
+  notes           String    @default("")
+  recordedById    String
+  recordedBy      User      @relation("Recorder", fields: [recordedById], references: [id], onDelete: Restrict)
+  approvedById    String?
+  approvedBy      User?     @relation("Approver", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt      DateTime?
+  paidAt          DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([organizationId, status])
+  @@index([siteId])
 }

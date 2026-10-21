@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "ES2020", // ES2020 for BigInt literals — integer-cents money (issue #122)
+    "target": "ES2017",
     "lib": [
       "dom",
       "dom.iterable",
@@ -31,20 +31,15 @@
   },
   "include": [
     "next-env.d.ts",
-    "next.config.ts",
-    "src/**/*.ts",
-    "src/**/*.tsx",
-    "prisma/**/*.ts",
+    "**/*.ts",
+    "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
-    "mjengoos-website",
     "examples",
-    "tests",
-    "mini-services",
     "skills",
-    "upload"
+    "tool-results"
   ]
 }

@@ -24,23 +24,6 @@ node_modules
 .DS_Store
 *.pem
 
-# OS / IDE / editor junk (S-SEC hygiene)
-Thumbs.db
-.idea/
-.vscode/
-*.swp
-*~
-
-# tool caches
-.eslintcache
-.stylelintcache
-.turbo
-
-# stray database files outside the ignored db/ dir (prisma scratch DBs)
-*.db
-*.sqlite
-*.sqlite3
-
 # debug
 npm-debug.log*
 yarn-debug.log*
@@ -48,11 +31,7 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
-# (.env.staging.example is the staging compose template — issue #208; the
-#  real .env.staging stays ignored like every other .env*)
 .env*
-!.env.example
-!.env.staging.example
 
 # vercel
 .vercel
@@ -61,47 +40,38 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-/local-*
+local-*
 .claude
 .z-ai-config
 *.log
 dev.log
 dev.out.log
+test
+prompt
 
 server.log
 # Skills directory
 /skills/
+# MJG-018/020 — local database artifacts (never commit data or test DBs)
+db/backups/
+db/api-test.db
+db/api-test.db-journal
+db/restore-drill-*.db
+api-test-server.log
 
-# ── repository hygiene: local-only files & folders (never push) ──────────────
-# environment & database (runtime state, secrets)
+# MJG-026 — embedded Postgres verification data dir
+db/pg-test-data/
+
+# MJG-019 — the template IS committed; real env files stay ignored
+!.env.example
+# MJG-029 — runtime secrets + the runtime database are never tracked
 .env
-db/
+.env.local
+db/custom.db
+db/custom.db-journal
 
-# internal working documents & agent artifacts
-# (root-anchored: the unanchored `upload/` also matched src/app/api/upload/ —
-#  F-INSIGHT's route would have been silently untracked)
-worklog.md
-PENDING_FEATURES.md
-agent-ctx/
-tool-results/
-.zscripts/
-/upload/
-/download/
-/mini-services/
-Caddyfile
-
-# runtime photo uploads (POST /api/upload writes here — not repo content)
-/public/photos/upp-*
-
-# sandbox-only docs (local reports/notes — published docs like docs/screenshots stay tracked)
-docs/reports/
-docs/*.local.md
-
-# sandbox environment scripts & template demos
-# (tests/ was previously ignored as sandbox scratch — it now holds the real
-#  Vitest suite tracked on feat/test-suite; keep it commited)
+# MJG-023/025 — never ship runtime upload area (held credentials/pasted content)
+upload/
+# daemon artifact dirs re-tracked by checkpoints (MJG-022 recurrence guard)
 examples/
-*.pid
-
-# marketing-site runtime data (form submissions are local-only)
-mjengoos-website/data/submissions.json
+tool-results/

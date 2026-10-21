@@ -1,21 +1,24 @@
-import { NextResponse } from "next/server";
-import { db } from "@/backend/lib/db";
+import { NextResponse } from 'next/server'
+import { db } from '@/lib/db'
 
-/**
- * Liveness + readiness probe. Public (no auth): exposes service identity
- * and a DB round-trip only — never project data.
- */
+// Health check: verifies process + database connectivity with live queries.
 export async function GET() {
+  const startedAt = Date.now()
   try {
-    await db.$queryRaw`SELECT 1`;
+    const [orgs, users] = await Promise.all([db.organization.count(), db.user.count()])
+    return NextResponse.json({
+      status: 'ok',
+      service: 'mjengoos',
+      database: 'connected',
+      records: { organizations: orgs, users },
+      latencyMs: Date.now() - startedAt,
+      time: new Date().toISOString(),
+    })
+  } catch (err) {
+    console.error('[health] database check failed:', err)
     return NextResponse.json(
-      { ok: true, service: "MjengoOS", db: "ok", time: new Date().toISOString() },
-      { headers: { "Cache-Control": "no-store" } },
-    );
-  } catch {
-    return NextResponse.json(
-      { ok: false, service: "MjengoOS", db: "unreachable" },
-      { status: 503, headers: { "Cache-Control": "no-store" } },
-    );
+      { status: 'degraded', service: 'mjengoos', database: 'unavailable' },
+      { status: 503 },
+    )
   }
 }
