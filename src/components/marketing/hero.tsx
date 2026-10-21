@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
+import { CtaLink } from './cta-link';
 import {
   AnimatePresence,
   motion,
@@ -965,7 +966,15 @@ function SceneFive() {
 /* Scene 6 (14-17s, then rests): end frame                             */
 /* ------------------------------------------------------------------ */
 
-function EndFrame({ onExplore, onGetStarted }: { onExplore: () => void; onGetStarted: () => void }) {
+function EndFrame({
+  onExplore,
+  onGetStarted,
+  getStartedHref,
+}: {
+  onExplore: () => void;
+  onGetStarted: () => void;
+  getStartedHref?: string | null;
+}) {
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-4 text-center sm:gap-5">
       <div className="flex items-center gap-3">
@@ -980,13 +989,13 @@ function EndFrame({ onExplore, onGetStarted }: { onExplore: () => void; onGetSta
       </div>
 
       <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-4">
-        <button
-          type="button"
-          onClick={onGetStarted}
+        <CtaLink
+          href={getStartedHref ?? null}
+          onActivate={onGetStarted}
           className="inline-flex min-h-11 items-center justify-center rounded-lg bg-amber-500 px-6 text-sm font-semibold text-stone-950 shadow-[0_12px_28px_-12px_rgba(245,158,11,0.65)] transition-colors hover:bg-amber-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
         >
           Get Started
-        </button>
+        </CtaLink>
         <button
           type="button"
           onClick={onExplore}
@@ -1067,7 +1076,15 @@ function TimelineBar({
 /* Hero                                                                */
 /* ------------------------------------------------------------------ */
 
-export function Hero({ onExplore, onGetStarted }: { onExplore: () => void; onGetStarted: () => void }) {
+export function Hero({
+  onExplore,
+  onGetStarted,
+  getStartedHref,
+}: {
+  onExplore: () => void;
+  onGetStarted: () => void;
+  getStartedHref?: string | null;
+}) {
   const sectionRef = useRef<HTMLElement | null>(null);
   const inView = useInView(sectionRef, { amount: 0.25 });
   const prefersReduce = useReducedMotion();
@@ -1108,7 +1125,7 @@ export function Hero({ onExplore, onGetStarted }: { onExplore: () => void; onGet
       case 5:
         return <SceneFive />;
       default:
-        return <EndFrame onExplore={onExplore} onGetStarted={onGetStarted} />;
+        return <EndFrame onExplore={onExplore} onGetStarted={onGetStarted} getStartedHref={getStartedHref} />;
     }
   };
 
@@ -1137,7 +1154,7 @@ export function Hero({ onExplore, onGetStarted }: { onExplore: () => void; onGet
         <div className="relative mx-auto aspect-[4/3] w-full max-w-5xl overflow-hidden rounded-2xl border border-stone-200/80 bg-gradient-to-b from-white via-stone-50 to-stone-100 shadow-[0_1px_2px_rgba(28,25,23,0.04),0_28px_60px_-28px_rgba(28,25,23,0.22)] md:aspect-[16/9] md:rounded-3xl">
           {reduce ? (
             <div data-testid="hero-scene-6" className="absolute inset-0">
-              <EndFrame onExplore={onExplore} onGetStarted={onGetStarted} />
+              <EndFrame onExplore={onExplore} onGetStarted={onGetStarted} getStartedHref={getStartedHref} />
             </div>
           ) : (
             <AnimatePresence initial={false}>

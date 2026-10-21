@@ -360,3 +360,41 @@ Work Log:
 
 Stage Summary:
 - Runtime DB is ZERO-RESIDUAL (62→0), reversible, audited; app hardened and fully gate-green on an empty database; GitHub publish delivered without destroying either lineage; the one destructive decision (which lineage becomes main) escalated to the team via PR with full evidence.
+
+---
+Task ID: HOSTING-01
+Agent: Principal Orchestrator (main) + dispatched squads (Database, DevOps, Frontend, Security, QA)
+Task: Hosting readiness — PostgreSQL migration track (MJG-026), Vercel+Render hosted deployment (MJG-027), CTA routing to mjengoupdate (MJG-028), runtime hygiene (MJG-029); GitHub lineage adoption + push (MJG-031).
+
+Work Log:
+- Discovery: no versioned migrations existed (prisma db push only); stack is Prisma+SQLite (dual-schema required, not Drizzle); "website" = in-app LandingView (CTAs were state toggles); "mjengoupdate" = https://mjengoupdate.vercel.app (remote repo homepage field); issues MJG-026..034 filed.
+- MJG-026 (feat/pg-migrations): prisma/schema.postgres.prisma (parity-gated twin), versioned baseline migration prisma/migrations/20261021000000_init (18 CREATE TABLE, generated via prisma migrate diff --from-empty), migration_lock.toml (postgresql), scripts/check-schema-parity.ts wired into api-tests.sh gate 0/5, db:migrate:deploy + test:api:pg scripts. LIVE VERIFICATION: embedded PostgreSQL 18.4 → migrate deploy applied all migrations → production server boot against migrated PG → 21 pass / 0 fail / 63 expect() on PG; SQLite suite 21/21 unchanged (no collateral damage).
+- MJG-027 (feat/hosting-configs): render.yaml (backend service + Render Postgres, branch: main, autoDeploy, migrate deploy chained before standalone boot, health /api), vercel.json (plain next build), next.config.ts BACKEND_URL rewrite (/api/:path* → backend; same-origin cookies, no CORS), .env.example env matrix, DEPLOYMENT.md hosted-deployment runbook (step-by-step Vercel + Render, deploy-from-main-only policy, rollback, edge rate limiting).
+- MJG-028 (feat/cta-routing + fix/cta-hashchange): src/lib/app-url.ts (NEXT_PUBLIC_APP_URL → getStartedHref/signInHref), CtaLink (anchor when href set, button otherwise) wired through landing header, hero EndFrame, footer band + nav; page.tsx opens auth on #get-started/#signin (mount + hashchange — E2E QA caught that same-page hash navigation does not remount the SPA; fixed and re-verified). Evidence: download/walkthrough/43-cta-navigates-to-auth.png, 44-deeplink-signin-opens-auth.png.
+- MJG-029 (chore/runtime-hygiene): db.ts query logging gated to development (production previously logged every SQL statement — confirmed live in PG verify logs); .env + db/custom.db untracked (files remain on disk), explicit gitignore entries.
+- QA battery on merged dev: parity OK (309 lines identical), lint clean, tsc clean, test:api 21/21 (63 assertions), zero prisma:query lines in production server log, smoke green on :3000, browser E2E green (CTA click + direct deep link).
+- MJG-031 (chore/lineage-adoption): product-owner directives (push to GitHub, deploy from main only, host on Vercel+Render) = PR #414 Option 1 decision. Execution: release dev→main; squashed secret-free tree → PR #414 head force-push → PR merged (remote main content = validated hosting-ready tree, remote history preserved via history-bridge parent); remote dev ref created; remote tree verified identical to local main; token: push:true (no admin — branch protection settings require repo owner action).
+
+Stage Summary:
+- Registry 30/34 issues DONE-or-OPEN as designed (MJG-026..029 DONE this sprint; MJG-030/032/033/034 OPEN awaiting product/backend decisions).
+- The product is hostable: versioned Postgres migrations + render.yaml + vercel.json + main-only deployment policy + CTA routing to https://mjengoupdate.vercel.app.
+- Remaining user actions: set NEXT_PUBLIC_APP_URL=https://mjengoupdate.vercel.app (Vercel env), BACKEND_URL=<render-url>, deploy Render blueprint, rotate the GitHub token (still recommended), enable branch protection (token lacks admin).
+
+---
+Task ID: HOSTING-01-PUSH
+Agent: Principal Orchestrator (main)
+Task: MJG-031 execution evidence — GitHub lineage adoption completed.
+
+Work Log:
+- Squash: main tree 6267f41 → orphan a4da977 → history-bridge 1600308 (parents: orphan + remote main 774f06ec) — secret scan 0 hits, no forbidden paths.
+- Push: force-pushed bridge to PR #414 head `sandbox/prod-readiness-2026-10-21` (push protection PASSED — no tainted blobs crossed the wire).
+- Decision comment posted on PR #414 (Option 1 adopted per product-owner directives; hosting handoff + security notes).
+- PR #414 MERGED (merge commit f8e8c4e) → remote main content = validated hosting-ready tree.
+- Remote `dev` created at bridge 1600308 (same tree; future dev→main PRs have clean ancestry).
+- Verification: remote main tree 6267f41 == local main tree 6267f41 — IDENTICAL.
+- Temp branch `sandbox/prod-readiness-2026-10-21` deleted post-merge (temporary-branch governance; main/dev permanent).
+
+Stage Summary:
+- Remote state: main @ f8e8c4e + dev @ 1600308, both carrying the hosting-ready product; history-bridge preserved the remote lineage in the graph.
+- Local refs: main @ bbc396e, dev ⊇ main, invariant restored.
+- Token: push-scoped, no admin — branch protection + Vercel/Render deploys are repo-owner actions (runbooks in docs/DEPLOYMENT.md).
