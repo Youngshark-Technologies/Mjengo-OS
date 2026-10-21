@@ -3,7 +3,7 @@ import { cookies } from 'next/headers'
 import { z, ZodSchema } from 'zod'
 import { db } from '@/lib/db'
 import { SESSION_COOKIE } from '@/lib/auth'
-import type { Role, SessionUser } from '@/lib/types'
+import type { OrganizationType, Role, SessionUser } from '@/lib/types'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -68,7 +68,7 @@ export async function requireUser(roles?: Role[]): Promise<SessionUser> {
 
   const session = await db.session.findUnique({
     where: { token },
-    include: { user: { include: { organization: { select: { name: true } } } } },
+    include: { user: { include: { organization: { select: { name: true, type: true } } } } },
   })
   if (!session) throw new ApiError(401, 'Session is invalid — sign in again')
   if (session.expiresAt.getTime() < Date.now()) {
@@ -84,6 +84,7 @@ export async function requireUser(roles?: Role[]): Promise<SessionUser> {
     role: user.role as Role,
     organizationId: user.organizationId,
     organizationName: user.organization.name,
+    organizationType: user.organization.type as OrganizationType,
   }
   if (roles && !roles.includes(sessionUser.role)) {
     throw new ApiError(403, `This action requires role: ${roles.join(' or ')}`)

@@ -2,6 +2,7 @@
 // SQLite has no Prisma enums — these unions are enforced by zod at the API layer.
 
 export type Role = 'OWNER' | 'SUPERVISOR' | 'WORKER'
+export type OrganizationType = 'CONSTRUCTOR' | 'SUPPLIER' | 'LOGISTICS'
 export type SiteStatus = 'PLANNING' | 'ACTIVE' | 'ON_HOLD' | 'COMPLETED'
 export type MilestoneStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED'
 export type MaterialUnit = 'BAG' | 'TON' | 'KG' | 'M3' | 'L' | 'PCS' | 'ROLL' | 'PACK'
@@ -19,6 +20,7 @@ export type PaymentCategory = 'MATERIAL' | 'LABOUR' | 'EQUIPMENT' | 'OTHER'
 export type PaymentMethod = 'MPESA' | 'BANK' | 'CASH' | 'CHEQUE'
 
 export const ROLE_VALUES: Role[] = ['OWNER', 'SUPERVISOR', 'WORKER']
+export const ORGANIZATION_TYPE_VALUES: OrganizationType[] = ['CONSTRUCTOR', 'SUPPLIER', 'LOGISTICS']
 export const SITE_STATUS_VALUES: SiteStatus[] = ['PLANNING', 'ACTIVE', 'ON_HOLD', 'COMPLETED']
 export const MILESTONE_STATUS_VALUES: MilestoneStatus[] = ['PENDING', 'IN_PROGRESS', 'COMPLETED']
 export const MATERIAL_UNIT_VALUES: MaterialUnit[] = ['BAG', 'TON', 'KG', 'M3', 'L', 'PCS', 'ROLL', 'PACK']
@@ -43,6 +45,7 @@ export interface SessionUser {
   role: Role
   organizationId: string
   organizationName: string
+  organizationType: OrganizationType
 }
 
 export interface SiteDTO {
@@ -92,6 +95,14 @@ export interface SupplierDTO {
   phone: string | null
   email: string | null
   category: string
+  partnerOrganizationId: string | null
+  partnerOrganizationName: string | null
+}
+
+export interface PartnerOrgDTO {
+  id: string
+  name: string
+  type: OrganizationType
 }
 
 export interface POItemInput { materialId: string; quantity: number; unitCost: number }
@@ -109,6 +120,11 @@ export interface PurchaseOrderDTO {
   notes: string
   total: number
   items: POItemDTO[]
+}
+
+// Partner portal (MJG-035): a supplier org's view of a constructor's PO.
+export interface PartnerPurchaseOrderDTO extends PurchaseOrderDTO {
+  organizationName: string
 }
 
 export interface DeliveryItemDTO {

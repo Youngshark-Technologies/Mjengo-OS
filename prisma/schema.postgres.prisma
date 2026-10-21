@@ -21,6 +21,7 @@ datasource db {
 model Organization {
   id        String   @id @default(cuid())
   name      String
+  type      String   @default("CONSTRUCTOR") // CONSTRUCTOR | SUPPLIER | LOGISTICS
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -38,6 +39,7 @@ model Organization {
   milestones    Milestone[]
   evidenceReports EvidenceReport[]
   payments      Payment[]
+  partnerSuppliers Supplier[] @relation("PartnerOrgSuppliers")
 }
 
 model User {
@@ -186,6 +188,8 @@ model Supplier {
   phone          String?
   email          String?
   category       String   @default("GENERAL")
+  partnerOrganizationId String?
+  partnerOrganization   Organization? @relation("PartnerOrgSuppliers", fields: [partnerOrganizationId], references: [id], onDelete: SetNull)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -193,6 +197,7 @@ model Supplier {
   deliveries     Delivery[]
 
   @@index([organizationId])
+  @@index([partnerOrganizationId])
 }
 
 model PurchaseOrder {

@@ -5,7 +5,10 @@
 //   register → auth guards → site/material/stock → supplier/PO/delivery
 //   → human verification (stock math + idempotency) → workforce/attendance
 //   → evidence segregation red line → two-person verification
-//   → OWNER-only payment flow → dashboard totals assert every mutation.
+//   → OWNER-only payment flow → dashboard totals assert every mutation
+//   → MJG-035 partner access model (supplier/logistics registration, org
+//     tenancy, partner directory, supplier-record linking, PO visibility,
+//     DRAFT privacy) → MJG-032 assignment FSM → MJG-033 supplier role gate.
 //
 // The dev server on :3000 is never touched. The database file is removed by
 // the orchestrating script after the run.
@@ -16,7 +19,13 @@ import { describe, expect, test } from 'bun:test'
 const BASE = process.env.MJENGO_API_BASE ?? 'http://localhost:3111'
 
 type Jar = Record<string, string>
-const jars: Record<string, Jar> = { owner: {}, supervisor: {} }
+const jars: Record<string, Jar> = {
+  owner: {},
+  supervisor: {},
+  worker: {},
+  supplier: {},
+  logistics: {},
+}
 
 interface Res {
   status: number
@@ -82,6 +91,11 @@ const S: {
   assignmentId?: string
   evidenceId?: string
   paymentId?: string
+  partnerOrgId?: string
+  logisticsOrgId?: string
+  po2Id?: string
+  worker2Id?: string
+  assignment2Id?: string
 } = {}
 
 const today = () => new Date().toISOString().slice(0, 10)
@@ -425,5 +439,234 @@ describe('MJG-020 — API golden journey (isolated server)', () => {
     expect([200, 204]).toContain(logout.status)
     const me = await call('/api/auth/me', { session: 'supervisor' })
     expect(me.status).toBe(401)
+  })
+
+  // ─── MJG-035 — partner access model ────────────────────────────────────
+
+  test('22 supplier partner self-registers → organizationType SUPPLIER', async () => {
+    const r = await call('/api/auth/register', {
+      method: 'POST',
+      session: 'supplier',
+      body: {
+        name: 'Suite Supply Owner',
+        email: 'suite-supplier@mjengo-test.test',
+        password: 'PartnerPass#2026!',
+        organizationName: 'Suite Supply Partners',
+        organizationType: 'SUPPLIER',
+      },
+    })
+    expect(r.status).toBe(200)
+    S.partnerOrgId = data(r)?.organizationId
+    expect(S.partnerOrgId).toBeTruthy()
+    expect(data(r)?.organizationType).toBe('SUPPLIER')
+    expect(data(r)?.role).toBe('OWNER')
+
+    const me = await call('/api/auth/me', { session: 'supplier' })
+    expect(me.status).toBe(200)
+    expect(data(me)?.organizationType).toBe('SUPPLIER')
+  })
+
+  test('23 logistics partner self-registers → organizationType LOGISTICS', async () => {
+    const r = await call('/api/auth/register', {
+      method: 'POST',
+      session: 'logistics',
+      body: {
+        name: 'Suite Haulage Owner',
+        email: 'suite-logistics@mjengo-test.test',
+        password: 'PartnerPass#2026!',
+        organizationName: 'Suite Haulage Ltd',
+        organizationType: 'LOGISTICS',
+      },
+    })
+    expect(r.status).toBe(200)
+    S.logisticsOrgId = data(r)?.organizationId
+    expect(data(r)?.organizationType).toBe('LOGISTICS')
+  })
+
+  test('24 partner tenancy: supplier org sees only its own (empty) data', async () => {
+    const sites = await call('/api/sites', { session: 'supplier' })
+    expect(sites.status).toBe(200)
+    expect(data(sites)).toHaveLength(0) // constructor's site is NOT visible across tenants
+  })
+
+  test('25 MJG-033: WORKER cannot create suppliers → 403; OWNER still can', async () => {
+    const member = await call('/api/users', {
+      method: 'POST',
+      session: 'owner',
+      body: {
+        name: 'Suite Worker User',
+        email: 'suite-worker@mjengo-test.test',
+        password: 'WorkerPass#2026!',
+        role: 'WORKER',
+      },
+    })
+    expect(member.status).toBe(201)
+
+    const workerLogin = await call('/api/auth/login', {
+      method: 'POST',
+      session: 'worker',
+      body: { email: 'suite-worker@mjengo-test.test', password: 'WorkerPass#2026!' },
+    })
+    expect(workerLogin.status).toBe(200)
+
+    const denied = await call('/api/suppliers', {
+      method: 'POST',
+      session: 'worker',
+      body: { name: 'Worker Supplier Co' },
+    })
+    expect(denied.status).toBe(403)
+
+    // OWNER path stays open (second supplier used for partner linking below).
+    const allowed = await call('/api/suppliers', {
+      method: 'POST',
+      session: 'owner',
+      body: { name: 'Suite Steel Traders', category: 'Steel' },
+    })
+    expect(allowed.status).toBe(201)
+    expect(data(allowed)?.partnerOrganizationId).toBeNull()
+  })
+
+  test('26 partner directory lists partner orgs by type', async () => {
+    const suppliersDir = await call('/api/partners', { session: 'owner' })
+    expect(suppliersDir.status).toBe(200)
+    const supplierIds = (data(suppliersDir) as Array<{ id: string; type: string }>).map(p => p.id)
+    expect(supplierIds).toContain(S.partnerOrgId!)
+    expect(supplierIds).not.toContain(S.logisticsOrgId!)
+    expect((data(suppliersDir) as Array<{ type: string }>).every(p => p.type === 'SUPPLIER')).toBe(true)
+
+    const logisticsDir = await call('/api/partners?type=LOGISTICS', { session: 'owner' })
+    expect(logisticsDir.status).toBe(200)
+    const logisticsIds = (data(logisticsDir) as Array<{ id: string; type: string }>).map(p => p.id)
+    expect(logisticsIds).toContain(S.logisticsOrgId!)
+    expect(logisticsIds).not.toContain(S.partnerOrgId!)
+  })
+
+  test('27 link supplier record to partner org; invalid links rejected', async () => {
+    const linked = await call(`/api/suppliers/${S.supplierId}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { partnerOrganizationId: S.partnerOrgId },
+    })
+    expect(linked.status).toBe(200)
+    expect(data(linked)?.partnerOrganizationId).toBe(S.partnerOrgId)
+    expect(data(linked)?.partnerOrganizationName).toBe('Suite Supply Partners')
+
+    const unknown = await call(`/api/suppliers/${S.supplierId}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { partnerOrganizationId: 'nonexistent-org' },
+    })
+    expect(unknown.status).toBe(404)
+
+    // A CONSTRUCTOR org is not a valid partner for a supplier record.
+    const wrongType = await call(`/api/suppliers/${S.supplierId}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { partnerOrganizationId: data((await call('/api/auth/me', { session: 'owner' })))?.organizationId },
+    })
+    expect(wrongType.status).toBe(422)
+  })
+
+  test('28 partner sees SENT PO; DRAFT stays private to the constructor', async () => {
+    // Golden-journey PO (case 11/12) is SENT and linked via the supplier record.
+    const before = await call('/api/partner/purchase-orders', { session: 'supplier' })
+    expect(before.status).toBe(200)
+    expect(data(before)).toHaveLength(1)
+    expect(data(before)[0].id).toBe(S.poId)
+    expect(data(before)[0].status).toBe('SENT')
+    expect(data(before)[0].total).toBe(84000)
+    expect(data(before)[0].organizationName).toBe('Suite Test Constructors')
+    expect(data(before)[0].items[0].materialName).toBe('Suite Cement')
+
+    // A fresh DRAFT to the same supplier must NOT be visible to the partner.
+    const draft = await call('/api/purchase-orders', {
+      method: 'POST',
+      session: 'owner',
+      body: {
+        siteId: S.siteId,
+        supplierId: S.supplierId,
+        items: [{ materialId: S.materialId, quantity: 10, unitCost: 700 }],
+      },
+    })
+    expect(draft.status).toBe(201)
+    S.po2Id = data(draft)?.id
+
+    const during = await call('/api/partner/purchase-orders', { session: 'supplier' })
+    expect(data(during)).toHaveLength(1)
+
+    // Once sent, it appears.
+    const send = await call(`/api/purchase-orders/${S.po2Id}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { status: 'SENT' },
+    })
+    expect(send.status).toBe(200)
+
+    const after = await call('/api/partner/purchase-orders', { session: 'supplier' })
+    expect(data(after)).toHaveLength(2)
+    // newest first
+    expect(data(after)[0].id).toBe(S.po2Id)
+  })
+
+  test('29 MJG-032: assignment FSM — adjacent moves ok, jumps 422, terminal locked', async () => {
+    const worker = await call('/api/workers', {
+      method: 'POST',
+      session: 'owner',
+      body: { name: 'Suite Worker Two', trade: 'CARPENTER' },
+    })
+    expect(worker.status).toBe(201)
+    S.worker2Id = data(worker)?.id
+
+    const assignment = await call('/api/assignments', {
+      method: 'POST',
+      session: 'owner',
+      body: { workerId: S.worker2Id, siteId: S.siteId },
+    })
+    expect(assignment.status).toBe(201)
+    S.assignment2Id = data(assignment)?.id
+
+    // ASSIGNED → COMPLETED is a jump → 422
+    const jump = await call(`/api/assignments/${S.assignment2Id}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { status: 'COMPLETED' },
+    })
+    expect(jump.status).toBe(422)
+    expect(errMsg(jump)).toContain('Invalid status transition')
+
+    // Legal: ASSIGNED → ACTIVE
+    const activate = await call(`/api/assignments/${S.assignment2Id}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { status: 'ACTIVE' },
+    })
+    expect(activate.status).toBe(200)
+    expect(data(activate)?.status).toBe('ACTIVE')
+
+    // Legal: ACTIVE → COMPLETED (endDate recorded)
+    const complete = await call(`/api/assignments/${S.assignment2Id}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { status: 'COMPLETED' },
+    })
+    expect(complete.status).toBe(200)
+    expect(data(complete)?.status).toBe('COMPLETED')
+    expect(data(complete)?.endDate).toBeTruthy()
+
+    // COMPLETED is terminal → reopening 422
+    const reopen = await call(`/api/assignments/${S.assignment2Id}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { status: 'ACTIVE' },
+    })
+    expect(reopen.status).toBe(422)
+  })
+
+  test('30 partner portal access control: constructor + logistics orgs → 403', async () => {
+    const ownerBlocked = await call('/api/partner/purchase-orders', { session: 'owner' })
+    expect(ownerBlocked.status).toBe(403)
+
+    const logisticsBlocked = await call('/api/partner/purchase-orders', { session: 'logistics' })
+    expect(logisticsBlocked.status).toBe(403)
   })
 })

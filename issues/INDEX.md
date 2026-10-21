@@ -37,11 +37,13 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-027 | Hosted deployment: Vercel (frontend/website) + Render (backend/Postgres), API proxy rewrites, env matrix, deploy-from-main-only policy | DevOps | feat/hosting-configs | DONE |
 | MJG-028 | CTA routing: Get Started / Sign in navigate to the app (NEXT_PUBLIC_APP_URL) + `#get-started`/`#signin` deep links | Frontend | feat/cta-routing | DONE |
 | MJG-029 | Runtime hygiene: gate SQL query logging to development; untrack `.env` + runtime `db/custom.db` from git | Security | chore/runtime-hygiene | DONE |
-| MJG-030 | Partner access model: supplier & logistics registration (design proposal — product decision required) | Product | — | OPEN |
+| MJG-030 | Partner access model: supplier & logistics registration (design proposal — product decision required) | Product | — | DONE |
 | MJG-031 | GitHub lineage adoption: push hosting-ready tree as PR #414 head, close reconciliation per product-owner direction, align local main/dev | DevOps | chore/lineage-adoption | DONE |
-| MJG-032 | Assignment status FSM: PATCH /api/assignments/[id] accepts any status jump (POs have a guarded FSM; assignments do not) | Backend | — | OPEN |
-| MJG-033 | Role policy inconsistency: POST /api/suppliers is any-role while PO create is OWNER/SUPERVISOR | Backend | — | OPEN |
-| MJG-034 | Remove unused dependencies (next-auth, uuid, z-ai-web-dev-sdk — installed, never imported) | Backend | — | OPEN |
+| MJG-032 | Assignment status FSM: PATCH /api/assignments/[id] accepts any status jump (POs have a guarded FSM; assignments do not) | Backend | feat/partner-access | DONE |
+| MJG-033 | Role policy inconsistency: POST /api/suppliers is any-role while PO create is OWNER/SUPERVISOR | Backend | feat/partner-access | DONE |
+| MJG-034 | Remove unused dependencies (next-auth, uuid, z-ai-web-dev-sdk — installed, never imported) | Backend | chore/dep-hygiene | DONE |
+| MJG-035 | Partner access model implementation: org types (CONSTRUCTOR\|SUPPLIER\|LOGISTICS), partner self-registration, supplier↔partner-org linking, supplier PO-visibility portal | Product/Backend/Frontend | feat/partner-access | DONE |
+| MJG-036 | Partner phase-2 remainder: constructor-endpoint org-type guard + logistics delivery-task model (follow-up from MJG-035) | Backend | — | OPEN |
 
 ---
 
@@ -188,17 +190,32 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 **Current-state answer to the product owner's question:** roles are exactly `OWNER | SUPERVISOR | WORKER` (`src/lib/types.ts`), assigned only as: register → OWNER of a NEW org; OWNER creates SUPERVISOR/WORKER members (`POST /api/users`, OWNER-only). **Suppliers are data records, not identities** (`Supplier` model + `/api/suppliers`, managed by org staff; no login, no portal, no cross-org relationship). **Logistics/transport does not exist anywhere** in schema or code.
 **Proposed design (for decision):** Phase 1 — add `Organization.type` (`CONSTRUCTOR | SUPPLIER | LOGISTICS`) + partner self-registration (creates partner-type org + OWNER); Phase 2 — cross-org PO visibility: supplier-org users see POs addressed to them, accept/acknowledge, optionally log shipments; logistics orgs receive delivery tasks. Segregation and tenancy rules carry over (partner sees only own relationships). Phased to avoid breaking the verified tenant model.
 **Accept (of this issue):** design reviewed & approved by product owner → implementation issues filed. NOT implemented in this sprint (no silent scope creep).
+**Decision (2026-10-22):** product owner directed "fix all issues" — design APPROVED for implementation. Implementation filed as **MJG-035** (Phase 1 + supplier PO visibility); Phase-2 remainder (constructor-endpoint org-type guard, logistics task model) filed as **MJG-036**. This issue closes as the design record.
 
 ## MJG-031 — GitHub lineage adoption & push (execution)
 **Basis:** product owner directed "push the changes to GitHub" + "deployment from main only" + hosting prep — this is the PR #414 Option 1 decision (sandbox lineage becomes the product).
 **Plan:** re-squash the hosting-ready tree (secret-scan first: no `.env`, no tokens, no runtime DB) onto the PR #414 head branch; comment the PR with the decision record; merge PR #414 via API (merge commit → remote main content = validated tree, remote history preserved in graph); align local `main`/`dev` to the published remote state (content-identical); push `dev`; temp branches deleted.
 **Accept:** remote main = hosting-ready validated tree; PR #414 merged/closed with decision evidence; local and remote lineage converged; push protection clean (secret-scan 0 hits before push).
 
-## MJG-032 — Assignment status FSM (OPEN — audit finding)
+## MJG-032 — Assignment status FSM (DONE — feat/partner-access)
 **Finding:** `PATCH /api/assignments/[id]` accepts any enum value from any current state (ASSIGNED/ACTIVE/COMPLETED jumps), unlike `PATCH /api/purchase-orders/[id]` which enforces `ALLOWED_TRANSITIONS`. Risk: completed assignments reopened, or active set on completed without `endDate` semantics. **Fix proposal:** mirror the PO FSM (ASSIGNED→ACTIVE→COMPLETED, guard endDate). Not implemented this sprint (behavior change requires product sign-off + suite coverage).
+**Fixed (2026-10-22, "fix all issues" product direction):** server FSM `ASSIGNED→ACTIVE→COMPLETED` (COMPLETED terminal, endDate set exactly on completion) mirroring the PO pattern; workforce-view dropdown/mobile actions now offer only legal next statuses (client mirror of the FSM, plus explicit terminal states); suite case 29 covers jump→422, adjacent→200, endDate recorded, reopen→422. Product sign-off = the "fix all issues" directive.
 
-## MJG-033 — Supplier creation role policy (OPEN — audit finding)
+## MJG-033 — Supplier creation role policy (DONE — feat/partner-access)
 **Finding:** `POST /api/suppliers` accepts ANY role (WORKERs can create supplier records) while `POST /api/purchase-orders` (which consumes suppliers) is OWNER/SUPERVISOR-gated. Inconsistent privilege surface. **Decision required:** either gate supplier creation to OWNER/SUPERVISOR or document the deliberate looseness. Not changed this sprint (would alter tested behavior — suite asserts supplier creation in the golden journey under the OWNER session, so gating would pass, but policy call belongs to product).
+**Fixed (2026-10-22, "fix all issues" product direction = the policy call):** `requireUser(['OWNER','SUPERVISOR'])` on POST /api/suppliers; procurement suppliers-tab manage controls hidden for WORKER (server 403 is the backstop); suite case 25 asserts WORKER→403 while the OWNER path stays 201.
 
-## MJG-034 — Dependency hygiene (OPEN — audit finding)
+## MJG-034 — Dependency hygiene (DONE — chore/dep-hygiene)
 **Finding:** `next-auth@4.24.11`, `uuid@11`, `z-ai-web-dev-sdk` are declared dependencies with **zero imports** in `src/` (grep-verified). Each enlarges install surface (and `next-auth` pins old tooling). Remove in a dedicated hygiene PR after confirming no dynamic usage. Not done this sprint (install-surface change late in launch cycle = avoidable risk).
+**Fixed (2026-10-22):** re-verified zero imports across `src/ tests/ scripts/` (incl. dynamic-usage grep), removed all three from `package.json`, `bun install` regenerated `bun.lock` (0 residual references); full gates re-run on the pruned tree (lint/tsc/30-case suite) — no collateral damage.
+
+## MJG-035 — Partner access model implementation (DONE — feat/partner-access)
+**Basis:** product owner approved via "fix all issues" (2026-10-22). Implements Phase 1 + the supplier half of Phase 2 of the MJG-030 design, phased so the verified tenant model is never broken.
+**Schema (both prisma schemas + PG migration `20261022000000_partner_org_types`, additive-only):** `Organization.type String @default("CONSTRUCTOR")` (CONSTRUCTOR \| SUPPLIER \| LOGISTICS, zod-validated union — SQLite has no enums); `Supplier.partnerOrganizationId String?` FK → Organization ("PartnerOrgSuppliers", onDelete SetNull) + index — links a constructor's supplier *record* to the partner's real *organization*.
+**API:** (1) `POST /api/auth/register` accepts optional `organizationType` (default CONSTRUCTOR) → partner self-registration creates a partner-type org + OWNER; (2) `/api/auth/*` + `requireUser` expose `organizationType` on SessionUser; (3) `POST /api/suppliers` gated OWNER\|SUPERVISOR (executes MJG-033); (4) NEW `PATCH /api/suppliers/[id]` { partnerOrganizationId: string\|null } (OWNER\|SUPERVISOR) validates the target org exists AND is type SUPPLIER; (5) NEW `GET /api/partners?type=SUPPLIER\|LOGISTICS` (OWNER\|SUPERVISOR) — partner org directory for linking; (6) NEW `GET /api/partner/purchase-orders` — SUPPLIER-org users see POs whose supplier record is linked to their org, `status != DRAFT` (only what was actually sent: SENT/RECEIVED/CANCELLED), newest first, with items + constructor org name; CONSTRUCTOR orgs → 403.
+**Frontend:** register form gains an organization-type selector (Constructor / Supplier / Logistics); partner-org sessions get a dedicated read-only partner portal (supplier: PO inbox; logistics: profile + honest "task assignment ships later" note) instead of the constructor shell; suppliers tab shows the linked partner org + link/unlink dialog (OWNER\|SUPERVISOR, fed by /api/partners).
+**Tenancy (unchanged invariants):** all existing queries remain org-scoped; partner orgs see only data addressed to them; DRAFT POs never leave the constructor org; no existing tested behavior changes except the MJG-033 role gate.
+**Accept:** suite extended (~cases 22-30: partner registration, tenancy isolation, directory, linking, DRAFT-invisibility + SENT-visibility, FSM 422s incl., WORKER supplier-create 403, CONSTRUCTOR 403 on partner portal) green on SQLite AND migrated Postgres; parity gate green; browser E2E evidence for the partner journey; docs updated.
+
+## MJG-036 — Partner phase-2 remainder (OPEN — follow-up from MJG-035)
+**Scope:** (a) server-side org-type guard on constructor-domain endpoints (a SUPPLIER/LOGISTICS org user can currently create empty sites/materials in their own org via direct API calls — harmless, tenant-scoped, and invisible in the UI, but sloppy; gate constructor-domain writes to CONSTRUCTOR orgs via a requireUser orgType option); (b) logistics task model: Delivery.carrierOrganizationId or equivalent, so logistics orgs receive/acknowledge delivery tasks; (c) partner accept/acknowledge + shipment logging on POs. Deliberately NOT implemented with MJG-035 to keep the additive schema change and the tenancy model reviewable — per the phased MJG-030 design.

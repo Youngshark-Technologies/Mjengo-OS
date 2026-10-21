@@ -41,6 +41,8 @@ import { DeliveriesView } from '@/components/views/deliveries-view'
 import { WorkforceView } from '@/components/views/workforce-view'
 import { EvidenceView } from '@/components/views/evidence-view'
 import { PaymentsView } from '@/components/views/payments-view'
+// MJG-035 — partner orgs (SUPPLIER/LOGISTICS) get the read-only partner portal.
+import { PartnerView } from '@/components/views/partner-view'
 
 interface NavItem {
   key: ViewKey
@@ -100,6 +102,17 @@ function BrandMark() {
 }
 
 export function AppShell({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
+  // MJG-035 — partner organizations never enter the constructor operating
+  // system; they get the dedicated read-only partner portal instead. The
+  // branch happens BETWEEN components (not around hooks) so each shell keeps
+  // a stable hook order.
+  if (user.organizationType === 'SUPPLIER' || user.organizationType === 'LOGISTICS') {
+    return <PartnerView user={user} onLogout={onLogout} />
+  }
+  return <ConstructorShell user={user} onLogout={onLogout} />
+}
+
+function ConstructorShell({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const view = useAppStore((s) => s.view)
   const setView = useAppStore((s) => s.setView)
   const { toast } = useToast()
@@ -130,7 +143,7 @@ export function AppShell({ user, onLogout }: { user: SessionUser; onLogout: () =
       case 'inventory':
         return <InventoryView />
       case 'procurement':
-        return <ProcurementView />
+        return <ProcurementView user={user} />
       case 'deliveries':
         return <DeliveriesView user={user} />
       case 'workforce':
