@@ -83,3 +83,35 @@ passwords are scrypt-hashed, and there are no third-party API integrations.
 - The physical deployment act itself (needs the target host/credentials).
 - Domain + TLS termination (platform-level; put Caddy/nginx in front).
 - Off-site backup replication (see docs/BACKUPS.md limits).
+
+---
+
+## First-time production initialization & demo-data cleanup (MJG-023)
+
+A production deployment starts from an EMPTY database. The Docker entrypoint
+runs `prisma db push` on a fresh volume — no seed data exists in this product
+by design (verified: no seed scripts in `prisma/`).
+
+If you ever need to wipe a database back to this pristine state (e.g. before
+go-live, after QA data), use the guarded, backup-mandatory procedure:
+
+```bash
+# refuses to run without the flag; takes a verified online backup first;
+# wipes all rows; refuses to report success unless the post-audit is zero
+bash scripts/db-reset-with-backup.sh --i-understand-this-wipes-the-database
+```
+
+Read-only verification at any time (counts + integrity + orphan check):
+
+```bash
+bun scripts/db-audit-counts.ts                 # report
+bun scripts/db-audit-counts.ts --zero-required # exit 1 unless every table is empty
+```
+
+Evidence from the launch wipe (2026-10-21): 62 rows → 0 across 18 tables,
+integrity ok, 0 orphans; rollback via the pre-wipe backup in `db/backups/`
+(`bun scripts/db-restore.ts <backup> --into db/custom.db`).
+
+Note for serverless platforms (e.g. Vercel): SQLite files are ephemeral there —
+use the Docker/bare-metal path with a persistent volume, or point
+`DATABASE_URL` at a hosted database before the first deploy.
