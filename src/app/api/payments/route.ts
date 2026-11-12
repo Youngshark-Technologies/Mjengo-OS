@@ -80,6 +80,7 @@ export async function GET(req: Request) {
         approvedBy: true,
       },
       orderBy: { createdAt: 'desc' },
+      take: 500,
     })
 
     return ok(payments.map(toPaymentDTO))
@@ -90,7 +91,7 @@ export async function GET(req: Request) {
 // approval is a separate, explicit human decision by the org owner.
 export async function POST(req: Request) {
   return handle(async () => {
-    const user = await requireUser(['OWNER', 'SUPERVISOR'])
+    const user = await requireUser(['OWNER', 'SUPERVISOR'], { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, createSchema)
 
     await findOrgRecord(db.site, body.siteId, user.organizationId, 'Site')

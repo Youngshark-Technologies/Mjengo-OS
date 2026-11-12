@@ -39,7 +39,7 @@ const ALLOWED_TRANSITIONS: Record<AssignmentStatus, AssignmentStatus[]> = {
 // PATCH /api/assignments/[id] — move an assignment through ASSIGNED → ACTIVE → COMPLETED.
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const user = await requireUser()
+    const user = await requireUser(['OWNER', 'SUPERVISOR'], { orgType: ['CONSTRUCTOR'] })
     const { id } = await params
     const body = await parseBody(req, patchSchema)
 

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { db } from '@/lib/db'
-import { handle, ok, requireUser } from '@/lib/api-helpers'
+import { handle, ok, parseQuery, requireUser } from '@/lib/api-helpers'
 import type { PartnerOrgDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -19,8 +19,7 @@ export async function GET(req: Request) {
   return handle(async () => {
     await requireUser(['OWNER', 'SUPERVISOR'])
 
-    const url = new URL(req.url)
-    const query = querySchema.parse({ type: url.searchParams.get('type') ?? undefined })
+    const query = parseQuery(req, querySchema)
 
     const partners = await db.organization.findMany({
       where: { type: query.type },

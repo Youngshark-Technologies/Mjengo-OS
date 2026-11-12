@@ -37,7 +37,7 @@ const patchSchema = z.object({
 // PATCH /api/sites/[id] — update an org-owned site (partial).
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const user = await requireUser()
+    const user = await requireUser(undefined, { orgType: ['CONSTRUCTOR'] })
     const { id } = await params
     const body = await parseBody(req, patchSchema)
 

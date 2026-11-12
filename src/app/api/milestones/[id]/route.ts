@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { Milestone } from '@prisma/client'
 import { db } from '@/lib/db'
-import { ok, handle, parseBody, requireUser, findOrgRecord } from '@/lib/api-helpers'
+import { ApiError, ok, handle, parseBody, requireUser, findOrgRecord } from '@/lib/api-helpers'
 import type { MilestoneDTO, MilestoneStatus } from '@/lib/types'
 import { MILESTONE_STATUS_VALUES } from '@/lib/types'
 
@@ -26,11 +26,16 @@ const patchSchema = z.object({
 // PATCH /api/milestones/[id] — update milestone status.
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const user = await requireUser()
+    const user = await requireUser(undefined, { orgType: ['CONSTRUCTOR'] })
     const { id } = await params
     const body = await parseBody(req, patchSchema)
 
     const milestone = await findOrgRecord(db.milestone, id, user.organizationId, 'Milestone')
+
+    // MJG-051 — COMPLETED is terminal: a completed milestone cannot be reopened.
+    if (milestone.status === 'COMPLETED' && body.status !== 'COMPLETED') {
+      throw new ApiError(422, 'Completed milestones are terminal and cannot be reopened')
+    }
 
     const updated = await db.milestone.update({
       where: { id: milestone.id },

@@ -56,7 +56,7 @@ const ALLOWED_TRANSITIONS: Record<POStatus, POStatus[]> = {
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
     const { id } = await params
-    const user = await requireUser(['OWNER', 'SUPERVISOR'])
+    const user = await requireUser(['OWNER', 'SUPERVISOR'], { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, patchPOSchema)
 
     const po = await findOrgRecord(db.purchaseOrder, id, user.organizationId, 'Purchase order')

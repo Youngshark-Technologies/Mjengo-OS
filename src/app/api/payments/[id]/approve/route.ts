@@ -53,28 +53,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const { id } = await params
     const body = await parseBody(req, decisionSchema)
 
-    const payment = await db.payment.findFirst({
-      where: { id, organizationId: user.organizationId },
-    })
-    if (!payment) throw new ApiError(404, 'Payment not found')
-    if (payment.status !== 'PENDING') {
-      throw new ApiError(422, 'Payment has already been processed')
-    }
+    const updated = await db.$transaction(async tx => {
+      const payment = await tx.payment.findFirst({
+        where: { id, organizationId: user.organizationId },
+      })
+      if (!payment) throw new ApiError(404, 'Payment not found')
+      if (payment.status !== 'PENDING') {
+        throw new ApiError(422, 'Payment has already been processed')
+      }
 
-    const updated = await db.payment.update({
-      where: { id: payment.id },
-      data: {
-        status: body.decision,
-        approvedById: user.id, // the acting session user — never inferred, never defaulted
-        approvedAt: new Date(),
-      },
-      include: {
-        site: true,
-        milestone: true,
-        purchaseOrder: true,
-        recordedBy: true,
-        approvedBy: true,
-      },
+      return tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: body.decision,
+          approvedById: user.id, // the acting session user — never inferred, never defaulted
+          approvedAt: new Date(),
+        },
+        include: {
+          site: true,
+          milestone: true,
+          purchaseOrder: true,
+          recordedBy: true,
+          approvedBy: true,
+        },
+      })
     })
 
     return ok(toPaymentDTO(updated))

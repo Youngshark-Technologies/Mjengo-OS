@@ -82,6 +82,7 @@ export async function GET(req: Request) {
       },
       include: poInclude,
       orderBy: { createdAt: 'desc' },
+      take: 500,
     })
     return ok(purchaseOrders.map(toPurchaseOrderDTO))
   })
@@ -91,7 +92,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   return handle(async () => {
-    const user = await requireUser(['OWNER', 'SUPERVISOR'])
+    const user = await requireUser(['OWNER', 'SUPERVISOR'], { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, createPOSchema)
 
     // Org-ownership checks (404 keeps cross-tenant ids indistinguishable).

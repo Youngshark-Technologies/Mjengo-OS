@@ -100,6 +100,7 @@ export async function GET(req: Request) {
       },
       include: deliveryInclude,
       orderBy: { createdAt: 'desc' },
+      take: 500,
     })
 
     const names = await verifierNameMap(deliveries.map(d => d.verifiedById), user.organizationId)
@@ -111,7 +112,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   return handle(async () => {
-    const user = await requireUser(['OWNER', 'SUPERVISOR', 'WORKER'])
+    const user = await requireUser(['OWNER', 'SUPERVISOR', 'WORKER'], { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, createDeliverySchema)
 
     // Org-ownership checks (404 keeps cross-tenant ids indistinguishable).
