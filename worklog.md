@@ -421,3 +421,22 @@ Stage Summary:
 - Registry: 35/36 DONE-or-OPEN as designed — MJG-030/032/033/034/035 DONE this sprint; MJG-036 OPEN (phase-2 remainder, single tracked follow-up).
 - The product owner's four asks are now closed end-to-end: (1) CTAs route to mjengoupdate (HOSTING-01); (2) frontend↔backend communication audited + hosted split shipped (HOSTING-01); (3) versioned migrations + Vercel/Render configs shipped (HOSTING-01) and now EXTENDED with the partner migration verified on real Postgres; (4) supplier/logistics registration is implemented — self-registration via org type, partner portal, PO visibility via supplier-record linking.
 - Remaining user actions (unchanged from HOSTING-01): set NEXT_PUBLIC_APP_URL on Vercel, BACKEND_URL pairing, deploy Render blueprint, rotate the GitHub token, enable branch protection (token lacks admin).
+
+---
+Task ID: OPEN-ISSUES-02-PUSH
+Agent: Principal Orchestrator (main)
+Task: GitHub push of the OPEN-ISSUES-02 release (continuation of MJG-031 lineage adoption).
+
+Work Log:
+- Pre-push regression caught: daemon checkpoint commits had re-added `.env` + `db/custom.db` to MAIN's tree (MJG-029 recurrence; dev was clean). Release commit tree = dev tree → both purged from main (files remain on disk). Verified: `git ls-tree main` has no `.env`, no `db/`.
+- Backwards-synced main-only content into dev BEFORE the release (established pattern): `scripts/pg-keep.ts` (persistent embedded-PG keeper from HOSTING-01) + worklog HOSTING-01-PUSH tail. Temp branch chore/backwards-sync-02 merged to dev, deleted.
+- Sprint merged via plumbing: chore/backwards-sync-02 → dev (38df356), chore/dep-hygiene → dev (85a4130, MJG-034), feat/partner-access → dev (fecf9ad, MJG-030/032/033/035). All temp branches deleted; `git branch` = dev + main only.
+- Release: main tree == dev tree (identical), secret scan on released tree: 0 hits (no .env/db/token paths in 219 tracked files).
+- PUSH BLOCKED: upload/sharkpush.txt token is now INVALID (API 401; git push "Invalid username or token" with both x-access-token and classic PAT forms; the earlier ls-remote "success" was anonymous read of the public repo). Token likely rotated/expired — matches the standing rotation recommendation.
+- Bridges prepared and verified fast-forward-pushable the moment a valid token exists: main @ 7a2d662 (parents: previous main, dev, remote main f8e8c4e — adopts remote lineage), dev @ 2ab32ac (parents: dev, release). Remote expected FF: main f8e8c4e → 7a2d662, dev 1600308 → 2ab32ac.
+
+Stage Summary:
+- Local state is the release state: main @ 7a2d662 + dev @ 2ab32ac, identical clean trees, 35/36 registry DONE (MJG-036 OPEN).
+- USER ACTION REQUIRED: provide a fresh push-scoped GitHub token (or push manually) to publish:
+  `git push https://<token>@github.com/Youngshark-Technologies/Mjengo-OS.git main dev`
+  (fast-forward, no force needed). After merge, Vercel git-integration auto-deploys per docs/DEPLOYMENT.md; Render blueprint deploy + NEXT_PUBLIC_APP_URL/BACKEND_URL env pairing remain per the HOSTING-01 runbook.
