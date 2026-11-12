@@ -49,8 +49,8 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-039 | Render build: npm install --include=dev (NODE_ENV=production skips devDeps) | DevOps | chore/deploy-hardening | OPEN |
 | MJG-040 | Build-time env traps: NEXT_PUBLIC_APP_URL/BACKEND_URL must be set at BUILD time on Vercel | DevOps | chore/deploy-hardening | OPEN |
 | MJG-041 | Reproducible Render installs: commit package-lock.json (npm ignores bun.lock) | DevOps | chore/deploy-hardening | OPEN |
-| MJG-042 | Hash session tokens at rest (SHA-256; DB stores digest, cookie keeps raw) | Security | fix/auth-security | OPEN |
-| MJG-043 | Rate limiting on auth endpoints (login fails, register per-IP) | Security | fix/auth-security | OPEN |
+| MJG-042 | Hash session tokens at rest (SHA-256; DB stores digest, cookie keeps raw) | Security | fix/auth-security | DONE |
+| MJG-043 | Rate limiting on auth endpoints (login fails, register per-IP) | Security | fix/auth-security | DONE |
 | MJG-044 | PATCH /api/assignments/[id] role gate (OWNER/SUPERVISOR) | Backend | fix/api-hardening | OPEN |
 | MJG-045 | Root README.md + correct the mjengoos-website/ premise (marketing is in-app) | Docs | chore/deploy-hardening | OPEN |
 | MJG-046 | CI workflow file ready for GitHub billing unlock (local gates stay authoritative) | DevOps | chore/deploy-hardening | OPEN |
@@ -61,7 +61,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-051 | Milestone PATCH has no terminal-state guard (COMPLETED reopenable) | Backend | fix/api-hardening | OPEN |
 | MJG-052 | Payment approve: PENDING check→update not transactional | Backend | fix/api-hardening | OPEN |
 | MJG-053 | Unbounded list queries on payments/deliveries/evidence/purchase-orders/assignments | Backend | fix/api-hardening | OPEN |
-| MJG-054 | Expired-session pruning (Session table growth on hosted deploys) | Security | fix/auth-security | OPEN |
+| MJG-054 | Expired-session pruning (Session table growth on hosted deploys) | Security | fix/auth-security | DONE |
 | MJG-055 | Boot-failure retry UI + #get-started opens register mode + radiogroup a11y | Frontend | fix/frontend-resilience | OPEN |
 | MJG-056 | Suite extensions: cookie flags, malformed payloads 400, org-type guard 403, rate-limit 429, cross-constructor tenancy | QA | test/suite-extensions | OPEN |
 | MJG-057 | Docs/config hygiene batch: engines>=20, portable .env.example, DEPLOYMENT intro, BACKUPS path, start-script drift note | Docs | chore/deploy-hardening | OPEN |
