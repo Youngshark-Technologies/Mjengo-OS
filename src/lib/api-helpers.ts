@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { z, ZodSchema } from 'zod'
 import { db } from '@/lib/db'
-import { SESSION_COOKIE } from '@/lib/auth'
+import { SESSION_COOKIE, hashToken } from '@/lib/auth'
 import type { OrganizationType, Role, SessionUser } from '@/lib/types'
 
 export class ApiError extends Error {
@@ -60,14 +60,19 @@ export function parseQuery<T>(req: Request, schema: ZodSchema<T>): T {
 }
 
 // Loads the session user (joined with organization) from the httpOnly cookie.
-// Throws 401 when missing/expired. Pass roles to enforce server-side authorization.
-export async function requireUser(roles?: Role[]): Promise<SessionUser> {
+// Throws 401 when missing/expired. Pass roles to enforce server-side
+// authorization; pass opts.orgType to additionally restrict the organization
+// type (e.g. partner-only endpoints).
+export async function requireUser(
+  roles?: Role[],
+  opts?: { orgType?: OrganizationType[] },
+): Promise<SessionUser> {
   const jar = await cookies()
   const token = jar.get(SESSION_COOKIE)?.value
   if (!token) throw new ApiError(401, 'Authentication required')
 
   const session = await db.session.findUnique({
-    where: { token },
+    where: { token: hashToken(token) }, // MJG-042 — tokens are stored hashed
     include: { user: { include: { organization: { select: { name: true, type: true } } } } },
   })
   if (!session) throw new ApiError(401, 'Session is invalid — sign in again')
@@ -88,6 +93,9 @@ export async function requireUser(roles?: Role[]): Promise<SessionUser> {
   }
   if (roles && !roles.includes(sessionUser.role)) {
     throw new ApiError(403, `This action requires role: ${roles.join(' or ')}`)
+  }
+  if (opts?.orgType && opts.orgType.length > 0 && !opts.orgType.includes(sessionUser.organizationType)) {
+    throw new ApiError(403, `This action requires a ${opts.orgType.join(' or ')} organization`)
   }
   return sessionUser
 }

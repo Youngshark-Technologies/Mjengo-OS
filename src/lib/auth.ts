@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, timingSafeEqual } from 'crypto'
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'crypto'
 import { db } from '@/lib/db'
 
 export const SESSION_COOKIE = 'mjengo_session'
@@ -24,15 +24,21 @@ export function generateSessionToken(): string {
   return randomBytes(32).toString('hex')
 }
 
+// MJG-042 — session tokens are stored at rest as SHA-256 digests; only the
+// raw token ever reaches the client cookie. A leaked DB row cannot be replayed.
+export function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex')
+}
+
 export async function createSession(userId: string): Promise<{ token: string; expiresAt: Date }> {
   const token = generateSessionToken()
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS)
-  await db.session.create({ data: { token, userId, expiresAt } })
+  await db.session.create({ data: { token: hashToken(token), userId, expiresAt } })
   return { token, expiresAt }
 }
 
 export async function destroySession(token: string): Promise<void> {
-  await db.session.deleteMany({ where: { token } })
+  await db.session.deleteMany({ where: { token: hashToken(token) } })
 }
 
 export function sessionCookieOptions(expiresAt: Date) {
