@@ -37,12 +37,12 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-027 | Hosted deployment: Vercel (frontend/website) + Render (backend/Postgres), API proxy rewrites, env matrix, deploy-from-main-only policy | DevOps | feat/hosting-configs | DONE |
 | MJG-028 | CTA routing: Get Started / Sign in navigate to the app (NEXT_PUBLIC_APP_URL) + `#get-started`/`#signin` deep links | Frontend | feat/cta-routing | DONE |
 | MJG-029 | Runtime hygiene: gate SQL query logging to development; untrack `.env` + runtime `db/custom.db` from git | Security | chore/runtime-hygiene | DONE |
-| MJG-030 | Partner access model: supplier & logistics registration (design proposal — product decision required) | Product | — | OPEN |
+| MJG-030 | Partner access model: supplier & logistics registration (design proposal — product decision required) | Product | — | DONE |
 | MJG-031 | GitHub lineage adoption: push hosting-ready tree as PR #414 head, close reconciliation per product-owner direction, align local main/dev | DevOps | chore/lineage-adoption | OPEN |
-| MJG-032 | Assignment status FSM: PATCH /api/assignments/[id] accepts any status jump (POs have a guarded FSM; assignments do not) | Backend | feat/partner-access | OPEN |
-| MJG-033 | Role policy inconsistency: POST /api/suppliers is any-role while PO create is OWNER/SUPERVISOR | Backend | feat/partner-access | OPEN |
-| MJG-034 | Remove unused dependencies (next-auth, uuid, z-ai-web-dev-sdk — installed, never imported) | Backend | chore/dep-hygiene | OPEN |
-| MJG-035 | Partner access model implementation: org types (CONSTRUCTOR\|SUPPLIER\|LOGISTICS), partner self-registration, supplier↔partner-org linking, supplier PO-visibility portal | Product/Backend/Frontend | feat/partner-access | OPEN |
+| MJG-032 | Assignment status FSM: PATCH /api/assignments/[id] accepts any status jump (POs have a guarded FSM; assignments do not) | Backend | feat/partner-access | DONE |
+| MJG-033 | Role policy inconsistency: POST /api/suppliers is any-role while PO create is OWNER/SUPERVISOR | Backend | feat/partner-access | DONE |
+| MJG-034 | Remove unused dependencies (next-auth, uuid, z-ai-web-dev-sdk — installed, never imported) | Backend | chore/dep-hygiene | DONE |
+| MJG-035 | Partner access model implementation: org types (CONSTRUCTOR\|SUPPLIER\|LOGISTICS), partner self-registration, supplier↔partner-org linking, supplier PO-visibility portal | Product/Backend/Frontend | feat/partner-access | DONE |
 | MJG-036 | Partner phase-2 remainder: constructor-endpoint org-type guard + logistics delivery-task model (follow-up from MJG-035) | Backend | — | OPEN |
 | MJG-037 | Split-deploy API shadowing: /api rewrites must be beforeFiles (Vercel→Render) | DevOps | chore/deploy-hardening | OPEN |
 | MJG-038 | Vercel build: prisma generate + bun trustedDependencies | DevOps | chore/deploy-hardening | OPEN |
