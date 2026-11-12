@@ -37,35 +37,35 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-027 | Hosted deployment: Vercel (frontend/website) + Render (backend/Postgres), API proxy rewrites, env matrix, deploy-from-main-only policy | DevOps | feat/hosting-configs | DONE |
 | MJG-028 | CTA routing: Get Started / Sign in navigate to the app (NEXT_PUBLIC_APP_URL) + `#get-started`/`#signin` deep links | Frontend | feat/cta-routing | DONE |
 | MJG-029 | Runtime hygiene: gate SQL query logging to development; untrack `.env` + runtime `db/custom.db` from git | Security | chore/runtime-hygiene | DONE |
-| MJG-030 | Partner access model: supplier & logistics registration (design proposal — product decision required) | Product | — | DONE |
-| MJG-031 | GitHub lineage adoption: push hosting-ready tree as PR #414 head, close reconciliation per product-owner direction, align local main/dev | DevOps | chore/lineage-adoption | DONE |
-| MJG-032 | Assignment status FSM: PATCH /api/assignments/[id] accepts any status jump (POs have a guarded FSM; assignments do not) | Backend | feat/partner-access | DONE |
-| MJG-033 | Role policy inconsistency: POST /api/suppliers is any-role while PO create is OWNER/SUPERVISOR | Backend | feat/partner-access | DONE |
-| MJG-034 | Remove unused dependencies (next-auth, uuid, z-ai-web-dev-sdk — installed, never imported) | Backend | chore/dep-hygiene | DONE |
-| MJG-035 | Partner access model implementation: org types (CONSTRUCTOR\|SUPPLIER\|LOGISTICS), partner self-registration, supplier↔partner-org linking, supplier PO-visibility portal | Product/Backend/Frontend | feat/partner-access | DONE |
+| MJG-030 | Partner access model: supplier & logistics registration (design proposal — product decision required) | Product | — | OPEN |
+| MJG-031 | GitHub lineage adoption: push hosting-ready tree as PR #414 head, close reconciliation per product-owner direction, align local main/dev | DevOps | chore/lineage-adoption | OPEN |
+| MJG-032 | Assignment status FSM: PATCH /api/assignments/[id] accepts any status jump (POs have a guarded FSM; assignments do not) | Backend | feat/partner-access | OPEN |
+| MJG-033 | Role policy inconsistency: POST /api/suppliers is any-role while PO create is OWNER/SUPERVISOR | Backend | feat/partner-access | OPEN |
+| MJG-034 | Remove unused dependencies (next-auth, uuid, z-ai-web-dev-sdk — installed, never imported) | Backend | chore/dep-hygiene | OPEN |
+| MJG-035 | Partner access model implementation: org types (CONSTRUCTOR\|SUPPLIER\|LOGISTICS), partner self-registration, supplier↔partner-org linking, supplier PO-visibility portal | Product/Backend/Frontend | feat/partner-access | OPEN |
 | MJG-036 | Partner phase-2 remainder: constructor-endpoint org-type guard + logistics delivery-task model (follow-up from MJG-035) | Backend | — | OPEN |
-| MJG-037 | Split-deploy API shadowing: /api rewrites must be beforeFiles (Vercel→Render) | DevOps | chore/deploy-hardening | DONE |
-| MJG-038 | Vercel build: prisma generate + bun trustedDependencies | DevOps | chore/deploy-hardening | DONE |
-| MJG-039 | Render build: npm install --include=dev (NODE_ENV=production skips devDeps) | DevOps | chore/deploy-hardening | DONE |
-| MJG-040 | Build-time env traps: NEXT_PUBLIC_APP_URL/BACKEND_URL must be set at BUILD time on Vercel | DevOps | chore/deploy-hardening | DONE |
-| MJG-041 | Reproducible Render installs: commit package-lock.json (npm ignores bun.lock) | DevOps | chore/deploy-hardening | DONE |
-| MJG-042 | Hash session tokens at rest (SHA-256; DB stores digest, cookie keeps raw) | Security | fix/auth-security | DONE |
-| MJG-043 | Rate limiting on auth endpoints (login fails, register per-IP) | Security | fix/auth-security | DONE |
-| MJG-044 | PATCH /api/assignments/[id] role gate (OWNER/SUPERVISOR) | Backend | fix/api-hardening | DONE |
-| MJG-045 | Root README.md + correct the mjengoos-website/ premise (marketing is in-app) | Docs | chore/deploy-hardening | DONE |
-| MJG-046 | CI workflow file ready for GitHub billing unlock (local gates stay authoritative) | DevOps | chore/deploy-hardening | DONE |
-| MJG-047 | GitHub PAT rotation (USER ACTION) + main-tip daemon purge at release | Security | release | DONE |
+| MJG-037 | Split-deploy API shadowing: /api rewrites must be beforeFiles (Vercel→Render) | DevOps | chore/deploy-hardening | OPEN |
+| MJG-038 | Vercel build: prisma generate + bun trustedDependencies | DevOps | chore/deploy-hardening | OPEN |
+| MJG-039 | Render build: npm install --include=dev (NODE_ENV=production skips devDeps) | DevOps | chore/deploy-hardening | OPEN |
+| MJG-040 | Build-time env traps: NEXT_PUBLIC_APP_URL/BACKEND_URL must be set at BUILD time on Vercel | DevOps | chore/deploy-hardening | OPEN |
+| MJG-041 | Reproducible Render installs: commit package-lock.json (npm ignores bun.lock) | DevOps | chore/deploy-hardening | OPEN |
+| MJG-042 | Hash session tokens at rest (SHA-256; DB stores digest, cookie keeps raw) | Security | fix/auth-security | OPEN |
+| MJG-043 | Rate limiting on auth endpoints (login fails, register per-IP) | Security | fix/auth-security | OPEN |
+| MJG-044 | PATCH /api/assignments/[id] role gate (OWNER/SUPERVISOR) | Backend | fix/api-hardening | OPEN |
+| MJG-045 | Root README.md + correct the mjengoos-website/ premise (marketing is in-app) | Docs | chore/deploy-hardening | OPEN |
+| MJG-046 | CI workflow file ready for GitHub billing unlock (local gates stay authoritative) | DevOps | chore/deploy-hardening | OPEN |
+| MJG-047 | GitHub PAT rotation (USER ACTION) + main-tip daemon purge at release | Security | release | OPEN |
 | MJG-048 | .gitignore gaps: download/, worklog-entries/ | DevOps | chore/registry-mjg037 | DONE |
-| MJG-049 | Route-level error boundaries (error.tsx, global-error.tsx, not-found.tsx) | Frontend | fix/frontend-resilience | DONE |
-| MJG-050 | GET /api/partners bad query param returns 500 (raw parse) instead of 400 | Backend | fix/api-hardening | DONE |
-| MJG-051 | Milestone PATCH has no terminal-state guard (COMPLETED reopenable) | Backend | fix/api-hardening | DONE |
-| MJG-052 | Payment approve: PENDING check→update not transactional | Backend | fix/api-hardening | DONE |
-| MJG-053 | Unbounded list queries on payments/deliveries/evidence/purchase-orders/assignments | Backend | fix/api-hardening | DONE |
-| MJG-054 | Expired-session pruning (Session table growth on hosted deploys) | Security | fix/auth-security | DONE |
-| MJG-055 | Boot-failure retry UI + #get-started opens register mode + radiogroup a11y | Frontend | fix/frontend-resilience | DONE |
-| MJG-056 | Suite extensions: cookie flags, malformed payloads 400, org-type guard 403, rate-limit 429, cross-constructor tenancy | QA | test/suite-extensions | DONE |
-| MJG-057 | Docs/config hygiene batch: engines>=20, portable .env.example, DEPLOYMENT intro, BACKUPS path, start-script drift note | Docs | chore/deploy-hardening | DONE |
-| MJG-058 | MJG-036(a): org-type guard on constructor-domain writes (17 endpoints via requireUser orgType) | Backend | fix/api-hardening | DONE |
+| MJG-049 | Route-level error boundaries (error.tsx, global-error.tsx, not-found.tsx) | Frontend | fix/frontend-resilience | OPEN |
+| MJG-050 | GET /api/partners bad query param returns 500 (raw parse) instead of 400 | Backend | fix/api-hardening | OPEN |
+| MJG-051 | Milestone PATCH has no terminal-state guard (COMPLETED reopenable) | Backend | fix/api-hardening | OPEN |
+| MJG-052 | Payment approve: PENDING check→update not transactional | Backend | fix/api-hardening | OPEN |
+| MJG-053 | Unbounded list queries on payments/deliveries/evidence/purchase-orders/assignments | Backend | fix/api-hardening | OPEN |
+| MJG-054 | Expired-session pruning (Session table growth on hosted deploys) | Security | fix/auth-security | OPEN |
+| MJG-055 | Boot-failure retry UI + #get-started opens register mode + radiogroup a11y | Frontend | fix/frontend-resilience | OPEN |
+| MJG-056 | Suite extensions: cookie flags, malformed payloads 400, org-type guard 403, rate-limit 429, cross-constructor tenancy | QA | test/suite-extensions | OPEN |
+| MJG-057 | Docs/config hygiene batch: engines>=20, portable .env.example, DEPLOYMENT intro, BACKUPS path, start-script drift note | Docs | chore/deploy-hardening | OPEN |
+| MJG-058 | MJG-036(a): org-type guard on constructor-domain writes (17 endpoints via requireUser orgType) | Backend | fix/api-hardening | OPEN |
 
 ---
 
