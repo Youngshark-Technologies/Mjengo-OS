@@ -241,7 +241,14 @@ export function AuthView({ onAuthed }: { onAuthed: () => void }) {
                 </div>
                 <fieldset className="space-y-2">
                   <legend className="text-sm font-medium text-stone-700">Organization type</legend>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {/* MJG-055 — the role="radio" buttons need an owning radiogroup
+                      with an accessible name; the fieldset/legend above is only
+                      visual grouping. Keyboard behavior is unchanged. */}
+                  <div
+                    role="radiogroup"
+                    aria-label="Organization type"
+                    className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+                  >
                     {ORG_TYPE_OPTIONS.map(({ value, label, hint, icon: Icon }) => {
                       const selected = organizationType === value
                       return (
