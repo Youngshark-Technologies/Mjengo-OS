@@ -36,6 +36,9 @@ function toPurchaseOrderDTO(po: PurchaseOrderWithRelations): PurchaseOrderDTO {
     expectedDate: po.expectedDate ? po.expectedDate.toISOString() : null,
     notes: po.notes,
     total,
+    // MJG-036 — partner-ack scalars are cheap columns on the row itself.
+    acknowledgedAt: po.acknowledgedAt ? po.acknowledgedAt.toISOString() : null,
+    acknowledgedByOrganizationId: po.acknowledgedByOrganizationId,
     items: po.items.map(item => ({
       materialId: item.materialId,
       quantity: item.quantity,

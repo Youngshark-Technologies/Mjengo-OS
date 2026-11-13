@@ -35,6 +35,9 @@ model Organization {
   evidenceReports EvidenceReport[]
   payments      Payment[]
   partnerSuppliers Supplier[] @relation("PartnerOrgSuppliers")
+  carrierDeliveries Delivery[] @relation("CarrierDeliveries")
+  acknowledgedPurchaseOrders PurchaseOrder[] @relation("AcknowledgedPurchaseOrders")
+  shipments      Shipment[]
 }
 
 model User {
@@ -51,6 +54,7 @@ model User {
   recordedPayments Payment[]        @relation("Recorder")
   approvedPayments Payment[]        @relation("Approver")
   loggedMovements  StockMovement[]
+  acknowledgedDeliveries Delivery[] @relation("DeliveryAcknowledger")
   createdSites     Site[]
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -207,13 +211,18 @@ model PurchaseOrder {
   orderDate      DateTime @default(now())
   expectedDate   DateTime?
   notes          String   @default("")
+  acknowledgedAt               DateTime?
+  acknowledgedByOrganizationId String?
+  acknowledgedByOrganization   Organization? @relation("AcknowledgedPurchaseOrders", fields: [acknowledgedByOrganizationId], references: [id], onDelete: SetNull)
   items          POItem[]
   deliveries     Delivery[]
   payments       Payment[]
+  shipments      Shipment[]
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   @@index([organizationId, status])
+  @@index([acknowledgedByOrganizationId])
 }
 
 model POItem {
@@ -226,6 +235,25 @@ model POItem {
   unitCost        Float    @default(0)
 
   @@index([purchaseOrderId])
+}
+
+// MJG-036 — partner shipment log: a SUPPLIER partner org records carrier /
+// tracking facts against a constructor's purchase order it can see.
+model Shipment {
+  id               String   @id @default(cuid())
+  purchaseOrderId  String
+  purchaseOrder    PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  carrierName      String
+  trackingNo       String?
+  shippedAt        DateTime?
+  estimatedArrival DateTime?
+  notes            String?
+  createdAt        DateTime @default(now())
+
+  @@index([purchaseOrderId])
+  @@index([organizationId])
 }
 
 // ─── Deliveries (human verification) ──────────────────────────────────────────
@@ -244,6 +272,11 @@ model Delivery {
   deliveredAt     DateTime @default(now())
   verifiedById    String?
   verifiedAt      DateTime?
+  carrierOrganizationId String?
+  carrierOrganization   Organization? @relation("CarrierDeliveries", fields: [carrierOrganizationId], references: [id], onDelete: SetNull)
+  acknowledgedAt  DateTime?
+  acknowledgedById String?
+  acknowledgedBy  User? @relation("DeliveryAcknowledger", fields: [acknowledgedById], references: [id], onDelete: SetNull)
   notes           String   @default("")
   items           DeliveryItem[]
   stockMovements  StockMovement[]
@@ -251,6 +284,7 @@ model Delivery {
   updatedAt       DateTime @updatedAt
 
   @@index([organizationId, status])
+  @@index([carrierOrganizationId])
 }
 
 model DeliveryItem {
