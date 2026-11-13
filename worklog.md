@@ -478,3 +478,19 @@ Work Log:
 
 Stage Summary:
 - Registry: 62/66 DONE. OPEN: MJG-031 (user token), MJG-036(b)(c) (backend agent dispatched next), MJG-047 (release-time purge + user token rotation).
+
+---
+Task ID: OPEN-ISSUES-04 (wave 2 — feature complete)
+Agent: Staff Engineer + Principal Backend/Frontend (MJG-036 b+c) + QA gates
+Task: MJG-036(b)(c) logistics delivery-task model + partner PO acknowledge/shipment logging; MJG-067 SQLite gate client-sync; release-candidate gates.
+
+Work Log:
+- MJG-036(b): Delivery.carrierOrganizationId/acknowledgedAt/acknowledgedById (indexed, SetNull) + GET /api/partner/delivery-tasks + POST /api/deliveries/[id]/acknowledge; carrier validated LOGISTICS (404/422); acknowledge = stamp (no stock effects); 409 via write predicates.
+- MJG-036(c): PurchaseOrder.acknowledgedAt/acknowledgedByOrganizationId + new Shipment model; POST acknowledge + POST/GET shipments under MJG-035 visibility (DRAFT 404, CANCELLED 422); constructor PO detail DTO carries ack + shipments.
+- Migration 20261113120000_partner_phase2 (5 ADD COLUMN + Shipment + 4 idx + 5 FK) — Prisma-migrate-diff-verified naming; partner portal UI: real logistics task list + supplier ack/shipment form.
+- MJG-067 discovered during RC2: SQLite harness built against a stale client in a fresh worktree (twin of MJG-059) → api-tests.sh now regenerates the client pre-run (chore/gate-client-sync, d7d9902).
+- RC2 gates on dev @ d7d9902 (fresh worktree wt-gate): lint + tsc + SQLite suite 43/43 (228 assertions) + PG suite with the NEW migration replayed — ALL GREEN.
+
+Stage Summary:
+- Registry: 66/67 DONE. OPEN: MJG-031 (USER ACTION: fresh push-scoped GitHub token; push command prepared), MJG-047 (sandbox-side purge executes at this release; token rotation = user action).
+- Release follows: main tree reset to dev (daemon-junk purge), history-bridge commits both directions, secret scan, branch audit.
