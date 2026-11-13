@@ -63,11 +63,17 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-053 | Unbounded list queries on payments/deliveries/evidence/purchase-orders/assignments | Backend | fix/api-hardening | DONE |
 | MJG-054 | Expired-session pruning (Session table growth on hosted deploys) | Security | fix/auth-security | DONE |
 | MJG-055 | Boot-failure retry UI + #get-started opens register mode + radiogroup a11y | Frontend | fix/frontend-resilience | DONE |
-| MJG-056 | Suite extensions: cookie flags, malformed payloads 400, org-type guard 403, rate-limit 429, cross-constructor tenancy | QA | test/suite-extensions | OPEN |
+| MJG-056 | Suite extensions: cookie flags, malformed payloads 400, org-type guard 403, rate-limit 429, cross-constructor tenancy | QA | test/suite-extensions | DONE |
 | MJG-057 | Docs/config hygiene batch: engines>=20, portable .env.example, DEPLOYMENT intro, BACKUPS path, start-script drift note | Docs | chore/docs-ci | DONE |
-| MJG-058 | MJG-036(a): org-type guard on constructor-domain writes (17 endpoints via requireUser orgType) | Backend | fix/api-hardening | DONE |
+| MJG-058 | MJG-036(a): org-type guard on constructor-domain writes (16 endpoints via requireUser orgType) | Backend | fix/api-hardening | DONE |
 | MJG-059 | PG gate ordering: standalone build embedded the pre-generate (SQLite) Prisma client → PG health check false-failed unless a prior failed attempt left a PG client | QA/DevOps | chore/pg-gate-order | DONE |
 | MJG-060 | PG verify failure paths process.exit()'d past teardown → leaked :3113 server + :3112 Postgres → EADDRINUSE on later runs | QA/DevOps | chore/pg-gate-order | DONE |
+| MJG-061 | Rate-limit IP derivation trusts leftmost X-Forwarded-For (spoofable; Render APPENDS the real client IP) — use rightmost-untrusted entry + IP-format check + 'unknown' fallback | Security | fix/security-hardening | DONE |
+| MJG-062 | CI workflow: reviewed push-trigger "typo" was an ANSI artifact (file already `branches: [main]`); real gap was missing permissions block → added `permissions: contents: read` | DevOps | fix/security-hardening | DONE |
+| MJG-063 | Payment approve race not actually closed on Postgres (READ COMMITTED; UPDATE lacks status predicate → last-writer-wins) — conditional updateMany + 409 | Backend | fix/security-hardening | DONE |
+| MJG-064 | orgType guard sweep incomplete: deliveries/[id]/verify, evidence/[id]/verify, payments/[id]/mark-paid, suppliers/[id] PATCH + approve route still manual-role pattern | Backend | fix/security-hardening | DONE |
+| MJG-065 | In-memory rate limiter unbounded memory growth (no sweep, no key cap) — sweep expired buckets on write + hard cap with shared overflow bucket | Security | fix/security-hardening | DONE |
+| MJG-066 | Gate/docs hygiene from review: api-tests-pg.sh cleanup restores SQLite client on early-failure paths; README fresh-clone mkdir db; DEPLOYMENT trusted-proxy note; registry 17-vs-16 fix | QA/Docs | fix/security-hardening | DONE |
 
 ---
 
@@ -339,9 +345,10 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 **Fix:** page.tsx error card with Retry on non-401; `#get-started` → register mode, `#signin` → login mode; radiogroup wrapper.
 **Owner:** Frontend PE. **Accept:** gates green; CTA deep links verified in browser evidence. **Verify:** suite + browser E2E.
 
-## MJG-056 — Suite extensions (P2)
+## MJG-056 — Suite extensions (DONE — test/suite-extensions)
 **Scope:** add cases: cookie flags (HttpOnly/SameSite on login), malformed register payload → 400, /api/partners?type=BOGUS → 400 (MJG-050), partner-org POST /api/sites → 403 (MJG-058), WORKER assignment PATCH → 403 (MJG-044), milestone reopen → 422 (MJG-051), rate-limit 429 (MJG-043, throwaway email), cross-constructor tenancy (second constructor sees empty lists + 404 on foreign ids).
 **Owner:** QA PE. **Accept:** suite green (SQLite + Postgres); case count grows 30→38. **Verify:** both engines.
+**Outcome:** 38/38 cases, 170 assertions, green in isolated worktree run (tsc clean). Empirically-verified deviations: wire form is `SameSite=lax` (asserted case-insensitively); `Secure` IS set (sessionCookieOptions ties it to NODE_ENV=production and the harness boots production — assertion documents the dev-boot caveat); zod v4 reports absent keys as type errors so malformed-name case uses empty string to hit the min(1) message; rate-limit math documented in a NOTE above the suite-final 429 case (8 slots pre-used, 12 admitted throwaways, stop-at-first-429 loop).
 
 ## MJG-057 — Docs/config hygiene batch (DONE — chore/deploy-hardening + chore/docs-ci)
 **Scope:** package.json `engines.node >=20`; .env.example portable `file:../db/custom.db` (prisma resolves relative to schema dir) + GH_TOKEN/MJENGO_API_BASE notes; DEPLOYMENT.md:3-4 intro de-staled; BACKUPS.md absolute path generalized; start-script drift (bun sandbox vs node Render) + `tee` note; vercel region note (fra1 recommended to pair with Render region).
@@ -349,7 +356,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 
 ## MJG-058 — MJG-036(a): constructor-domain org-type guard (DONE — fix/api-hardening)
 **Basis:** MJG-036 design (product-approved phasing); part (a) is mechanical and closes the "partner org can create constructor-domain records in its own org" sloppiness. Parts (b) logistics task model and (c) partner accept/acknowledge + shipment logging remain the phase-3 roadmap (MJG-036, owner: Product+Staff, acceptance criteria unchanged) — deliberately deferred per the phased MJG-030 design to keep each schema/tenancy change reviewable.
-**Fix:** `requireUser(roles?, opts?: { orgType: OrganizationType[] })` (new optional param; SessionUser already carries organizationType) + apply `orgType: ['CONSTRUCTOR']` to constructor-domain WRITES: sites POST/PATCH, materials POST, workers POST, inventory/movements POST, attendance POST, assignments POST/PATCH, milestones POST/PATCH, evidence POST, deliveries POST, purchase-orders POST/PATCH, suppliers POST, payments POST. NOT gated: users POST (org-generic team management), all GETs (read-only), partner routes (own gates).
+**Fix:** `requireUser(roles?, opts?: { orgType: OrganizationType[] })` (new optional param; SessionUser already carries organizationType) + apply `orgType: ['CONSTRUCTOR']` to 16 constructor-domain WRITES: sites POST/PATCH, materials POST, workers POST, inventory/movements POST, attendance POST, assignments POST/PATCH, milestones POST/PATCH, evidence POST, deliveries POST, purchase-orders POST/PATCH, suppliers POST, payments POST. NOT gated: users POST (org-generic team management), all GETs (read-only), partner routes (own gates). (Count corrected 17→16 per review: the 5 residual verify/mark-paid/PATCH writes are MJG-064.)
 **Owner:** Backend PE. **Accept:** partner-org user → 403 on each listed write (MJG-056 case); every constructor flow green; suite green on both engines. **Verify:** suite both engines + 403 probe.
 
 ## MJG-059 — PG gate ordering: client generate must precede standalone build (DONE — chore/pg-gate-order)
@@ -361,6 +368,39 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 **Finding (gate run 2026-11-13):** failure sites inside `pg-migration-verify.ts` `main()` called `process.exit(1)`, bypassing the `.catch` teardown — the :3113 standalone server and :3112 embedded Postgres kept running, so the next gate run died with EADDRINUSE.
 **Fix:** failure paths throw (teardown runs via `.catch`); `api-tests-pg.sh` EXIT trap additionally frees 3113/3112 (`fuser -k`) as belt-and-braces.
 **Owner:** QA PE. **Accept:** a failing pg gate no longer leaks processes; repeat runs deterministic. **Verify:** two consecutive full-pass runs after the fix.
+
+## MJG-061 — Rate-limit IP derivation spoofable via X-Forwarded-For (DONE — fix/security-hardening)
+**Finding (security PE):** `clientIp()` in login/register routes takes the LEFTMOST x-forwarded-for entry. Render APPENDS the true client IP to client-supplied chains → leftmost is attacker-chosen; on bare-server deploys there is no proxy at all. One rotating header per request defeats the 30-login/ip and 20-register/ip budgets entirely (credential stuffing / org spam at scale). Per-email budgets and scrypt still bind single-account attacks (why P1, not P0).
+**Fix:** centralize `getClientIp(req)` in src/lib/rate-limit.ts: rightmost XFF entry validated with node:net isIP, fallback 'unknown' shared bucket; both auth routes use it; per-platform trusted-proxy note in DEPLOYMENT.md.
+**Owner:** Security PE. **Accept:** spoofed chains cannot mint fresh buckets; suite green (suite sends no XFF → 'unknown' path unchanged). **Verify:** suite + code review.
+
+## MJG-062 — CI workflow trigger + permissions (DONE — fix/security-hardening)
+**Correction during fix:** the reported `branches: ain]` typo does NOT exist — byte-level inspection proves line 21 is `branches: [main]`; both reviewers' (and the fixer's initial) tooling swallowed the `[m` inside `[main]` as an ANSI reset sequence. Trigger was already correct; end-state verified by YAML parse (`push.branches: ['main']`).
+**Applied:** top-level `permissions: contents: read` (the real gap).
+**Owner:** DevOps PE. **Accept:** YAML valid; minimal permissions. **Verify:** YAML parse + review.
+
+## MJG-063 — Payment approve: conditional state transition (DONE — fix/security-hardening)
+**Applied:** `tx.payment.updateMany({ where: { id, organizationId, status: 'PENDING' }, data })`; count===0 → 409 "Payment is no longer pending"; 404 preserved for missing/foreign; DTO re-read inside tx. OWNER-only + CONSTRUCTOR orgType now via `requireUser(['OWNER'], { orgType: ['CONSTRUCTOR'] })`. Suite case 39 (second approve → 409, ledger integrity check) added before the suite-final rate-limit case; 39/39 (179 assertions) green.
+**Finding (correctness PE, corroborated by security PE):** the PENDING check IS inside the interactive $transaction, but under Postgres READ COMMITTED two concurrent approvals both read PENDING; the second UPDATE (where: {id} only — no status predicate) blocks on the row lock then overwrites after the first commits → last-writer-wins, both 200. MJG-052's "race window closed" claim is only true on SQLite. Same-privilege (OWNER-only) so consistency/audit issue, not escalation.
+**Fix:** make the transition part of the write predicate: `tx.payment.updateMany({ where: { id, status: 'PENDING' }, data })`; count===0 → 409 standard envelope; keep 404 for missing records; correct MJG-052 registry wording; suite gains a double-approve→409 case.
+**Owner:** Backend PE. **Accept:** suite green incl. new 409 case; race closed under READ COMMITTED semantics. **Verify:** suite both engines.
+
+## MJG-064 — orgType guard sweep completion (DONE — fix/security-hardening)
+**Finding:** 5 constructor-domain writes still lack `{ orgType: ['CONSTRUCTOR'] }`: deliveries/[id]/verify POST, evidence/[id]/verify POST, payments/[id]/mark-paid POST, suppliers/[id] PATCH (partner-linking!), and payments/[id]/approve still uses bare requireUser + manual role check. Not exploitable today (creator endpoints are gated; rows org-scoped → partners only ever see 404) — defense-in-depth + pattern consistency (exactly the sloppiness MJG-058 targeted).
+**Fix:** add the orgType opt to all five; convert approve to `requireUser(['OWNER'], { orgType: ['CONSTRUCTOR'] })` (OWNER-only red line preserved).
+**Owner:** Backend PE. **Accept:** suite green (partner 403/404 behavior unchanged); guard list complete. **Verify:** suite + review.
+
+## MJG-065 — Rate limiter memory bound (DONE — fix/security-hardening)
+**Applied:** sweep on every 256th write (deletes only buckets whose every timestamp is older than maxWindowMs — live buckets unreachable by construction); MAX_BUCKETS=10_000 cap → expired sweep first, then new distinct keys share one 'overflow' bucket (still rate-limited); keys >200 chars SHA-256-hashed. Suite 429 math untouched (suite uses short keys, a dozen buckets, seconds-long run).
+**Finding:** `src/lib/rate-limit.ts` buckets pruned only on same-key revisit; no sweep, no size cap. Combined with MJG-061 an attacker mints fresh keys per request (emails up to ~16KB pass zod) → unbounded heap growth (slow-drip DoS). Per-process/restart-clears → P2.
+**Fix:** sweep expired buckets on a fraction of writes; hard cap on bucket count (expired sweep first, then shared 'overflow' bucket for new keys when full); cap key length (hash long email keys).
+**Owner:** Security PE. **Accept:** suite green (429 math intact — sweep never evicts active buckets); bounded memory by construction. **Verify:** suite + review.
+
+## MJG-066 — Gate/docs hygiene from wave-1 review (DONE — fix/security-hardening + chore/registry-e)
+**Applied:** cleanup_pg ends with best-effort `bunx prisma generate` (SQLite restore on every EXIT, covers early parity/build failures); README getting-started gains `mkdir -p db`; DEPLOYMENT.md gains the MJG-061 trusted-proxy note (rightmost XFF, Render appends, strip-at-edge guidance) and its stale "rate limiting is not in-app" bullet corrected; registry 17→16 wording fixed here.
+**Findings:** (1) api-tests-pg.sh cleanup_pg does not restore the SQLite client when the gate fails BEFORE pg-verify's teardown (parity/build failure) → next `test:api` boots with the PG-compiled client and false-fails; (2) `.env.example` portable `file:../db/custom.db` breaks fresh clones (db/ untracked, no mkdir guidance in README); (3) registry row MJG-058 says "17 endpoints", actual gated writes 16 (wording only).
+**Fix:** add `bunx prisma generate` to cleanup_pg; README getting-started gains `mkdir -p db`; registry wording fixed (staff).
+**Owner:** QA/Docs PE. **Accept:** early-failure path leaves a usable tree for the SQLite gate; fresh-clone instructions correct. **Verify:** doc-vs-code + gate behavior.
 
 ## OPEN-ISSUES-03 — audit provenance
 Ten parallel read-only audits (2026-11-12): CTA wiring, FE/BE integration, security/authz, DB/migrations, deploy configs, API surface, partner model, QA infra, docs accuracy, repo hygiene + frontend UX + prod ops. Consolidated: 0 P0, 13 P1, 8 P2, several P3 → filed as MJG-037..058 above. Prior-session claims re-verified: partner model (MJG-030/035) correctly implemented, FSMs correct, delivery-verify idempotent, payments OWNER-only, migrations replayable, schema parity clean, dev tree clean of secrets/junk (main tip polluted by daemon only).
