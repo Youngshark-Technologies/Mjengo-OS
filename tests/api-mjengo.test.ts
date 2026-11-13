@@ -8,7 +8,11 @@
 //   → OWNER-only payment flow → dashboard totals assert every mutation
 //   → MJG-035 partner access model (supplier/logistics registration, org
 //     tenancy, partner directory, supplier-record linking, PO visibility,
-//     DRAFT privacy) → MJG-032 assignment FSM → MJG-033 supplier role gate.
+//     DRAFT privacy) → MJG-032 assignment FSM → MJG-033 supplier role gate
+//   → MJG-056 suite extensions: cookie flag contract, register validation,
+//     MJG-050/MJG-058/MJG-044/MJG-051 guard regressions, cross-constructor
+//     tenancy, and the MJG-043 register rate limit (429) as the suite-FINAL
+//     case — the in-memory register bucket is shared by every call above.
 //
 // The dev server on :3000 is never touched. The database file is removed by
 // the orchestrating script after the run.
@@ -21,6 +25,7 @@ const BASE = process.env.MJENGO_API_BASE ?? 'http://localhost:3111'
 type Jar = Record<string, string>
 const jars: Record<string, Jar> = {
   owner: {},
+  owner2: {}, // MJG-056 — second constructor org (cross-tenancy checks)
   supervisor: {},
   worker: {},
   supplier: {},
@@ -96,6 +101,8 @@ const S: {
   po2Id?: string
   worker2Id?: string
   assignment2Id?: string
+  site2Id?: string // MJG-056 — second owner site (milestone terminality)
+  milestoneId?: string // MJG-056 — driven to COMPLETED, then reopen attempt
 } = {}
 
 const today = () => new Date().toISOString().slice(0, 10)
@@ -668,5 +675,243 @@ describe('MJG-020 — API golden journey (isolated server)', () => {
 
     const logisticsBlocked = await call('/api/partner/purchase-orders', { session: 'logistics' })
     expect(logisticsBlocked.status).toBe(403)
+  })
+
+  // ─── MJG-056 — suite extensions ──────────────────────────────────────────
+
+  test('31 MJG-056 — login Set-Cookie flags: HttpOnly + SameSite=Lax', async () => {
+    // Raw fetch (not `call`) — the jar helpers swallow the set-cookie header.
+    const res = await fetch(`${BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'suite-owner@mjengo-test.test', password: 'SuitePass#2026!' }),
+    })
+    expect(res.status).toBe(200)
+    const raw = res.headers.getSetCookie().find(c => c.startsWith('mjengo_session='))
+    expect(raw).toBeTruthy()
+    // src/lib/auth.ts sessionCookieOptions: httpOnly is always set and
+    // sameSite is always 'lax' — assert both unconditionally.
+    expect(raw!).toContain('HttpOnly')
+    expect(raw!.toLowerCase()).toContain('samesite=lax')
+    // `secure` follows NODE_ENV on the server; this harness boots the
+    // standalone PRODUCTION server, so the flag must be present (a dev boot
+    // on plain HTTP would omit it — never assert it in that mode).
+    expect(raw!).toContain('Secure')
+  })
+
+  test('32 MJG-056 — malformed register payload → 400 (zod, no account created)', async () => {
+    const emptyName = await call('/api/auth/register', {
+      method: 'POST',
+      body: {
+        name: '',
+        email: 'malformed-1@mjengo-test.test',
+        password: 'ValidPass#2026!',
+        organizationName: 'No Name Org',
+      },
+    })
+    expect(emptyName.status).toBe(400)
+    expect(errMsg(emptyName)).toContain('Name is required')
+
+    const badEmail = await call('/api/auth/register', {
+      method: 'POST',
+      body: {
+        name: 'Bad Email',
+        email: 'not-an-email',
+        password: 'ValidPass#2026!',
+        organizationName: 'Bad Email Org',
+      },
+    })
+    expect(badEmail.status).toBe(400)
+    expect(errMsg(badEmail)).toContain('email')
+
+    const shortPassword = await call('/api/auth/register', {
+      method: 'POST',
+      body: {
+        name: 'Shorty',
+        email: 'malformed-2@mjengo-test.test',
+        password: 'short',
+        organizationName: 'Short Pass Org',
+      },
+    })
+    expect(shortPassword.status).toBe(400)
+    expect(errMsg(shortPassword)).toContain('at least 8 characters')
+  })
+
+  test('33 MJG-050 regression: /api/partners?type=BOGUS → 400, not 500', async () => {
+    const r = await call('/api/partners?type=BOGUS', { session: 'owner' })
+    expect(r.status).toBe(400)
+    expect(errMsg(r)).toContain('type')
+  })
+
+  test('34 MJG-058 regression: partner org cannot create sites → 403', async () => {
+    const supplierAttempt = await call('/api/sites', {
+      method: 'POST',
+      session: 'supplier',
+      body: { name: 'Partner Site', location: 'Nairobi, Test' },
+    })
+    expect(supplierAttempt.status).toBe(403)
+    expect(errMsg(supplierAttempt)).toContain('CONSTRUCTOR')
+
+    const logisticsAttempt = await call('/api/sites', {
+      method: 'POST',
+      session: 'logistics',
+      body: { name: 'Logistics Site', location: 'Nairobi, Test' },
+    })
+    expect(logisticsAttempt.status).toBe(403)
+  })
+
+  test('35 MJG-044 regression: WORKER cannot PATCH assignments → 403', async () => {
+    const worker = await call('/api/workers', {
+      method: 'POST',
+      session: 'owner',
+      body: { name: 'Suite Worker Three', phone: '+254 700 000 003', trade: 'ELECTRICIAN' },
+    })
+    expect(worker.status).toBe(201)
+    const workerId = data(worker)?.id
+
+    const assignment = await call('/api/assignments', {
+      method: 'POST',
+      session: 'owner',
+      body: { workerId, siteId: S.siteId },
+    })
+    expect(assignment.status).toBe(201)
+    const assignmentId = data(assignment)?.id
+
+    const denied = await call(`/api/assignments/${assignmentId}`, {
+      method: 'PATCH',
+      session: 'worker',
+      body: { status: 'ACTIVE' },
+    })
+    expect(denied.status).toBe(403)
+    expect(errMsg(denied)).toContain('OWNER or SUPERVISOR')
+
+    // The 403 was an authorization guard, not data loss: OWNER can still run
+    // the legal ASSIGNED → ACTIVE transition on the same assignment.
+    const allowed = await call(`/api/assignments/${assignmentId}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { status: 'ACTIVE' },
+    })
+    expect(allowed.status).toBe(200)
+    expect(data(allowed)?.status).toBe('ACTIVE')
+  })
+
+  test('36 MJG-051 regression: COMPLETED milestone is terminal → reopen 422', async () => {
+    const site = await call('/api/sites', {
+      method: 'POST',
+      session: 'owner',
+      body: { name: 'Suite Milestone Tower', location: 'Nairobi, Test' },
+    })
+    expect(site.status).toBe(201)
+    S.site2Id = data(site)?.id
+
+    const milestone = await call('/api/milestones', {
+      method: 'POST',
+      session: 'owner',
+      body: { siteId: S.site2Id, name: 'Foundation signed off', order: 1 },
+    })
+    expect(milestone.status).toBe(201)
+    S.milestoneId = data(milestone)?.id
+    expect(data(milestone)?.status).toBe('PENDING')
+
+    const complete = await call(`/api/milestones/${S.milestoneId}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { status: 'COMPLETED' },
+    })
+    expect(complete.status).toBe(200)
+    expect(data(complete)?.status).toBe('COMPLETED')
+
+    // Reopen attempt (COMPLETED → IN_PROGRESS) is rejected.
+    const reopen = await call(`/api/milestones/${S.milestoneId}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { status: 'IN_PROGRESS' },
+    })
+    expect(reopen.status).toBe(422)
+    expect(errMsg(reopen)).toContain('terminal')
+
+    // And the stored status really is unchanged.
+    const list = await call(`/api/milestones?siteId=${S.site2Id}`, { session: 'owner' })
+    expect(list.status).toBe(200)
+    expect(data(list)[0].status).toBe('COMPLETED')
+  })
+
+  test('37 MJG-056 — cross-constructor tenancy: empty lists, foreign ids → 404', async () => {
+    const r = await call('/api/auth/register', {
+      method: 'POST',
+      session: 'owner2',
+      body: {
+        name: 'Second Constructor',
+        email: 'suite-owner-2@mjengo-test.test',
+        password: 'SuitePass#2026!',
+        organizationName: 'Suite Second Constructors',
+      },
+    })
+    expect(r.status).toBe(200)
+    expect(data(r)?.organizationType).toBe('CONSTRUCTOR')
+
+    // A fresh constructor org sees none of the first org's business data.
+    const sites = await call('/api/sites', { session: 'owner2' })
+    expect(sites.status).toBe(200)
+    expect(data(sites)).toHaveLength(0)
+
+    const pos = await call('/api/purchase-orders', { session: 'owner2' })
+    expect(pos.status).toBe(200)
+    expect(data(pos)).toHaveLength(0)
+
+    // Foreign ids from the first constructor resolve to 404 — never 200/403.
+    const foreignSite = await call(`/api/sites/${S.siteId}`, {
+      method: 'PATCH',
+      session: 'owner2',
+      body: { name: 'Hijack Attempt' },
+    })
+    expect(foreignSite.status).toBe(404)
+    expect(errMsg(foreignSite)).toBe('Site not found')
+
+    const foreignPo = await call(`/api/purchase-orders/${S.poId}`, {
+      method: 'PATCH',
+      session: 'owner2',
+      body: { status: 'RECEIVED' },
+    })
+    expect(foreignPo.status).toBe(404)
+    expect(errMsg(foreignPo)).toBe('Purchase order not found')
+
+    const foreignMilestones = await call(`/api/milestones?siteId=${S.site2Id}`, { session: 'owner2' })
+    expect(foreignMilestones.status).toBe(404)
+  })
+
+  // MJG-043 bucket math — the limiter is IN-MEMORY on this single booted
+  // server, keyed by client IP with a 20/hour ceiling, and it is checked
+  // BEFORE payload validation (400s and 409s burn slots too). Register calls
+  // admitted before this case:
+  //   02 owner + 03 duplicate + 22 supplier + 23 logistics  = 4
+  //   32 malformed register (3 × 400)                       = 3
+  //   37 second constructor                                 = 1
+  //   pre-used                                              = 8
+  // This case therefore burns 12 throwaway registers (slots 9–20) and asserts
+  // the NEXT call is rejected with 429. It MUST stay the LAST case in this
+  // file: every later register would inherit the exhausted bucket. The loop
+  // stops at the FIRST 429 and tolerates off-by-a-few counting either way.
+  test('38 MJG-043 regression: register rate limit → 429 (suite-final case)', async () => {
+    let saw429 = false
+    for (let i = 0; i < 25; i++) {
+      const r = await call('/api/auth/register', {
+        method: 'POST',
+        body: {
+          name: `Rate Burn ${i}`,
+          email: `rate-burn-${i}@mjengo-test.test`,
+          password: 'BurnPass#2026!',
+          organizationName: `Rate Burn Org ${i}`,
+        },
+      })
+      if (r.status === 429) {
+        saw429 = true
+        expect(errMsg(r)).toContain('Too many registration attempts')
+        break
+      }
+      expect(r.status).toBe(200) // admitted throwaway registers
+    }
+    expect(saw429).toBe(true)
   })
 })
