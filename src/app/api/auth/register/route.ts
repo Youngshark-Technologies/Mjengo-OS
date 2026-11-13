@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { handle, ok, parseBody, ApiError } from '@/lib/api-helpers'
 import { hashPassword, createSession, SESSION_COOKIE, sessionCookieOptions } from '@/lib/auth'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import type { OrganizationType, SessionUser } from '@/lib/types'
 import { ORGANIZATION_TYPE_VALUES } from '@/lib/types'
 
@@ -20,21 +20,11 @@ const registerSchema = z.object({
   organizationType: z.enum(ORGANIZATION_TYPE_VALUES).default('CONSTRUCTOR'),
 })
 
-// MJG-043 — same client-IP extraction as the login route.
-function clientIp(req: NextRequest): string {
-  const forwarded = req.headers.get('x-forwarded-for')
-  if (forwarded) {
-    const first = forwarded.split(',')[0]?.trim()
-    if (first) return first
-  }
-  return 'local'
-}
-
 export async function POST(req: NextRequest) {
   return handle(async () => {
     // MJG-043 — throttle mass account creation before any processing:
     // 20 registrations / hour per IP.
-    const ip = clientIp(req)
+    const ip = getClientIp(req)
     if (!checkRateLimit(`register:ip:${ip}`, 20, 60 * 60_000).ok) {
       throw new ApiError(429, 'Too many registration attempts — try again later')
     }

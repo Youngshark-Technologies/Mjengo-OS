@@ -54,6 +54,7 @@ expected runtime (`engines` in `package.json`; Render pins Node 22 in
 ```bash
 bun install
 cp .env.example .env        # set DATABASE_URL to a writable SQLite path
+mkdir -p db                 # .env.example's file:../db/custom.db needs db/ to exist
 bun run db:push             # create/update the dev schema (SQLite)
 bun run dev                 # http://localhost:3000 (output tee'd into dev.log)
 ```

@@ -38,7 +38,7 @@ const decisionSchema = z.object({
 // No auto-approval, no timers, no defaults: a named person signs the verdict.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const user = await requireUser(['OWNER', 'SUPERVISOR'])
+    const user = await requireUser(['OWNER', 'SUPERVISOR'], { orgType: ['CONSTRUCTOR'] })
     const { id } = await params
     const body = await parseBody(req, decisionSchema)
 

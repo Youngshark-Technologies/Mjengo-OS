@@ -41,7 +41,7 @@ function toPaymentDTO(row: PaymentRow): PaymentDTO {
 // Only payments the owner has explicitly APPROVED can be marked PAID.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const user = await requireUser(['OWNER'])
+    const user = await requireUser(['OWNER'], { orgType: ['CONSTRUCTOR'] })
     const { id } = await params
 
     const payment = await db.payment.findFirst({

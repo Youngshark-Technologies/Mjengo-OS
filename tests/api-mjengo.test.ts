@@ -881,6 +881,55 @@ describe('MJG-020 — API golden journey (isolated server)', () => {
     expect(foreignMilestones.status).toBe(404)
   })
 
+  // MJG-063 — placed BEFORE the register-rate-limit case (which must stay
+  // final): this case reuses the case-02 owner session and makes NO register
+  // calls, so the bucket math documented below is unaffected.
+  test('39 MJG-063 regression: second payment approve → 409 (write predicate)', async () => {
+    // Fresh PENDING payment on the golden-journey PO.
+    const payment = await call('/api/payments', {
+      method: 'POST',
+      session: 'owner',
+      body: {
+        siteId: S.siteId,
+        purchaseOrderId: S.poId,
+        category: 'MATERIAL',
+        method: 'CASH',
+        amount: 12000,
+        reference: 'SUITE-INV-002',
+      },
+    })
+    expect(payment.status).toBe(201)
+    const paymentId = data(payment)?.id
+    expect(data(payment)?.status).toBe('PENDING')
+
+    const first = await call(`/api/payments/${paymentId}/approve`, {
+      method: 'POST',
+      session: 'owner',
+      body: { decision: 'APPROVED' },
+    })
+    expect(first.status).toBe(200)
+    expect(data(first)?.status).toBe('APPROVED')
+
+    // The second approve must LOSE the PENDING → APPROVED transition: the
+    // conditional write matches 0 rows → 409, never a silent
+    // last-writer-wins re-approval.
+    const second = await call(`/api/payments/${paymentId}/approve`, {
+      method: 'POST',
+      session: 'owner',
+      body: { decision: 'APPROVED' },
+    })
+    expect(second.status).toBe(409)
+    expect(errMsg(second)).toContain('no longer pending')
+
+    // The loser never overwrote the winner's decision.
+    const list = await call('/api/payments?status=APPROVED', { session: 'owner' })
+    expect(list.status).toBe(200)
+    const rows = data(list) as Array<{ id: string; status: string }>
+    const row = rows.find(p => p.id === paymentId)
+    expect(row?.id).toBe(paymentId)
+    expect(row?.status).toBe('APPROVED')
+  })
+
   // MJG-043 bucket math — the limiter is IN-MEMORY on this single booted
   // server, keyed by client IP with a 20/hour ceiling, and it is checked
   // BEFORE payload validation (400s and 409s burn slots too). Register calls
@@ -888,6 +937,8 @@ describe('MJG-020 — API golden journey (isolated server)', () => {
   //   02 owner + 03 duplicate + 22 supplier + 23 logistics  = 4
   //   32 malformed register (3 × 400)                       = 3
   //   37 second constructor                                 = 1
+  //   39 second payment approve (runs before this case; reuses the owner
+  //      session and makes NO register calls)                = 0
   //   pre-used                                              = 8
   // This case therefore burns 12 throwaway registers (slots 9–20) and asserts
   // the NEXT call is rejected with 429. It MUST stay the LAST case in this

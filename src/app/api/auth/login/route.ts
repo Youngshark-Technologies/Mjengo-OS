@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { handle, ok, parseBody, ApiError } from '@/lib/api-helpers'
 import { verifyPassword, createSession, SESSION_COOKIE, sessionCookieOptions } from '@/lib/auth'
-import { checkRateLimit, recordRateLimit, resetRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, recordRateLimit, resetRateLimit, getClientIp } from '@/lib/rate-limit'
 import type { Role, SessionUser } from '@/lib/types'
 
 const loginSchema = z.object({
@@ -13,17 +13,6 @@ const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 })
 
-// MJG-043 — best-effort client identity for rate limiting. Behind a proxy,
-// the first entry of x-forwarded-for is the original client.
-function clientIp(req: NextRequest): string {
-  const forwarded = req.headers.get('x-forwarded-for')
-  if (forwarded) {
-    const first = forwarded.split(',')[0]?.trim()
-    if (first) return first
-  }
-  return 'local'
-}
-
 export async function POST(req: NextRequest) {
   return handle(async () => {
     const body = await parseBody(req, loginSchema)
@@ -32,7 +21,7 @@ export async function POST(req: NextRequest) {
     // MJG-043 — throttle before any credential work: 30 attempts / 15 min per
     // IP (credential stuffing), 8 attempts / 15 min per email (targeted
     // brute-force on one account).
-    const ip = clientIp(req)
+    const ip = getClientIp(req)
     const ipBudget = checkRateLimit(`login:ip:${ip}`, 30, 15 * 60_000)
     const emailBudget = checkRateLimit(`login:email:${email.toLowerCase()}`, 8, 15 * 60_000)
     if (!ipBudget.ok || !emailBudget.ok) {
