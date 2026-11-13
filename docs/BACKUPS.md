@@ -1,8 +1,10 @@
 # MjengoOS — Database Backup & Restore
 
-MJG-018. The production datastore is a single SQLite file (path from `DATABASE_URL`,
-default `file:/home/z/my-project/db/custom.db`). The kit below gives verified,
-scriptable backup and restore with zero new dependencies (bun + prisma only).
+MJG-018. The production datastore is a single SQLite file (path from
+`DATABASE_URL`, e.g. `file:../db/custom.db` — relative SQLite paths are
+resolved against the `prisma/` directory; see `.env.example`). The kit below
+gives verified, scriptable backup and restore with zero new dependencies
+(bun + prisma only).
 
 ## Why `VACUUM INTO`
 
@@ -34,7 +36,8 @@ is proof the backup is a usable database.
 ## Actual restore (incident procedure)
 
 1. Stop the app (`pkill -9 -f next-server` / stop the container).
-2. `bun scripts/db-restore.ts db/backups/<file>.db --into /home/z/my-project/db/custom.db`
+2. From the app root: `bun scripts/db-restore.ts db/backups/<file>.db --into db/custom.db`
+   (relative paths resolve against the current working directory).
 3. Start the app (`bun run start` or the container entrypoint).
 4. Verify: `bash scripts/smoke.sh http://localhost:3000`.
 5. Loss window = time since the last backup. With the cron below it is ≤ 24h.
@@ -42,15 +45,15 @@ is proof the backup is a usable database.
 ## Scheduling (cron)
 
 ```
-# Daily 02:00 backup, keep the log alongside the backups
-0 2 * * * cd /home/z/my-project && bun scripts/db-backup.ts >> db/backups/backup.log 2>&1
+# Daily 02:00 backup, keep the log alongside the backups (run from the app root)
+0 2 * * * cd /path/to/app && bun scripts/db-backup.ts >> db/backups/backup.log 2>&1
 ```
 
 Retention guidance (manual, or a small find -delete cron):
 
 ```
 # Keep the last 14 daily backups
-0 3 * * * find /home/z/my-project/db/backups -name 'mjengo-*.db' -mtime +14 -delete
+0 3 * * * find /path/to/app/db/backups -name 'mjengo-*.db' -mtime +14 -delete
 ```
 
 ## Known limits (documented, deferred)

@@ -1,9 +1,18 @@
 # MjengoOS — Deployment Guide
 
-MJG-019. The app is a single Next.js 16 (standalone output) service with a
-SQLite database via Prisma. Everything below was validated locally except the
-container build itself (no docker daemon in the build sandbox) — the Dockerfile
-mirrors the locally-validated `build`/`start` scripts one-to-one.
+MJG-019. The app is a single Next.js 16 (standalone output) service — one
+process serves both the UI and the `/api` routes — with Prisma over SQLite
+locally and in the self-hosted paths below; the hosted path (§Hosted
+deployment) runs PostgreSQL on Render. Everything below was validated locally
+except the container build itself (no docker daemon in the build sandbox) —
+the Dockerfile mirrors the locally-validated `build`/`start` scripts
+one-to-one.
+
+> **Premise correction (MJG-045):** there is **no separate marketing-website
+> app/repo** in this lineage — historical artifacts mentioning
+> `mjengoos-website/` are wrong; that directory never existed. The marketing
+> site IS the in-app landing page (`src/components/marketing/*`, incl. the
+> hero animation), served by the same Next.js app.
 
 ## What you need
 
@@ -140,8 +149,12 @@ Database migrations are **versioned Postgres SQL** in `prisma/migrations/`
    - PostgreSQL database `mjengoos-db` (connection string wired to
      `DATABASE_URL` automatically).
 2. When prompted for the `NEXT_PUBLIC_APP_URL` sync parameter, enter the
-   frontend URL (Step 2.5), e.g. `https://mjengoupdate.vercel.app`.
+   frontend URL (Step 2), e.g. `https://mjengoupdate.vercel.app`.
    **Leave `BACKEND_URL` unset on Render** — the API must resolve in-process.
+   > Audit correction (MJG-040): keeping `NEXT_PUBLIC_APP_URL` set on the
+   > Render backend is **correct**, not a defect — the Render build bakes it
+   > into the Render-served landing page, so its CTAs carry the right origin.
+   > Do not remove it.
 3. Deploy. First boot: `prisma migrate deploy` creates the full schema from
    the versioned migrations → empty, production-clean database (no seed data
    by design, MJG-023).
@@ -170,6 +183,25 @@ Database migrations are **versioned Postgres SQL** in `prisma/migrations/`
 5. Deploy. Every push to `main` produces a production deployment; the Vercel
    git integration is the redeploy mechanism (no manual redeploy needed).
 
+> **IMPORTANT — BUILD-TIME environment variables on Vercel (MJG-040 — read before
+> configuring):** `NEXT_PUBLIC_APP_URL` and `BACKEND_URL` must be present at
+> **BUILD time** — set them in Settings → Environment Variables *before* the
+> production build runs:
+> - `NEXT_PUBLIC_APP_URL` is read at module top-level in `src/lib/app-url.ts`
+>   and is **inlined into the client bundle** at build time.
+> - `BACKEND_URL` is read inside `rewrites()` in `next.config.ts` and is
+>   **baked into the routes manifest** at build time.
+>
+> A runtime-only value (env var added afterwards, without a fresh
+> build/deploy) **silently does nothing**: the landing CTAs keep pointing
+> nowhere and `/api/*` is not proxied. Changing either value therefore always
+> requires a redeploy (fresh build) — never just a runtime env update.
+
+> **Region note (MJG-057):** set the Vercel function region to `fra1`
+> (Frankfurt) and pick the matching region for the Render service — keeping
+> the two platforms in the same region keeps the `/api` proxy hop
+> low-latency.
+
 ### Deploy-from-main-only policy (both platforms)
 
 - `main` = production branch (Render `branch: main`, Vercel production branch
@@ -181,12 +213,31 @@ Database migrations are **versioned Postgres SQL** in `prisma/migrations/`
 
 ### Environment variable matrix
 
-| Variable              | Vercel (frontend)        | Render (backend)        | Local/Docker            |
-|-----------------------|--------------------------|-------------------------|-------------------------|
-| `DATABASE_URL`        | — (no DB on frontend)    | Render Postgres URL     | `file:…` SQLite URL     |
-| `BACKEND_URL`         | Render service URL       | **unset** (proxy loop!) | unset                   |
-| `NEXT_PUBLIC_APP_URL` | app origin (or empty)    | app origin (CTAs)       | empty                   |
-| `PORT`                | managed by platform      | managed by platform     | 3000                    |
+| Variable              | Vercel (frontend)                         | Render (backend)        | Local/Docker            |
+|-----------------------|-------------------------------------------|-------------------------|-------------------------|
+| `DATABASE_URL`        | — (no DB on frontend)                     | Render Postgres URL     | `file:…` SQLite URL     |
+| `BACKEND_URL`         | Render service URL — **BUILD time**      | **unset** (proxy loop!) | unset                   |
+| `NEXT_PUBLIC_APP_URL` | app origin (or empty) — **BUILD time**   | app origin (CTAs)       | empty                   |
+| `PORT`                | managed by platform                       | managed by platform     | 3000                    |
+
+The **BUILD time** marker means: the variable must be set **at BUILD time** on
+Vercel (inlined into the client bundle / routes manifest during `next build`);
+a runtime-only value silently breaks
+the CTAs (`NEXT_PUBLIC_APP_URL`) and the `/api` proxy (`BACKEND_URL`), so any
+change to either requires a redeploy. `NEXT_PUBLIC_APP_URL` on Render is also
+baked in at build time — that is intentional and correct (Render-served
+landing CTAs; MJG-040 audit correction).
+
+### Start-script drift (benign, MJG-057) — bun vs node
+
+The sandbox `package.json` `start` script runs
+`NODE_ENV=production bun .next/standalone/server.js`, while the Render
+`startCommand` (`render.yaml`) runs `node .next/standalone/server.js` (after
+`prisma migrate deploy`). Both are valid invocations of the same standalone
+Next.js server (`output: "standalone"` in `next.config.ts`): bun is the
+sandbox runtime, node (22, pinned via `NODE_VERSION` in `render.yaml`) is the
+Render runtime. Note also that the `dev` and `start` scripts pipe their
+output through `tee` into `dev.log` / `server.log` in the repo root.
 
 ### Security notes for the hosted path
 
