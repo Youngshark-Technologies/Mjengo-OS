@@ -20,6 +20,12 @@ on:
   push:
     branches: [main]
 
+# MJG-062 — least privilege: the gates only ever read the repository (no
+# releases, packages, deployments or PR writes), so the workflow gets an
+# explicit read-only token instead of the default permissive one.
+permissions:
+  contents: read
+
 jobs:
   gates:
     name: lint → typecheck → schema parity → build → API suite

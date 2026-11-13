@@ -11,6 +11,15 @@ cleanup_pg() {
   # (failures inside pg-migration-verify.ts used to process.exit() past teardown).
   fuser -k 3113/tcp 2>/dev/null || true
   fuser -k 3112/tcp 2>/dev/null || true
+  # MJG-066 — restore the SQLite Prisma client. Step 2/5 generated the
+  # POSTGRES client (and the build copies it into .next/standalone), which
+  # leaves the tree failing the next `bun run test:api` / `bun run build` with
+  # "the URL must start with the protocol `file:`". Regenerate the default
+  # client (prisma/schema.prisma → SQLite) on EVERY exit — idempotent, covers
+  # early-failure paths (parity/build) too. Best-effort: a failed restore must
+  # never mask the script's original exit code.
+  bunx prisma generate >/dev/null 2>&1 \
+    || echo "[api-tests-pg] WARNING: could not restore the SQLite prisma client — run 'bunx prisma generate' before the next 'bun run test:api'"
 }
 trap cleanup_pg EXIT
 

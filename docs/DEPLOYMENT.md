@@ -243,8 +243,18 @@ output through `tee` into `dev.log` / `server.log` in the repo root.
 
 - TLS is terminated at the platform edge (Vercel/Render) — cookies already
   carry `secure` in production (MJG-002).
-- Rate limiting is not in-app by design (MJG-024 disclosure) — enable Vercel
-  Firewall / Render rate limiting or put Cloudflare in front.
+- Rate limiting: the auth endpoints (login/register) are throttled in-app by
+  the MJG-043 in-memory limiter (per-process state); platform-level limits
+  (Vercel Firewall / Render rate limiting / Cloudflare) remain recommended for
+  broader coverage.
+- Trusted-proxy note (MJG-061): the limiter derives the client IP from the
+  RIGHTMOST `x-forwarded-for` entry — the one set by the LAST trusted proxy.
+  On the hosted path Render appends the real client IP (Vercel fronts the
+  frontend only); leftmost, client-supplied entries are ignored, so a spoofed
+  chain cannot mint fresh limiter buckets. If you deploy behind a different
+  proxy topology (or bare, with no proxy), verify its `x-forwarded-for`
+  handling — with no proxy the header is entirely client-supplied and should
+  be stripped at the edge.
 - `/api` health remains public by design; every business route enforces the
   session + org scoping server-side (verified by the 30-case suite, which
   also runs against Postgres: `bun run test:api:pg`).
