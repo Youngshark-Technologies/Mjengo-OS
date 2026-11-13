@@ -43,7 +43,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-033 | Role policy inconsistency: POST /api/suppliers is any-role while PO create is OWNER/SUPERVISOR | Backend | feat/partner-access | DONE |
 | MJG-034 | Remove unused dependencies (next-auth, uuid, z-ai-web-dev-sdk — installed, never imported) | Backend | chore/dep-hygiene | DONE |
 | MJG-035 | Partner access model implementation: org types (CONSTRUCTOR\|SUPPLIER\|LOGISTICS), partner self-registration, supplier↔partner-org linking, supplier PO-visibility portal | Product/Backend/Frontend | feat/partner-access | DONE |
-| MJG-036 | Partner phase-2 remainder: constructor-endpoint org-type guard + logistics delivery-task model (follow-up from MJG-035) | Backend | — | OPEN |
+| MJG-036 | Partner phase-2 remainder: logistics delivery-task model + partner PO acknowledge/shipment logging (part (a) = MJG-058) | Backend | feat/partner-phase2 | DONE |
 | MJG-037 | Split-deploy API shadowing: /api rewrites must be beforeFiles (Vercel→Render) | DevOps | chore/deploy-hardening | DONE |
 | MJG-038 | Vercel build: prisma generate + bun trustedDependencies | DevOps | chore/deploy-hardening | DONE |
 | MJG-039 | Render build: npm ci --include=dev (NODE_ENV=production skips devDeps) | DevOps | chore/deploy-hardening | DONE |
@@ -74,6 +74,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-064 | orgType guard sweep incomplete: deliveries/[id]/verify, evidence/[id]/verify, payments/[id]/mark-paid, suppliers/[id] PATCH + approve route still manual-role pattern | Backend | fix/security-hardening | DONE |
 | MJG-065 | In-memory rate limiter unbounded memory growth (no sweep, no key cap) — sweep expired buckets on write + hard cap with shared overflow bucket | Security | fix/security-hardening | DONE |
 | MJG-066 | Gate/docs hygiene from review: api-tests-pg.sh cleanup restores SQLite client on early-failure paths; README fresh-clone mkdir db; DEPLOYMENT trusted-proxy note; registry 17-vs-16 fix | QA/Docs | fix/security-hardening | DONE |
+| MJG-067 | SQLite gate assumes a schema-current Prisma client (twin of MJG-059) — harness now regenerates the client before db push/build | QA | chore/gate-client-sync | DONE |
 
 ---
 
@@ -247,8 +248,12 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 **Tenancy (unchanged invariants):** all existing queries remain org-scoped; partner orgs see only data addressed to them; DRAFT POs never leave the constructor org; no existing tested behavior changes except the MJG-033 role gate.
 **Accept:** suite extended (~cases 22-30: partner registration, tenancy isolation, directory, linking, DRAFT-invisibility + SENT-visibility, FSM 422s incl., WORKER supplier-create 403, CONSTRUCTOR 403 on partner portal) green on SQLite AND migrated Postgres; parity gate green; browser E2E evidence for the partner journey; docs updated.
 
-## MJG-036 — Partner phase-2 remainder (OPEN — follow-up from MJG-035)
-**Scope:** (a) server-side org-type guard on constructor-domain endpoints (a SUPPLIER/LOGISTICS org user can currently create empty sites/materials in their own org via direct API calls — harmless, tenant-scoped, and invisible in the UI, but sloppy; gate constructor-domain writes to CONSTRUCTOR orgs via a requireUser orgType option); (b) logistics task model: Delivery.carrierOrganizationId or equivalent, so logistics orgs receive/acknowledge delivery tasks; (c) partner accept/acknowledge + shipment logging on POs. Deliberately NOT implemented with MJG-035 to keep the additive schema change and the tenancy model reviewable — per the phased MJG-030 design.
+## MJG-036 — Partner phase-2 remainder (DONE — feat/partner-phase2; part (a) via MJG-058)
+**Delivered (b):** Delivery.carrierOrganizationId (FK→Organization, SetNull, indexed) + acknowledgedAt/acknowledgedById; constructor assigns a LOGISTICS carrier at delivery creation (unknown → 404, wrong type → 422); GET /api/partner/delivery-tasks (LOGISTICS-scoped, newest first, take 500); POST /api/deliveries/[id]/acknowledge (carrier-org only; foreign → 404; repeat → 409 via write predicate). Acknowledge is a STAMP — zero stock effects, verify flow untouched.
+**Delivered (c):** PurchaseOrder.acknowledgedAt/acknowledgedByOrganizationId (indexed) + new Shipment model (purchaseOrderId cascade, organizationId tenancy anchor, carrierName/trackingNo/shippedAt/estimatedArrival/notes); POST /api/partner/purchase-orders/[id]/acknowledge (MJG-035 visibility; repeat 409) + POST/GET /api/partner/purchase-orders/[id]/shipments (SENT or later; DRAFT 404, CANCELLED 422); constructor PO detail DTO carries ack + shipments; ack scalars also on list + partner-portal DTOs.
+**Migration:** prisma/migrations/20261113120000_partner_phase2 (5 ADD COLUMN + CREATE TABLE Shipment + 4 indexes + 5 FKs, Prisma-migrate-diff-verified naming) — replayed green on embedded Postgres.
+**Frontend:** partner portal logistics roadmap note replaced with real delivery-tasks list (skeleton/error/empty states, acknowledge button, 409 reconciliation); supplier section gains acknowledge + shipment form on SENT POs.
+**Verification:** suite 43/43 (228 assertions) SQLite green in wt-be; RC2 gates on dev @ de35541: lint + tsc + SQLite + PG (new migration replayed) ALL GREEN; parity 344 lines OK. Follow-ups (P3, not blocking): constructor-side shipments display in procurement view (API already returns them); deliveries view carrier column.
 
 ## MJG-037 — Split-deploy API shadowing (DONE — chore/deploy-hardening)
 **Finding (FE/BE agent):** `next.config.ts:13-15` returns a plain rewrite array → Next treats it as `afterFiles`; on a split deploy (BACKEND_URL set) the compiled `src/app/api/**` handlers ship in the frontend build and shadow the proxy — `/api/auth/login` would execute on Vercel with no `DATABASE_URL` → 500, the split architecture silently breaks.
@@ -401,6 +406,11 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 **Findings:** (1) api-tests-pg.sh cleanup_pg does not restore the SQLite client when the gate fails BEFORE pg-verify's teardown (parity/build failure) → next `test:api` boots with the PG-compiled client and false-fails; (2) `.env.example` portable `file:../db/custom.db` breaks fresh clones (db/ untracked, no mkdir guidance in README); (3) registry row MJG-058 says "17 endpoints", actual gated writes 16 (wording only).
 **Fix:** add `bunx prisma generate` to cleanup_pg; README getting-started gains `mkdir -p db`; registry wording fixed (staff).
 **Owner:** QA/Docs PE. **Accept:** early-failure path leaves a usable tree for the SQLite gate; fresh-clone instructions correct. **Verify:** doc-vs-code + gate behavior.
+
+## MJG-067 — SQLite gate: regenerate Prisma client pre-run (DONE — chore/gate-client-sync)
+**Finding (RC2 gate run 2026-11-13):** twin of MJG-059 on the SQLite side — api-tests.sh ran `db push --skip-generate` + build assuming the checked-out client matched the schema; after MJG-036's schema change a fresh worktree built the standalone server against a STALE client (tsc: unknown fields, missing Shipment model).
+**Fix:** api-tests.sh step 1 runs `bunx prisma generate --schema prisma/schema.prisma` before db push/build (idempotent, ~1s) — harness is now self-sufficient on both engines.
+**Owner:** QA PE. **Accept:** fresh worktree gate passes without manual client setup. **Verify:** RC2 SQLite suite 43/43 green in a freshly-hardlinked worktree.
 
 ## OPEN-ISSUES-03 — audit provenance
 Ten parallel read-only audits (2026-11-12): CTA wiring, FE/BE integration, security/authz, DB/migrations, deploy configs, API surface, partner model, QA infra, docs accuracy, repo hygiene + frontend UX + prod ops. Consolidated: 0 P0, 13 P1, 8 P2, several P3 → filed as MJG-037..058 above. Prior-session claims re-verified: partner model (MJG-030/035) correctly implemented, FSMs correct, delivery-verify idempotent, payments OWNER-only, migrations replayable, schema parity clean, dev tree clean of secrets/junk (main tip polluted by daemon only).
