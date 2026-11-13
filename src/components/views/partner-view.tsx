@@ -1,18 +1,22 @@
 'use client'
 
-// MJG-035 — Partner portal. Sessions belonging to SUPPLIER or LOGISTICS
-// organizations land here instead of the constructor operating system:
-//   - SUPPLIER orgs: a read-only inbox of purchase orders addressed to them
-//     (only POs a constructor actually sent — DRAFTs never leave their org).
-//   - LOGISTICS orgs: registration confirmation + an honest roadmap note
-//     (delivery-task assignment ships in a later release — MJG-036).
-// The portal is intentionally read-only: constructor workflows (delivery
-// verification, payment approval) remain human-gated on the constructor side.
+// MJG-035/MJG-036 — Partner portal. Sessions belonging to SUPPLIER or
+// LOGISTICS organizations land here instead of the constructor operating
+// system:
+//   - SUPPLIER orgs: an inbox of purchase orders addressed to them (only POs a
+//     constructor actually sent — DRAFTs never leave their org) with an
+//     acknowledge action and a simple shipment log on SENT orders.
+//   - LOGISTICS orgs: delivery tasks constructors assigned to them as carrier,
+//     each acknowledging its receipt in transit.
+// The portal stays out of constructor workflows: delivery verification / stock
+// and payment approval remain human-gated on the constructor side.
 
-import { useQuery } from '@tanstack/react-query'
+import { useState, type FormEvent } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Building2,
   CalendarDays,
+  CheckCircle2,
   ClipboardCheck,
   Boxes,
   HardHat,
@@ -26,9 +30,16 @@ import {
 
 import { api } from '@/lib/api-client'
 import { formatMoney } from '@/lib/types'
-import type { PartnerPurchaseOrderDTO, SessionUser } from '@/lib/types'
+import type {
+  PartnerDeliveryTaskDTO,
+  PartnerPurchaseOrderDTO,
+  SessionUser,
+  ShipmentDTO,
+} from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
@@ -43,6 +54,12 @@ const PO_STATUS_CLASS: Record<PartnerPurchaseOrderDTO['status'], string> = {
   SENT: 'border-transparent bg-amber-500 text-stone-950',
   RECEIVED: 'border-emerald-300 bg-emerald-50 text-emerald-700',
   CANCELLED: 'border-red-300 bg-red-50 text-red-700',
+}
+
+const DELIVERY_STATUS_CLASS: Record<PartnerDeliveryTaskDTO['status'], string> = {
+  PENDING: 'border-transparent bg-amber-500 text-stone-950',
+  VERIFIED: 'border-emerald-300 bg-emerald-50 text-emerald-700',
+  REJECTED: 'border-red-300 bg-red-50 text-red-700',
 }
 
 function humanize(value: string): string {
@@ -117,6 +134,174 @@ function PartnerBrandPanel({ user }: { user: SessionUser }) {
   )
 }
 
+function PartnerErrorPanel({
+  message,
+  onRetry,
+  label,
+}: {
+  message: string
+  onRetry: () => void
+  label: string
+}) {
+  return (
+    <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center" role="alert">
+      <p className="text-sm font-medium text-red-700">Could not load {label}.</p>
+      <p className="mt-1 text-xs text-red-600">{message}</p>
+      <Button variant="outline" className="mt-4 h-11 border-red-300 text-red-700" onClick={onRetry}>
+        <RefreshCw className="size-4" aria-hidden /> Retry
+      </Button>
+    </div>
+  )
+}
+
+// ─── SUPPLIER — purchase orders ───────────────────────────────────────────────
+
+function SentPoActions({ po }: { po: PartnerPurchaseOrderDTO }) {
+  const qc = useQueryClient()
+  const [formOpen, setFormOpen] = useState(false)
+  const [carrierName, setCarrierName] = useState('')
+  const [trackingNo, setTrackingNo] = useState('')
+  const [estimatedArrival, setEstimatedArrival] = useState('')
+  const [notes, setNotes] = useState('')
+
+  const acknowledge = useMutation({
+    mutationFn: () =>
+      api.post<{ id: string; acknowledgedAt: string }>(
+        `/api/partner/purchase-orders/${po.id}/acknowledge`,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['partner-purchase-orders'] }),
+    // A 409 means the order was acknowledged from another session — refetch
+    // reconciles the card instead of leaving a stale button.
+    onError: () => qc.invalidateQueries({ queryKey: ['partner-purchase-orders'] }),
+  })
+
+  const logShipment = useMutation({
+    mutationFn: (body: {
+      carrierName: string
+      trackingNo: string | null
+      estimatedArrival: string | null
+      notes: string | null
+    }) => api.post<ShipmentDTO>(`/api/partner/purchase-orders/${po.id}/shipments`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['partner-purchase-orders'] })
+      setFormOpen(false)
+      setCarrierName('')
+      setTrackingNo('')
+      setEstimatedArrival('')
+      setNotes('')
+    },
+  })
+
+  const submitShipment = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (carrierName.trim() === '') return
+    logShipment.mutate({
+      carrierName: carrierName.trim(),
+      trackingNo: trackingNo.trim() === '' ? null : trackingNo.trim(),
+      estimatedArrival: estimatedArrival === '' ? null : estimatedArrival,
+      notes: notes.trim() === '' ? null : notes.trim(),
+    })
+  }
+
+  return (
+    <div className="mt-3 border-t border-stone-100 pt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {po.acknowledgedAt ? (
+          <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+            <CheckCircle2 className="size-4" aria-hidden />
+            Acknowledged {formatDate(po.acknowledgedAt)}
+          </span>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 border-stone-300 text-stone-700"
+            onClick={() => acknowledge.mutate()}
+            disabled={acknowledge.isPending}
+          >
+            <CheckCircle2 className="size-4" aria-hidden />
+            {acknowledge.isPending ? 'Acknowledging…' : 'Acknowledge order'}
+          </Button>
+        )}
+        {acknowledge.isError && !po.acknowledgedAt ? (
+          <span className="text-xs text-red-600">{acknowledge.error.message}</span>
+        ) : null}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 border-stone-300 text-stone-700"
+          onClick={() => setFormOpen((open) => !open)}
+          aria-expanded={formOpen}
+        >
+          <Truck className="size-4" aria-hidden /> {formOpen ? 'Hide shipment form' : 'Log shipment'}
+        </Button>
+      </div>
+
+      {formOpen ? (
+        <form onSubmit={submitShipment} className="mt-3 space-y-3 rounded-lg bg-stone-50 p-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor={`shipment-carrier-${po.id}`}>Carrier *</Label>
+              <Input
+                id={`shipment-carrier-${po.id}`}
+                value={carrierName}
+                onChange={(e) => setCarrierName(e.target.value)}
+                placeholder="e.g. Suite Haulage Ltd"
+                className="h-11"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`shipment-tracking-${po.id}`}>Tracking no.</Label>
+              <Input
+                id={`shipment-tracking-${po.id}`}
+                value={trackingNo}
+                onChange={(e) => setTrackingNo(e.target.value)}
+                placeholder="optional"
+                className="h-11"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`shipment-eta-${po.id}`}>Estimated arrival</Label>
+              <Input
+                id={`shipment-eta-${po.id}`}
+                type="date"
+                value={estimatedArrival}
+                onChange={(e) => setEstimatedArrival(e.target.value)}
+                className="h-11"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`shipment-notes-${po.id}`}>Notes</Label>
+              <Input
+                id={`shipment-notes-${po.id}`}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="optional"
+                className="h-11"
+              />
+            </div>
+          </div>
+          {logShipment.isError ? (
+            <p className="text-xs text-red-600" role="alert">
+              {logShipment.error.message}
+            </p>
+          ) : null}
+          <div className="flex justify-end">
+            <Button
+              type="submit"
+              size="sm"
+              className="h-9 bg-stone-900 text-white hover:bg-stone-800"
+              disabled={logShipment.isPending || carrierName.trim() === ''}
+            >
+              {logShipment.isPending ? 'Logging…' : 'Log shipment'}
+            </Button>
+          </div>
+        </form>
+      ) : null}
+    </div>
+  )
+}
+
 function PurchaseOrderCard({ po }: { po: PartnerPurchaseOrderDTO }) {
   return (
     <li className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5">
@@ -153,6 +338,10 @@ function PurchaseOrderCard({ po }: { po: PartnerPurchaseOrderDTO }) {
         <span className="text-sm font-semibold text-stone-900">{formatMoney(po.total)}</span>
       </div>
       {po.notes ? <p className="mt-2 text-xs text-stone-500">Note: {po.notes}</p> : null}
+
+      {/* MJG-036 — partner actions live on SENT orders; the acknowledgment
+          stamp itself shows on any order once recorded. */}
+      {po.status === 'SENT' || po.acknowledgedAt ? <SentPoActions po={po} /> : null}
     </li>
   )
 }
@@ -175,17 +364,11 @@ function SupplierInbox() {
 
   if (pos.isError) {
     return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center" role="alert">
-        <p className="text-sm font-medium text-red-700">Could not load your purchase orders.</p>
-        <p className="mt-1 text-xs text-red-600">{pos.error.message}</p>
-        <Button
-          variant="outline"
-          className="mt-4 h-11 border-red-300 text-red-700"
-          onClick={() => pos.refetch()}
-        >
-          <RefreshCw className="size-4" aria-hidden /> Retry
-        </Button>
-      </div>
+      <PartnerErrorPanel
+        label="your purchase orders"
+        message={pos.error.message}
+        onRetry={() => pos.refetch()}
+      />
     )
   }
 
@@ -229,26 +412,137 @@ function SupplierInbox() {
   )
 }
 
-function LogisticsNotice({ user }: { user: SessionUser }) {
+// ─── LOGISTICS — delivery tasks ───────────────────────────────────────────────
+
+function DeliveryTaskCard({ task }: { task: PartnerDeliveryTaskDTO }) {
+  const qc = useQueryClient()
+
+  const acknowledge = useMutation({
+    mutationFn: () => api.post<PartnerDeliveryTaskDTO>(`/api/deliveries/${task.id}/acknowledge`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['partner-delivery-tasks'] }),
+    // A 409 means the task was acknowledged from another session — refetch
+    // reconciles the card instead of leaving a stale button.
+    onError: () => qc.invalidateQueries({ queryKey: ['partner-delivery-tasks'] }),
+  })
+
+  return (
+    <li className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+            <Building2 className="size-4 shrink-0 text-stone-400" aria-hidden />
+            {task.constructorName}
+          </p>
+          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-stone-500">
+            <MapPin className="size-3" aria-hidden /> {task.siteName}
+            {task.purchaseOrderId ? (
+              <> · PO #{task.purchaseOrderId.slice(0, 8)}</>
+            ) : null}
+          </p>
+        </div>
+        <Badge className={cn('shrink-0', DELIVERY_STATUS_CLASS[task.status])}>
+          {humanize(task.status)}
+        </Badge>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-stone-500">
+        <span className="flex items-center gap-1.5">
+          <CalendarDays className="size-3" aria-hidden />
+          Delivered {formatDate(task.deliveredAt)}
+        </span>
+        {task.acknowledgedAt ? (
+          <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+            <CheckCircle2 className="size-4" aria-hidden />
+            Acknowledged {formatDate(task.acknowledgedAt)}
+          </span>
+        ) : null}
+      </div>
+      {task.notes ? <p className="mt-2 text-xs text-stone-500">Note: {task.notes}</p> : null}
+
+      {!task.acknowledgedAt ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-stone-100 pt-3">
+          <Button
+            size="sm"
+            className="h-9 bg-stone-900 text-white hover:bg-stone-800"
+            onClick={() => acknowledge.mutate()}
+            disabled={acknowledge.isPending}
+          >
+            <CheckCircle2 className="size-4" aria-hidden />
+            {acknowledge.isPending ? 'Acknowledging…' : 'Acknowledge pickup'}
+          </Button>
+          {acknowledge.isError ? (
+            <span className="text-xs text-red-600" role="alert">
+              {acknowledge.error.message}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+    </li>
+  )
+}
+
+function LogisticsDeliveryTasks() {
+  const tasks = useQuery({
+    queryKey: ['partner-delivery-tasks'],
+    queryFn: () => api.get<PartnerDeliveryTaskDTO[]>('/api/partner/delivery-tasks'),
+  })
+
+  if (tasks.isLoading) {
+    return (
+      <div className="space-y-3" aria-busy="true" aria-label="Loading delivery tasks">
+        {[0, 1, 2].map((i) => (
+          <Skeleton key={i} className="h-36 w-full rounded-xl" />
+        ))}
+      </div>
+    )
+  }
+
+  if (tasks.isError) {
+    return (
+      <PartnerErrorPanel
+        label="your delivery tasks"
+        message={tasks.error.message}
+        onRetry={() => tasks.refetch()}
+      />
+    )
+  }
+
+  const list = tasks.data ?? []
+
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-lg font-semibold tracking-tight text-stone-900">Delivery tasks</h2>
-        <p className="text-sm text-stone-500">
-          Transport assignments from constructors you partner with.
-        </p>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight text-stone-900">Delivery tasks</h2>
+          <p className="text-sm text-stone-500">
+            Deliveries constructors assigned to your organization as carrier. Acknowledging a task
+            confirms your pickup — the constructor still verifies the delivery on site.
+          </p>
+        </div>
+        <Badge variant="outline" className="shrink-0 border-stone-300 bg-stone-100 text-stone-700">
+          {list.length} {list.length === 1 ? 'task' : 'tasks'}
+        </Badge>
       </div>
-      <div className="rounded-xl border border-dashed border-stone-300 bg-stone-50 p-8 text-center">
-        <Truck className="mx-auto size-8 text-stone-300" aria-hidden />
-        <p className="mt-3 text-sm font-medium text-stone-900">
-          Delivery-task assignment arrives in a later release
-        </p>
-        <p className="mx-auto mt-1 max-w-md text-xs text-stone-500">
-          Your organization {user.organizationName ? `(${user.organizationName}) ` : ''}is fully
-          registered as a logistics partner. Constructors will be able to assign and track delivery
-          tasks with you from an upcoming release.
-        </p>
-      </div>
+
+      {list.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-stone-300 bg-stone-50 p-8 text-center">
+          <Truck className="mx-auto size-8 text-stone-300" aria-hidden />
+          <p className="mt-3 text-sm font-medium text-stone-900">No delivery tasks yet</p>
+          <p className="mx-auto mt-1 max-w-md text-xs text-stone-500">
+            When a constructor assigns one of its deliveries to your organization as the carrier, it
+            appears here for acknowledgment.
+          </p>
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {list.map((task) => (
+            <DeliveryTaskCard key={task.id} task={task} />
+          ))}
+        </ul>
+      )}
+      {tasks.isFetching ? (
+        <p className="text-center text-xs text-stone-400">Refreshing…</p>
+      ) : null}
     </div>
   )
 }
@@ -305,7 +599,7 @@ export function PartnerView({ user, onLogout }: { user: SessionUser; onLogout: (
         </header>
 
         <div className="mx-auto w-full max-w-4xl flex-1 p-4 pb-16 sm:p-6 lg:p-8">
-          {user.organizationType === 'SUPPLIER' ? <SupplierInbox /> : <LogisticsNotice user={user} />}
+          {user.organizationType === 'SUPPLIER' ? <SupplierInbox /> : <LogisticsDeliveryTasks />}
         </div>
       </main>
     </div>

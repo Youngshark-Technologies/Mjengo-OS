@@ -34,6 +34,9 @@ function toPartnerPODTO(po: PurchaseOrderWithRelations): PartnerPurchaseOrderDTO
     expectedDate: po.expectedDate ? po.expectedDate.toISOString() : null,
     notes: po.notes,
     total,
+    // MJG-036 — partner ack scalars ride along for the portal UI (cheap).
+    acknowledgedAt: po.acknowledgedAt ? po.acknowledgedAt.toISOString() : null,
+    acknowledgedByOrganizationId: po.acknowledgedByOrganizationId,
     organizationName: po.supplier.organization.name,
     items: po.items.map(item => ({
       materialId: item.materialId,

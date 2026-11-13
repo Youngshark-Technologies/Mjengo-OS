@@ -119,12 +119,48 @@ export interface PurchaseOrderDTO {
   expectedDate: string | null
   notes: string
   total: number
+  // MJG-036 — supplier-partner acknowledgment (null until the partner acks).
+  acknowledgedAt: string | null
+  acknowledgedByOrganizationId: string | null
   items: POItemDTO[]
 }
 
 // Partner portal (MJG-035): a supplier org's view of a constructor's PO.
 export interface PartnerPurchaseOrderDTO extends PurchaseOrderDTO {
   organizationName: string
+}
+
+// MJG-036 — shipment log entry recorded by the supplier partner org.
+export interface ShipmentDTO {
+  id: string
+  purchaseOrderId: string
+  organizationId: string
+  carrierName: string
+  trackingNo: string | null
+  shippedAt: string | null
+  estimatedArrival: string | null
+  notes: string | null
+  createdAt: string
+}
+
+// MJG-036 — constructor-facing PO detail: ack context + the partner shipment log.
+export interface PurchaseOrderDetailDTO extends PurchaseOrderDTO {
+  acknowledgedByOrganizationName: string | null
+  shipments: ShipmentDTO[]
+}
+
+// MJG-036 (b) — logistics partner's view of a delivery task assigned to its org.
+export interface PartnerDeliveryTaskDTO {
+  id: string
+  siteId: string
+  siteName: string
+  purchaseOrderId: string | null
+  purchaseOrderStatus: POStatus | null
+  constructorName: string
+  status: DeliveryStatus
+  deliveredAt: string
+  acknowledgedAt: string | null
+  notes: string
 }
 
 export interface DeliveryItemDTO {

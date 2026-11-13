@@ -81,6 +81,9 @@ const createDeliverySchema = z.object({
   siteId: z.string().min(1, 'siteId is required'),
   purchaseOrderId: z.union([z.string().min(1), z.literal('')]).nullish().transform(v => (v ? v : null)),
   supplierId: z.union([z.string().min(1), z.literal('')]).nullish().transform(v => (v ? v : null)),
+  // MJG-036 — optional LOGISTICS partner org assigned to haul this delivery.
+  // Cross-org reference is deliberate (same pattern as partner PO visibility).
+  carrierOrganizationId: z.union([z.string().min(1), z.literal('')]).nullish().transform(v => (v ? v : null)),
   notes: z.string().nullish().transform(v => v ?? ''),
   items: z.array(deliveryItemSchema).min(1, 'At least one item is required'),
 })
@@ -127,6 +130,19 @@ export async function POST(req: Request) {
     if (body.supplierId) {
       await findOrgRecord(db.supplier, body.supplierId, user.organizationId, 'Supplier')
     }
+    // MJG-036 — the carrier must be a real LOGISTICS organization. Unknown
+    // reference → 404 (like every other referenced entity above, keeping
+    // cross-tenant ids indistinguishable); wrong org type → 422.
+    if (body.carrierOrganizationId) {
+      const carrier = await db.organization.findUnique({
+        where: { id: body.carrierOrganizationId },
+        select: { id: true, type: true },
+      })
+      if (!carrier) throw new ApiError(404, 'Carrier organization not found')
+      if (carrier.type !== 'LOGISTICS') {
+        throw new ApiError(422, 'Only LOGISTICS organizations can be assigned as the delivery carrier')
+      }
+    }
 
     const materialIds = [...new Set(body.items.map(item => item.materialId))]
     const materials = await db.material.findMany({
@@ -144,6 +160,7 @@ export async function POST(req: Request) {
         purchaseOrderId: body.purchaseOrderId,
         // MJG-016: explicit supplier wins; otherwise inherit the PO's supplier.
         supplierId: body.supplierId ?? poSupplierId,
+        carrierOrganizationId: body.carrierOrganizationId,
         status: 'PENDING',
         notes: body.notes,
         items: {

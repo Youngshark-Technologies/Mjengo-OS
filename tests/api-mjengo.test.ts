@@ -9,6 +9,9 @@
 //   → MJG-035 partner access model (supplier/logistics registration, org
 //     tenancy, partner directory, supplier-record linking, PO visibility,
 //     DRAFT privacy) → MJG-032 assignment FSM → MJG-033 supplier role gate
+//   → MJG-063 payment-approve write predicate → MJG-036 partner phase-2
+//     (delivery carrier assignment, logistics acknowledgment, supplier PO
+//     acknowledge + shipment log)
 //   → MJG-056 suite extensions: cookie flag contract, register validation,
 //     MJG-050/MJG-058/MJG-044/MJG-051 guard regressions, cross-constructor
 //     tenancy, and the MJG-043 register rate limit (429) as the suite-FINAL
@@ -103,6 +106,7 @@ const S: {
   assignment2Id?: string
   site2Id?: string // MJG-056 — second owner site (milestone terminality)
   milestoneId?: string // MJG-056 — driven to COMPLETED, then reopen attempt
+  carrierDeliveryId?: string // MJG-036 — delivery assigned to the logistics org
 } = {}
 
 const today = () => new Date().toISOString().slice(0, 10)
@@ -930,6 +934,228 @@ describe('MJG-020 — API golden journey (isolated server)', () => {
     expect(row?.status).toBe('APPROVED')
   })
 
+  // ─── MJG-036 — partner phase 2 (b) logistics delivery tasks ────────────
+  // These cases run BEFORE the register-rate-limit case and make NO register
+  // calls: they reuse the case-22 supplier jar and the case-23 logistics jar
+  // (module-level, like case 39 reuses the owner session), so the bucket
+  // math documented in the case-38 block below is unaffected.
+
+  test('40 MJG-036 — delivery carrier: logistics org assigned → 201; wrong type → 422', async () => {
+    // Empty list is an empty list, not an error (nothing assigned yet).
+    const before = await call('/api/partner/delivery-tasks', { session: 'logistics' })
+    expect(before.status).toBe(200)
+    expect(data(before)).toHaveLength(0)
+
+    const created = await call('/api/deliveries', {
+      method: 'POST',
+      session: 'owner',
+      body: {
+        siteId: S.siteId,
+        carrierOrganizationId: S.logisticsOrgId,
+        items: [{ materialId: S.materialId, quantityDelivered: 5 }],
+      },
+    })
+    expect(created.status).toBe(201)
+    S.carrierDeliveryId = data(created)?.id
+    expect(S.carrierDeliveryId).toBeTruthy()
+
+    // A CONSTRUCTOR org is not a valid carrier (same rule family as the
+    // MJG-035 supplier-record link: wrong org type → 422).
+    const me = await call('/api/auth/me', { session: 'owner' })
+    const constructorOrgId = data(me)?.organizationId
+    const wrongType = await call('/api/deliveries', {
+      method: 'POST',
+      session: 'owner',
+      body: {
+        siteId: S.siteId,
+        carrierOrganizationId: constructorOrgId,
+        items: [{ materialId: S.materialId, quantityDelivered: 5 }],
+      },
+    })
+    expect(wrongType.status).toBe(422)
+    expect(errMsg(wrongType)).toContain('LOGISTICS')
+
+    // Unknown carrier reference behaves like every other referenced entity.
+    const unknown = await call('/api/deliveries', {
+      method: 'POST',
+      session: 'owner',
+      body: {
+        siteId: S.siteId,
+        carrierOrganizationId: 'nonexistent-org',
+        items: [{ materialId: S.materialId, quantityDelivered: 5 }],
+      },
+    })
+    expect(unknown.status).toBe(404)
+  })
+
+  test('41 MJG-036 — logistics tasks: list, acknowledge (repeat 409), verify flow untouched', async () => {
+    const list = await call('/api/partner/delivery-tasks', { session: 'logistics' })
+    expect(list.status).toBe(200)
+    expect(data(list)).toHaveLength(1) // only ITS assigned delivery
+    const task = data(list)[0]
+    expect(task.id).toBe(S.carrierDeliveryId)
+    expect(task.siteName).toBe('Suite Tower')
+    expect(task.constructorName).toBe('Suite Test Constructors')
+    expect(task.status).toBe('PENDING')
+    expect(task.acknowledgedAt).toBeNull()
+
+    const ack = await call(`/api/deliveries/${S.carrierDeliveryId}/acknowledge`, {
+      method: 'POST',
+      session: 'logistics',
+    })
+    expect(ack.status).toBe(200)
+    expect(data(ack)?.acknowledgedAt).toBeTruthy()
+    expect(data(ack)?.status).toBe('PENDING') // ack is NOT a delivery-status change
+
+    const second = await call(`/api/deliveries/${S.carrierDeliveryId}/acknowledge`, {
+      method: 'POST',
+      session: 'logistics',
+    })
+    expect(second.status).toBe(409)
+    expect(errMsg(second)).toContain('already been acknowledged')
+
+    // The constructor side is untouched by the partner acknowledgment: the
+    // delivery list still resolves and the delivery is still PENDING (stock
+    // is only ever applied by the human verify flow).
+    const ownerList = await call('/api/deliveries', { session: 'owner' })
+    expect(ownerList.status).toBe(200)
+    const row = (data(ownerList) as Array<{ id: string; status: string }>).find(
+      d => d.id === S.carrierDeliveryId,
+    )
+    expect(row?.status).toBe('PENDING')
+  })
+
+  // ─── MJG-036 — partner phase 2 (c) PO acknowledge + shipment log ──────────
+
+  test('42 MJG-036 — supplier PO acknowledge: 200, repeat 409, DRAFT stays private', async () => {
+    // S.poId is SENT and linked via the case-27 supplier record → visible.
+    const ack = await call(`/api/partner/purchase-orders/${S.poId}/acknowledge`, {
+      method: 'POST',
+      session: 'supplier',
+    })
+    expect(ack.status).toBe(200)
+    expect(data(ack)?.acknowledgedAt).toBeTruthy()
+    expect(data(ack)?.acknowledgedByOrganizationId).toBe(S.partnerOrgId)
+
+    const second = await call(`/api/partner/purchase-orders/${S.poId}/acknowledge`, {
+      method: 'POST',
+      session: 'supplier',
+    })
+    expect(second.status).toBe(409)
+    expect(errMsg(second)).toContain('already been acknowledged')
+
+    // A fresh DRAFT to the same supplier never left the constructor → the
+    // partner cannot even distinguish it from a nonexistent PO (404).
+    const draft = await call('/api/purchase-orders', {
+      method: 'POST',
+      session: 'owner',
+      body: {
+        siteId: S.siteId,
+        supplierId: S.supplierId,
+        items: [{ materialId: S.materialId, quantity: 3, unitCost: 700 }],
+      },
+    })
+    expect(draft.status).toBe(201)
+    const draftPoId = data(draft)?.id
+
+    const draftAck = await call(`/api/partner/purchase-orders/${draftPoId}/acknowledge`, {
+      method: 'POST',
+      session: 'supplier',
+    })
+    expect(draftAck.status).toBe(404)
+
+    // Guard: the portal endpoints stay supplier-only.
+    const logisticsAck = await call(`/api/partner/purchase-orders/${S.poId}/acknowledge`, {
+      method: 'POST',
+      session: 'logistics',
+    })
+    expect(logisticsAck.status).toBe(403)
+  })
+
+  test('43 MJG-036 — supplier shipment log; constructor sees ack + shipments', async () => {
+    const logged = await call(`/api/partner/purchase-orders/${S.poId}/shipments`, {
+      method: 'POST',
+      session: 'supplier',
+      body: {
+        carrierName: 'Suite Haulage Ltd',
+        trackingNo: 'SHL-2026-001',
+        estimatedArrival: today(),
+        notes: 'Loaded at yard 4',
+      },
+    })
+    expect(logged.status).toBe(201)
+    expect(data(logged)?.carrierName).toBe('Suite Haulage Ltd')
+    expect(data(logged)?.purchaseOrderId).toBe(S.poId)
+    expect(data(logged)?.organizationId).toBe(S.partnerOrgId) // tenancy anchor
+
+    // Validation: missing carrier → 400, unknown field → 400, bad date → 400.
+    const noCarrier = await call(`/api/partner/purchase-orders/${S.poId}/shipments`, {
+      method: 'POST',
+      session: 'supplier',
+      body: { trackingNo: 'X' },
+    })
+    expect(noCarrier.status).toBe(400)
+    const unknownField = await call(`/api/partner/purchase-orders/${S.poId}/shipments`, {
+      method: 'POST',
+      session: 'supplier',
+      body: { carrierName: 'Suite Haulage Ltd', trakingNo: 'typo' },
+    })
+    expect(unknownField.status).toBe(400)
+    const badDate = await call(`/api/partner/purchase-orders/${S.poId}/shipments`, {
+      method: 'POST',
+      session: 'supplier',
+      body: { carrierName: 'Suite Haulage Ltd', shippedAt: 'not-a-date' },
+    })
+    expect(badDate.status).toBe(400)
+
+    const list = await call(`/api/partner/purchase-orders/${S.poId}/shipments`, {
+      session: 'supplier',
+    })
+    expect(list.status).toBe(200)
+    expect(data(list)).toHaveLength(1) // exactly the one just logged
+
+    // The constructor sees the partner acknowledgment and the shipment log.
+    const detail = await call(`/api/purchase-orders/${S.poId}`, { session: 'owner' })
+    expect(detail.status).toBe(200)
+    expect(data(detail)?.acknowledgedAt).toBeTruthy()
+    expect(data(detail)?.acknowledgedByOrganizationId).toBe(S.partnerOrgId)
+    expect(data(detail)?.acknowledgedByOrganizationName).toBe('Suite Supply Partners')
+    expect(data(detail)?.shipments).toHaveLength(1)
+    expect(data(detail)?.shipments[0].carrierName).toBe('Suite Haulage Ltd')
+    expect(data(detail)?.status).toBe('SENT') // partner writes never move the FSM
+
+    // FSM edge: a CANCELLED (still visible) PO cannot take shipments → 422.
+    const doomed = await call('/api/purchase-orders', {
+      method: 'POST',
+      session: 'owner',
+      body: {
+        siteId: S.siteId,
+        supplierId: S.supplierId,
+        items: [{ materialId: S.materialId, quantity: 2, unitCost: 700 }],
+      },
+    })
+    expect(doomed.status).toBe(201)
+    const doomedId = data(doomed)?.id
+    const send = await call(`/api/purchase-orders/${doomedId}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { status: 'SENT' },
+    })
+    expect(send.status).toBe(200)
+    const cancel = await call(`/api/purchase-orders/${doomedId}`, {
+      method: 'PATCH',
+      session: 'owner',
+      body: { status: 'CANCELLED' },
+    })
+    expect(cancel.status).toBe(200)
+    const deadShipment = await call(`/api/partner/purchase-orders/${doomedId}/shipments`, {
+      method: 'POST',
+      session: 'supplier',
+      body: { carrierName: 'Suite Haulage Ltd' },
+    })
+    expect(deadShipment.status).toBe(422)
+  })
+
   // MJG-043 bucket math — the limiter is IN-MEMORY on this single booted
   // server, keyed by client IP with a 20/hour ceiling, and it is checked
   // BEFORE payload validation (400s and 409s burn slots too). Register calls
@@ -939,6 +1165,8 @@ describe('MJG-020 — API golden journey (isolated server)', () => {
   //   37 second constructor                                 = 1
   //   39 second payment approve (runs before this case; reuses the owner
   //      session and makes NO register calls)                = 0
+  //   40-43 MJG-036 (run before this case; reuse the case-22/23 partner
+  //      session jars and make NO register calls)            = 0
   //   pre-used                                              = 8
   // This case therefore burns 12 throwaway registers (slots 9–20) and asserts
   // the NEXT call is rejected with 429. It MUST stay the LAST case in this
