@@ -463,3 +463,18 @@ Work Log:
 Stage Summary:
 - Registry after wave 1: 56/60 DONE. Still OPEN: MJG-031 (USER ACTION: fresh push token), MJG-036(b)(c) logistics/shipment phase-2 remainder (backend agent next), MJG-047 (sandbox side done at release; token rotation = user action), MJG-056 suite extensions (QA agent next).
 - dev is fully gated on both engines; main untouched — release happens after wave 2 (MJG-036 + MJG-056) with the main-tip purge per MJG-047.
+
+---
+Task ID: OPEN-ISSUES-04 (wave 1.5)
+Agent: Staff Engineer + Principal QA (suite extensions) + Principal Security/Backend (hardening) + 2 independent reviewers (correctness, security)
+Task: MJG-056 suite extensions; review wave-1 merges; file+fix review findings MJG-061..066.
+
+Work Log:
+- MJG-056 (test/suite-extensions, 92a9ace): suite 30→38 cases / 114→170 assertions, green in detached worktree (wt-qa) — cookie flags (HttpOnly + SameSite=lax + Secure in prod-mode harness), malformed register 400, partners BOGUS 400, partner-org sites 403 ×2, WORKER assignment PATCH 403 + OWNER 200, milestone reopen 422, register 429 (bucket math documented; suite-final), cross-constructor tenancy. Empirical corrections recorded in registry (Secure IS set in prod harness; SameSite wire form lowercase; zod v4 absent-key message).
+- Independent review wave (2 agents, read-only): 0 P0 / 3 P1 / ~11 P2. Filed MJG-061..066.
+- MJG-061..066 (fix/security-hardening, a615387): getClientIp rightmost-isIP XFF + 'unknown' fallback; payment approve → conditional updateMany(status=PENDING) + 409 + suite case 39; orgType CONSTRUCTOR on verify/mark-paid/suppliers-PATCH + approve requireUser(['OWNER'],{orgType}); limiter bounds (sweep/256th write, 10k cap + overflow, SHA-256 long keys); pg-gate cleanup SQLite restore; README mkdir db; DEPLOYMENT trusted-proxy note. Suite 39/39 (179 assertions) green in wt-fix.
+- Review-finding correction of record: the reported CI `branches: ain]` typo was an ANSI output artifact — file byte-verified as `branches: [main]`; registry MJG-062 corrected; only the permissions block was a real gap.
+- Release-candidate gates on dev @ a615387 (fresh detached wt-gate): lint + tsc + SQLite 39/39 + PG (migrations replayed, suite green) — ALL GREEN.
+
+Stage Summary:
+- Registry: 62/66 DONE. OPEN: MJG-031 (user token), MJG-036(b)(c) (backend agent dispatched next), MJG-047 (release-time purge + user token rotation).
