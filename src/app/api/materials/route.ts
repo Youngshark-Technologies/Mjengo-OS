@@ -41,7 +41,7 @@ export async function GET() {
 // POST /api/materials — create a material (name unique within org → 409).
 export async function POST(req: Request) {
   return handle(async () => {
-    const user = await requireUser()
+    const user = await requireUser(undefined, { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, createSchema)
 
     const duplicate = await db.material.findFirst({

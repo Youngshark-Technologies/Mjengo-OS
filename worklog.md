@@ -440,3 +440,57 @@ Stage Summary:
 - USER ACTION REQUIRED: provide a fresh push-scoped GitHub token (or push manually) to publish:
   `git push https://<token>@github.com/Youngshark-Technologies/Mjengo-OS.git main dev`
   (fast-forward, no force needed). After merge, Vercel git-integration auto-deploys per docs/DEPLOYMENT.md; Render blueprint deploy + NEXT_PUBLIC_APP_URL/BACKEND_URL env pairing remain per the HOSTING-01 runbook.
+
+---
+Task ID: OPEN-ISSUES-04
+Agent: Staff Engineer (coordinating Principal engineers: DevOps-Config, DevOps-Docs, Frontend-Resilience, QA-Gates)
+Task: Resolve all pending issues — wave 1: verify+merge unmerged API hardening, deploy hardening, docs/CI, frontend resilience; PG gate determinism defects (MJG-059/060) discovered and fixed.
+
+Work Log:
+- Repo state on session start: unmerged fix/api-hardening branch (MJG-044/050/051/052/053/058 implemented, never verified); daemon had re-polluted main (5d8be9e: .env, db/custom.db, download/** re-tracked); stale /tmp worktrees prunable; registry 38 DONE / 20 OPEN; branches beyond main+dev present.
+- Daemon incident + recovery: HEAD silently flipped back to main between calls, so one merge landed on main (e9e16ec). Undone via `git update-ref refs/heads/main 5d8be9e`, runtime files restored from backup, hardening re-merged properly into dev (b3c929c, fast-forward). All subsequent git ops done via index-level plumbing only.
+- fix/api-hardening verified in an isolated worktree: lint + tsc + schema parity + production build + suite 30/30 (114 assertions) ALL GREEN → merged to dev (b3c929c): org-type guard on 16 constructor-domain writes, assignment PATCH role gate, partners 400, milestone terminal guard, transactional payment approve, bounded lists (take:500).
+- 3 parallel implementation agents with disjoint file ownership (all edits via plumbing into dev):
+  - chore/deploy-hardening (7987326) — MJG-037 beforeFiles /api rewrite; MJG-038 vercel.json buildCommand + trustedDependencies; MJG-039 render.yaml npm ci --include=dev; MJG-041 pinned package-lock.json (975 entries, npm ci --dry-run exit 0); MJG-057 engines node>=20 + portable .env.example; MJG-040 build-time env comments.
+  - chore/docs-ci (ad5fd8f) — MJG-045 root README + mjengoos-website premise correction; MJG-046 dormant .github/workflows/ci.yml; MJG-040 BUILD-time env callouts in DEPLOYMENT.md; MJG-057 docs batch (intro de-stale, BACKUPS paths, start-drift note, fra1 note).
+  - fix/frontend-resilience (244d22f) — MJG-049 error.tsx/global-error.tsx/not-found.tsx; MJG-055 boot-failure retry card, #get-started→REGISTER intent, radiogroup a11y.
+- Integrated dev gates: lint + tsc + test:api (SQLite 30/30) GREEN. test:api:pg FAILED → root-caused as TWO pre-existing gate defects (NOT product regressions), filed and fixed on chore/pg-gate-order:
+  - MJG-059: standalone build embedded the SQLite Prisma client (postgres generate ran after the build; historical passes were side effects of failed-attempt ordering) → postgres client now generated pre-build.
+  - MJG-060: pg-verify failure paths process.exit()'d past teardown, leaking the :3113 server + :3112 embedded Postgres → EADDRINUSE on subsequent runs → failure paths now throw (teardown runs), EXIT trap frees ports.
+  - Re-run: PG gate PASSED twice consecutively (migrate deploy applied both versioned migrations on embedded PG, 30-case suite green on migrated Postgres, SQLite client restored).
+- Two-branch policy: chore/deploy-hardening, chore/docs-ci, fix/frontend-resilience, chore/pg-gate-order merged via plumbing and deleted; only main + dev remain (+ registry commit).
+
+Stage Summary:
+- Registry after wave 1: 56/60 DONE. Still OPEN: MJG-031 (USER ACTION: fresh push token), MJG-036(b)(c) logistics/shipment phase-2 remainder (backend agent next), MJG-047 (sandbox side done at release; token rotation = user action), MJG-056 suite extensions (QA agent next).
+- dev is fully gated on both engines; main untouched — release happens after wave 2 (MJG-036 + MJG-056) with the main-tip purge per MJG-047.
+
+---
+Task ID: OPEN-ISSUES-04 (wave 1.5)
+Agent: Staff Engineer + Principal QA (suite extensions) + Principal Security/Backend (hardening) + 2 independent reviewers (correctness, security)
+Task: MJG-056 suite extensions; review wave-1 merges; file+fix review findings MJG-061..066.
+
+Work Log:
+- MJG-056 (test/suite-extensions, 92a9ace): suite 30→38 cases / 114→170 assertions, green in detached worktree (wt-qa) — cookie flags (HttpOnly + SameSite=lax + Secure in prod-mode harness), malformed register 400, partners BOGUS 400, partner-org sites 403 ×2, WORKER assignment PATCH 403 + OWNER 200, milestone reopen 422, register 429 (bucket math documented; suite-final), cross-constructor tenancy. Empirical corrections recorded in registry (Secure IS set in prod harness; SameSite wire form lowercase; zod v4 absent-key message).
+- Independent review wave (2 agents, read-only): 0 P0 / 3 P1 / ~11 P2. Filed MJG-061..066.
+- MJG-061..066 (fix/security-hardening, a615387): getClientIp rightmost-isIP XFF + 'unknown' fallback; payment approve → conditional updateMany(status=PENDING) + 409 + suite case 39; orgType CONSTRUCTOR on verify/mark-paid/suppliers-PATCH + approve requireUser(['OWNER'],{orgType}); limiter bounds (sweep/256th write, 10k cap + overflow, SHA-256 long keys); pg-gate cleanup SQLite restore; README mkdir db; DEPLOYMENT trusted-proxy note. Suite 39/39 (179 assertions) green in wt-fix.
+- Review-finding correction of record: the reported CI `branches: ain]` typo was an ANSI output artifact — file byte-verified as `branches: [main]`; registry MJG-062 corrected; only the permissions block was a real gap.
+- Release-candidate gates on dev @ a615387 (fresh detached wt-gate): lint + tsc + SQLite 39/39 + PG (migrations replayed, suite green) — ALL GREEN.
+
+Stage Summary:
+- Registry: 62/66 DONE. OPEN: MJG-031 (user token), MJG-036(b)(c) (backend agent dispatched next), MJG-047 (release-time purge + user token rotation).
+
+---
+Task ID: OPEN-ISSUES-04 (wave 2 — feature complete)
+Agent: Staff Engineer + Principal Backend/Frontend (MJG-036 b+c) + QA gates
+Task: MJG-036(b)(c) logistics delivery-task model + partner PO acknowledge/shipment logging; MJG-067 SQLite gate client-sync; release-candidate gates.
+
+Work Log:
+- MJG-036(b): Delivery.carrierOrganizationId/acknowledgedAt/acknowledgedById (indexed, SetNull) + GET /api/partner/delivery-tasks + POST /api/deliveries/[id]/acknowledge; carrier validated LOGISTICS (404/422); acknowledge = stamp (no stock effects); 409 via write predicates.
+- MJG-036(c): PurchaseOrder.acknowledgedAt/acknowledgedByOrganizationId + new Shipment model; POST acknowledge + POST/GET shipments under MJG-035 visibility (DRAFT 404, CANCELLED 422); constructor PO detail DTO carries ack + shipments.
+- Migration 20261113120000_partner_phase2 (5 ADD COLUMN + Shipment + 4 idx + 5 FK) — Prisma-migrate-diff-verified naming; partner portal UI: real logistics task list + supplier ack/shipment form.
+- MJG-067 discovered during RC2: SQLite harness built against a stale client in a fresh worktree (twin of MJG-059) → api-tests.sh now regenerates the client pre-run (chore/gate-client-sync, d7d9902).
+- RC2 gates on dev @ d7d9902 (fresh worktree wt-gate): lint + tsc + SQLite suite 43/43 (228 assertions) + PG suite with the NEW migration replayed — ALL GREEN.
+
+Stage Summary:
+- Registry: 66/67 DONE. OPEN: MJG-031 (USER ACTION: fresh push-scoped GitHub token; push command prepared), MJG-047 (sandbox-side purge executes at this release; token rotation = user action).
+- Release follows: main tree reset to dev (daemon-junk purge), history-bridge commits both directions, secret scan, branch audit.

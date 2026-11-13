@@ -48,7 +48,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   return handle(async () => {
-    const user = await requireUser(['OWNER', 'SUPERVISOR'])
+    const user = await requireUser(['OWNER', 'SUPERVISOR'], { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, createSupplierSchema)
 
     const supplier = await db.supplier.create({

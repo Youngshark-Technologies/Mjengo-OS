@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query'
-import { HardHat } from 'lucide-react'
+import { AlertTriangle, HardHat } from 'lucide-react'
 import LandingView from '@/components/marketing/landing-view'
 import { AuthView } from '@/components/views/auth-view'
 import { AppShell } from '@/components/app/app-shell'
+import { Button } from '@/components/ui/button'
 import { api, ApiClientError } from '@/lib/api-client'
 import { getStartedHref } from '@/lib/app-url'
+import { useAppStore, type AuthMode } from '@/lib/store'
 import type { SessionUser } from '@/lib/types'
 
 type MeResult = SessionUser | null
@@ -27,22 +29,60 @@ function BootSplash() {
   )
 }
 
+// MJG-055 — shown when the boot call to /api/auth/me fails with anything
+// other than 401 (network error, 5xx, timeout…). Same visual language as
+// src/app/error.tsx; Retry re-runs the boot check via `me.refetch()`.
+function BootErrorCard({ message, onRetry }: { message?: string; onRetry: () => void }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-stone-50 p-6" role="alert">
+      <div className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 text-center shadow-sm sm:p-8">
+        <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-stone-950">
+          <AlertTriangle className="size-6 text-amber-500" aria-hidden="true" />
+        </div>
+        <h1 className="mt-4 text-xl font-semibold tracking-tight text-stone-900">
+          Couldn't reach MjengoOS
+        </h1>
+        <p className="mt-2 text-sm text-stone-500">
+          We couldn't verify your session. Check your connection and try again.
+        </p>
+        {message ? <p className="mt-2 text-xs text-stone-400">{message}</p> : null}
+        <Button
+          onClick={onRetry}
+          className="mt-6 h-11 w-full bg-amber-500 text-stone-950 hover:bg-amber-600"
+        >
+          Retry
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 function Root() {
   const queryClient = useQueryClient()
   const [showAuth, setShowAuth] = useState(false)
+  const setAuthMode = useAppStore((s) => s.setAuthMode)
 
   // MJG-028 — deep links: /#get-started and /#signin open the auth view.
   // This makes NEXT_PUBLIC_APP_URL-driven CTAs (same or cross origin) land
   // directly on authentication instead of the marketing landing.
+  // MJG-055 — the hash also carries mode intent: #get-started is a
+  // registration CTA, so it opens the auth view in REGISTER mode; #signin is
+  // a returning-user CTA, so it opens in LOGIN mode. Manual mode switching in
+  // the auth view still works — the hash is cleared right after opening, so
+  // it only seeds the initial mode.
   // Two paths: (1) mount with the hash already present (direct deep link /
   // cross-origin arrival), (2) same-page hash changes (the SPA does not
   // remount on hash navigation, so `hashchange` must be handled too).
   useEffect(() => {
     const openAuthFromHash = () => {
-      if (window.location.hash !== '#get-started' && window.location.hash !== '#signin') return
+      const hash = window.location.hash
+      const intent: AuthMode | null =
+        hash === '#get-started' ? 'register' : hash === '#signin' ? 'login' : null
+      if (!intent) return
       // Deferred (not synchronous) — opening auth is non-urgent and avoids
       // cascading renders on mount.
       const t = setTimeout(() => {
+        setAuthMode(intent)
         setShowAuth(true)
         window.history.replaceState(null, '', window.location.pathname + window.location.search)
       }, 0)
@@ -70,7 +110,16 @@ function Root() {
     retry: 1,
   })
 
-  if (me.isLoading || me.isError) return <BootSplash />
+  // MJG-055 — a 401 resolves to `null` (unauthenticated → landing/auth flow);
+  // any other boot failure (network error, 5xx, timeout) lands in `me.isError`
+  // and must offer a retry instead of stranding the user on the splash. While
+  // a retry (manual or the built-in single automatic retry) is in flight the
+  // splash shows again.
+  const booting = me.isError ? me.isFetching : me.isLoading
+  if (booting) return <BootSplash />
+  if (me.isError) {
+    return <BootErrorCard message={me.error.message} onRetry={() => void me.refetch()} />
+  }
 
   const user = me.data ?? null
 

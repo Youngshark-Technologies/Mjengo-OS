@@ -61,7 +61,7 @@ const verifySchema = z.object({
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
     const { id } = await params
-    const user = await requireUser(['OWNER', 'SUPERVISOR'])
+    const user = await requireUser(['OWNER', 'SUPERVISOR'], { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, verifySchema)
 
     const delivery = await findOrgRecord(db.delivery, id, user.organizationId, 'Delivery')

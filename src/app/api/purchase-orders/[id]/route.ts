@@ -2,7 +2,14 @@ import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { ApiError, findOrgRecord, handle, ok, parseBody, requireUser } from '@/lib/api-helpers'
-import { PO_STATUS_VALUES, type MaterialUnit, type POStatus, type PurchaseOrderDTO } from '@/lib/types'
+import {
+  PO_STATUS_VALUES,
+  type MaterialUnit,
+  type POStatus,
+  type PurchaseOrderDetailDTO,
+  type PurchaseOrderDTO,
+  type ShipmentDTO,
+} from '@/lib/types'
 
 // ─── DTO mapping ──────────────────────────────────────────────────────────────
 
@@ -27,6 +34,8 @@ function toPurchaseOrderDTO(po: PurchaseOrderWithRelations): PurchaseOrderDTO {
     expectedDate: po.expectedDate ? po.expectedDate.toISOString() : null,
     notes: po.notes,
     total,
+    acknowledgedAt: po.acknowledgedAt ? po.acknowledgedAt.toISOString() : null,
+    acknowledgedByOrganizationId: po.acknowledgedByOrganizationId,
     items: po.items.map(item => ({
       materialId: item.materialId,
       quantity: item.quantity,
@@ -34,6 +43,38 @@ function toPurchaseOrderDTO(po: PurchaseOrderWithRelations): PurchaseOrderDTO {
       materialName: item.material.name,
       unit: item.material.unit as MaterialUnit,
     })),
+  }
+}
+
+// MJG-036 — detail view adds the partner-ack org name and the supplier's
+// shipment log (newest first, bounded) to the shared PO mapping.
+const poDetailInclude = {
+  ...poInclude,
+  acknowledgedByOrganization: { select: { name: true } },
+  shipments: { orderBy: { createdAt: 'desc' as const }, take: 50 },
+} satisfies Prisma.PurchaseOrderInclude
+
+type PurchaseOrderDetailRelations = Prisma.PurchaseOrderGetPayload<{ include: typeof poDetailInclude }>
+
+function toShipmentDTO(shipment: PurchaseOrderDetailRelations['shipments'][number]): ShipmentDTO {
+  return {
+    id: shipment.id,
+    purchaseOrderId: shipment.purchaseOrderId,
+    organizationId: shipment.organizationId,
+    carrierName: shipment.carrierName,
+    trackingNo: shipment.trackingNo,
+    shippedAt: shipment.shippedAt ? shipment.shippedAt.toISOString() : null,
+    estimatedArrival: shipment.estimatedArrival ? shipment.estimatedArrival.toISOString() : null,
+    notes: shipment.notes,
+    createdAt: shipment.createdAt.toISOString(),
+  }
+}
+
+function toPurchaseOrderDetailDTO(po: PurchaseOrderDetailRelations): PurchaseOrderDetailDTO {
+  return {
+    ...toPurchaseOrderDTO(po),
+    acknowledgedByOrganizationName: po.acknowledgedByOrganization?.name ?? null,
+    shipments: po.shipments.map(toShipmentDTO),
   }
 }
 
@@ -56,7 +97,7 @@ const ALLOWED_TRANSITIONS: Record<POStatus, POStatus[]> = {
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
     const { id } = await params
-    const user = await requireUser(['OWNER', 'SUPERVISOR'])
+    const user = await requireUser(['OWNER', 'SUPERVISOR'], { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, patchPOSchema)
 
     const po = await findOrgRecord(db.purchaseOrder, id, user.organizationId, 'Purchase order')
@@ -72,5 +113,22 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       include: poInclude,
     })
     return ok(toPurchaseOrderDTO(updated))
+  })
+}
+
+// ─── GET /api/purchase-orders/[id] — org-scoped detail incl. partner ack/log ──
+
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  return handle(async () => {
+    const { id } = await params
+    const user = await requireUser()
+
+    const po = await findOrgRecord(db.purchaseOrder, id, user.organizationId, 'Purchase order')
+
+    const full = await db.purchaseOrder.findUniqueOrThrow({
+      where: { id: po.id },
+      include: poDetailInclude,
+    })
+    return ok(toPurchaseOrderDetailDTO(full))
   })
 }

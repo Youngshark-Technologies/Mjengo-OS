@@ -8,10 +8,20 @@ const nextConfig: NextConfig = {
   // frontend origin, so the same-origin session-cookie model is preserved and
   // no CORS is needed. Leave BACKEND_URL unset when the API runs in the same
   // process (local dev, Docker, Render itself) — this function is then a no-op.
+  // MJG-037 — beforeFiles semantics: the proxy must be a beforeFiles rewrite,
+  // not a plain array. A plain array is treated as afterFiles, which runs AFTER
+  // the filesystem check — the compiled src/app/api/** route handlers shipped in
+  // the frontend build would shadow the proxy and execute on Vercel with no
+  // DATABASE_URL (→ 500 on /api/auth/login, split architecture silently broken).
+  // beforeFiles runs before the filesystem/routes check, so the proxy wins.
   async rewrites() {
     const backend = process.env.BACKEND_URL?.replace(/\/+$/, "");
     if (!backend) return [];
-    return [{ source: "/api/:path*", destination: `${backend}/api/:path*` }];
+    return {
+      beforeFiles: [
+        { source: "/api/:path*", destination: `${backend}/api/:path*` },
+      ],
+    };
   },
   // MJG-024 — production hardening:
   // - Type errors must fail the production build (was: silently ignored).

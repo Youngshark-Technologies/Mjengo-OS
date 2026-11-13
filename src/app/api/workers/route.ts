@@ -51,7 +51,7 @@ export async function GET(req: Request) {
 // POST /api/workers — register a worker.
 export async function POST(req: Request) {
   return handle(async () => {
-    const user = await requireUser()
+    const user = await requireUser(undefined, { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, createSchema)
 
     const worker = await db.worker.create({

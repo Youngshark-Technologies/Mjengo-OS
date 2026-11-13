@@ -57,6 +57,7 @@ export async function GET(req: Request) {
       },
       include: { worker: true, site: true },
       orderBy: { createdAt: 'desc' },
+      take: 500,
     })
 
     return ok(assignments.map(toAssignmentDTO))
@@ -66,7 +67,7 @@ export async function GET(req: Request) {
 // POST /api/assignments — assign an org worker to an org site.
 export async function POST(req: Request) {
   return handle(async () => {
-    const user = await requireUser()
+    const user = await requireUser(undefined, { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, createSchema)
 
     await findOrgRecord(db.worker, body.workerId, user.organizationId, 'Worker')

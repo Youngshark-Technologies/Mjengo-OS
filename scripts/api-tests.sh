@@ -30,8 +30,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[api-tests] 1/5 fresh test database + schema"
+echo "[api-tests] 1/5 fresh test database + schema (client regenerated first, MJG-067)"
 rm -f "$TEST_DB" "$TEST_DB-journal"
+# MJG-067 — regenerate the Prisma client BEFORE db push/build. The SQLite gate
+# assumed the checked-out client already matched the schema; after any schema
+# change (e.g. MJG-036) a fresh checkout/worktree would build the standalone
+# server against a STALE client and fail tsc/boot with unknown-field errors —
+# the SQLite twin of the MJG-059 PG-gate ordering bug. Idempotent and ~1s.
+bunx prisma generate --schema prisma/schema.prisma
 bunx prisma db push --skip-generate >/dev/null
 
 echo "[api-tests] 2/5 production build (standalone)"

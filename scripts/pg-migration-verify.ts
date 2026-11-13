@@ -19,8 +19,11 @@ function run(cmd: string, args: string[], env: Record<string, string>, label: st
   console.log(`[pg-verify] $ ${cmd} ${args.join(' ')}  (${label})`)
   const res = spawnSync(cmd, args, { env: { ...process.env, ...env }, stdio: 'inherit' })
   if (res.status !== 0) {
-    console.error(`[pg-verify] FAIL at: ${label}`)
-    process.exit(1)
+    // MJG-060 — throw (do NOT process.exit here): main()'s .catch runs the
+    // teardown (server kill, PG stop, SQLite client restore). A process.exit
+    // inside main() bypasses teardown and leaks the :3113 server + :3112 PG,
+    // making every subsequent gate run fail with EADDRINUSE.
+    throw new Error(`FAIL at: ${label}`)
   }
 }
 
@@ -67,12 +70,15 @@ async function main(): Promise<void> {
       if (res.ok) { healthy = true; break }
     } catch { /* not up yet */ }
     if (server.exitCode !== null && server.exitCode !== 0) {
-      console.error('[pg-verify] server process died while booting')
-      process.exit(1)
+      // MJG-060 — throw so teardown runs (leaked servers broke later runs)
+      throw new Error('server process died while booting')
     }
     await new Promise((r) => setTimeout(r, 1000))
   }
-  if (!healthy) { console.error('[pg-verify] server never became healthy'); process.exit(1) }
+  if (!healthy) {
+    // MJG-060 — throw so teardown runs (leaked servers broke later runs)
+    throw new Error('server never became healthy')
+  }
   console.log(`[pg-verify] server healthy on ${API_BASE}/api — Postgres-backed`)
 
   // 5 — full API golden-journey suite against the migrated Postgres database

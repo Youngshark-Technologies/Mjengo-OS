@@ -16,7 +16,7 @@ const patchSchema = z.object({
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const user = await requireUser(['OWNER', 'SUPERVISOR'])
+    const user = await requireUser(['OWNER', 'SUPERVISOR'], { orgType: ['CONSTRUCTOR'] })
     const { id } = await params
     const body = await parseBody(req, patchSchema)
 
