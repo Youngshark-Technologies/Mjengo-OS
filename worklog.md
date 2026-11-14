@@ -494,3 +494,20 @@ Work Log:
 Stage Summary:
 - Registry: 66/67 DONE. OPEN: MJG-031 (USER ACTION: fresh push-scoped GitHub token; push command prepared), MJG-047 (sandbox-side purge executes at this release; token rotation = user action).
 - Release follows: main tree reset to dev (daemon-junk purge), history-bridge commits both directions, secret scan, branch audit.
+
+---
+Task ID: OPEN-ISSUES-05 (close-out)
+Agent: Staff Engineer (DevOps/Docs PE + QA gates)
+Task: Final close-out — verify released tree, resolve bun.lock drift, author Mandate §12 Engineering Execution Report, release OPEN-ISSUES-05.
+
+Work Log:
+- Session start state: main @ 1ace8d3 (Release OPEN-ISSUES-04), dev @ 0439d7f (bridge, tree-identical), only main+dev branches, registry 65 DONE / 2 OPEN (MJG-031, MJG-047 — both USER ACTION).
+- bun.lock found dirty on main worktree: gate installs had deterministically added @prisma/client + prisma to trustedDependencies (postinstall trust for prisma generate) → filed MJG-068 and committed rather than discarded.
+- Close-out gates on released tree: lint PASS, tsc PASS (exit 0), test:api SQLite 43/43 pass / 228 assertions PASS, secret scan 0 hits, junk-path scan clean (no .env / db/custom.db / download/ / tool-results/ / upload/ / server.log tracked).
+- docs/ENGINEERING_EXECUTION_REPORT.md authored per mandate §12 (11 sections: issue counts 67/65/2, per-PE breakdown, issue↔branch traceability, gate results, build status, E2E journey table, security findings, branch confirmation, risks, READY assessment, deployment+monitoring next steps); copy placed in download/ for the product owner.
+- Merge via plumbing: chore/final-closeout → dev (MJG-068 row + detail, report, worklog entry, bun.lock).
+- Release: main reset to dev tree as release commit OPEN-ISSUES-05 (daemon-junk purge per MJG-047 sandbox side), history-bridge commit on dev; parity re-verified (git diff main dev empty).
+
+Stage Summary:
+- Registry: 66/68 DONE; OPEN = MJG-031 + MJG-047, both product-owner actions (fresh push-scoped token; PAT rotation). Zero engineering blockers.
+- System is READY: publish via the prepared fast-forward push, then Vercel/Render track main (docs/DEPLOYMENT.md); smoke scripts/smoke.sh post-deploy.
