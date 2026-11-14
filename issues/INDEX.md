@@ -75,6 +75,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-065 | In-memory rate limiter unbounded memory growth (no sweep, no key cap) — sweep expired buckets on write + hard cap with shared overflow bucket | Security | fix/security-hardening | DONE |
 | MJG-066 | Gate/docs hygiene from review: api-tests-pg.sh cleanup restores SQLite client on early-failure paths; README fresh-clone mkdir db; DEPLOYMENT trusted-proxy note; registry 17-vs-16 fix | QA/Docs | fix/security-hardening | DONE |
 | MJG-067 | SQLite gate assumes a schema-current Prisma client (twin of MJG-059) — harness now regenerates the client before db push/build | QA | chore/gate-client-sync | DONE |
+| MJG-068 | Close-out: bun.lock records prisma postinstall trust (deterministic gate-install artifact) + §12 Engineering Execution Final Report | DevOps/Docs | chore/final-closeout | DONE |
 
 ---
 
@@ -411,6 +412,11 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 **Finding (RC2 gate run 2026-11-13):** twin of MJG-059 on the SQLite side — api-tests.sh ran `db push --skip-generate` + build assuming the checked-out client matched the schema; after MJG-036's schema change a fresh worktree built the standalone server against a STALE client (tsc: unknown fields, missing Shipment model).
 **Fix:** api-tests.sh step 1 runs `bunx prisma generate --schema prisma/schema.prisma` before db push/build (idempotent, ~1s) — harness is now self-sufficient on both engines.
 **Owner:** QA PE. **Accept:** fresh worktree gate passes without manual client setup. **Verify:** RC2 SQLite suite 43/43 green in a freshly-hardlinked worktree.
+
+## MJG-068 — Close-out: bun.lock trust record + §12 final report (DONE — chore/final-closeout)
+**Finding (close-out session 2026-11-14):** gate installs deterministically added `@prisma/client` + `prisma` to `bun.lock` `trustedDependencies` (bun records postinstall trust for prisma generate); leaving it dirty perpetually polluted `git status`. Mandate §12's Final Engineering Report was also due.
+**Fix:** commit the 2-line lockfile record (npm/`package-lock.json` path unaffected); author `docs/ENGINEERING_EXECUTION_REPORT.md` (issues/resolved/blocked counts, per-PE breakdown, traceability, gate results incl. 43/43 SQLite re-run + RC2 PG ×2, E2E journey table, security findings, two-branch confirmation, risks, readiness, next steps); copy to `download/` for the product owner.
+**Owner:** DevOps/Docs PE. **Accept:** clean tree status; report matches registry/worklog numbers (65 DONE / 2 user-action OPEN of 67 + this row). **Verify:** gates + release scan.
 
 ## OPEN-ISSUES-03 — audit provenance
 Ten parallel read-only audits (2026-11-12): CTA wiring, FE/BE integration, security/authz, DB/migrations, deploy configs, API surface, partner model, QA infra, docs accuracy, repo hygiene + frontend UX + prod ops. Consolidated: 0 P0, 13 P1, 8 P2, several P3 → filed as MJG-037..058 above. Prior-session claims re-verified: partner model (MJG-030/035) correctly implemented, FSMs correct, delivery-verify idempotent, payments OWNER-only, migrations replayable, schema parity clean, dev tree clean of secrets/junk (main tip polluted by daemon only).

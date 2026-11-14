@@ -84,6 +84,8 @@
     },
   },
   "trustedDependencies": [
+    "@prisma/client",
+    "prisma",
     "@embedded-postgres/linux-x64",
   ],
   "packages": {
