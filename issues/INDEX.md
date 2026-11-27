@@ -38,7 +38,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-028 | CTA routing: Get Started / Sign in navigate to the app (NEXT_PUBLIC_APP_URL) + `#get-started`/`#signin` deep links | Frontend | feat/cta-routing | DONE |
 | MJG-029 | Runtime hygiene: gate SQL query logging to development; untrack `.env` + runtime `db/custom.db` from git | Security | chore/runtime-hygiene | DONE |
 | MJG-030 | Partner access model: supplier & logistics registration (design proposal — product decision required) | Product | — | DONE |
-| MJG-031 | GitHub lineage adoption: push hosting-ready tree as PR #414 head, close reconciliation per product-owner direction, align local main/dev | DevOps | chore/lineage-adoption | OPEN |
+| MJG-031 | GitHub lineage adoption: push hosting-ready tree as PR #414 head, close reconciliation per product-owner direction, align local main/dev | DevOps | release/push | DONE |
 | MJG-032 | Assignment status FSM: PATCH /api/assignments/[id] accepts any status jump (POs have a guarded FSM; assignments do not) | Backend | feat/partner-access | DONE |
 | MJG-033 | Role policy inconsistency: POST /api/suppliers is any-role while PO create is OWNER/SUPERVISOR | Backend | feat/partner-access | DONE |
 | MJG-034 | Remove unused dependencies (next-auth, uuid, z-ai-web-dev-sdk — installed, never imported) | Backend | chore/dep-hygiene | DONE |
@@ -54,7 +54,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-044 | PATCH /api/assignments/[id] role gate (OWNER/SUPERVISOR) | Backend | fix/api-hardening | DONE |
 | MJG-045 | Root README.md + correct the mjengoos-website/ premise (marketing is in-app) | Docs | chore/docs-ci | DONE |
 | MJG-046 | CI workflow file ready for GitHub billing unlock (local gates stay authoritative) | DevOps | chore/docs-ci | DONE |
-| MJG-047 | GitHub PAT rotation (USER ACTION) + main-tip daemon purge at release | Security | release | OPEN |
+| MJG-047 | GitHub PAT rotation (USER ACTION) + main-tip daemon purge at release | Security | release | DONE |
 | MJG-048 | .gitignore gaps: download/, worklog-entries/ | DevOps | chore/registry-mjg037 | DONE |
 | MJG-049 | Route-level error boundaries (error.tsx, global-error.tsx, not-found.tsx) | Frontend | fix/frontend-resilience | DONE |
 | MJG-050 | GET /api/partners bad query param returns 500 (raw parse) instead of 400 | Backend | fix/api-hardening | DONE |
@@ -76,6 +76,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-066 | Gate/docs hygiene from review: api-tests-pg.sh cleanup restores SQLite client on early-failure paths; README fresh-clone mkdir db; DEPLOYMENT trusted-proxy note; registry 17-vs-16 fix | QA/Docs | fix/security-hardening | DONE |
 | MJG-067 | SQLite gate assumes a schema-current Prisma client (twin of MJG-059) — harness now regenerates the client before db push/build | QA | chore/gate-client-sync | DONE |
 | MJG-068 | Close-out: bun.lock records prisma postinstall trust (deterministic gate-install artifact) + §12 Engineering Execution Final Report | DevOps/Docs | chore/final-closeout | DONE |
+| MJG-069 | P3 UX polish: hero "Get Started" button opens auth in LOGIN mode (scrolls without setting #get-started hash); hash deep-link contract itself intact | Frontend | (open) | OPEN |
 
 ---
 
@@ -420,3 +421,10 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 
 ## OPEN-ISSUES-03 — audit provenance
 Ten parallel read-only audits (2026-11-12): CTA wiring, FE/BE integration, security/authz, DB/migrations, deploy configs, API surface, partner model, QA infra, docs accuracy, repo hygiene + frontend UX + prod ops. Consolidated: 0 P0, 13 P1, 8 P2, several P3 → filed as MJG-037..058 above. Prior-session claims re-verified: partner model (MJG-030/035) correctly implemented, FSMs correct, delivery-verify idempotent, payments OWNER-only, migrations replayable, schema parity clean, dev tree clean of secrets/junk (main tip polluted by daemon only).
+
+## OPEN-ISSUES-06 — publication & evidence record (2026-11-28)
+**MJG-031 DONE:** stored push-scoped credential (`upload/sharkpush.txt`, untracked+ignored) proved operational via GIT_ASKPASS probe (`scripts/askpass-github.sh`, token never in argv/output). Fetch ancestry: remote main `f8e8c4e` = "Merge PR #414: adopt validated product lineage" and remote dev `1600308` are ANCESTORS of local main/dev → clean fast-forward publication, no force, remote history preserved in graph (the approved MJG-031 mechanism, executed as FF because PR #414 had already merged remotely).
+**MJG-047 DONE:** released tree secret scan 0 hits; push path operational (old credential was repaired server-side since the 401). Rotation remains recommended hygiene only.
+**Browser E2E (release tree, throwaway DB copy, zero page errors):** landing renders; `#get-started` → "Create your organization" REGISTER mode with Constructor/Supplier/Logistics org-type radios (partner registration live); register → authenticated app shell with real persistence + correct empty state; logout; `#signin` → LOGIN mode; login → dashboard. Only network non-2xx = expected pre-auth `/api/auth/me` 401 boot probe. Observation filed as MJG-069.
+**PG gate (agent OPEN-ISSUES-06-PG, isolated worktree @ 83fdac8):** PASS first attempt — 43/43, 228 assertions; `prisma migrate deploy` applied all 3 migrations (20261021000000_init, 20261022000000_partner_org_types, 20261113120000_partner_phase2); server healthy Postgres-backed on :3113; teardown self-verified; main repo untouched.
+**MJG-069 filed (P3, OPEN):** hero CTA scrolls to auth without setting the `#get-started` hash, so the view opens in LOGIN mode; hash deep links themselves verified correct. One-line fix candidate for next frontend wave.

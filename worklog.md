@@ -511,3 +511,20 @@ Work Log:
 Stage Summary:
 - Registry: 66/68 DONE; OPEN = MJG-031 + MJG-047, both product-owner actions (fresh push-scoped token; PAT rotation). Zero engineering blockers.
 - System is READY: publish via the prepared fast-forward push, then Vercel/Render track main (docs/DEPLOYMENT.md); smoke scripts/smoke.sh post-deploy.
+
+---
+Task ID: OPEN-ISSUES-06 (publication + evidence wave)
+Agent: Staff Engineer (DevOps-Release PE, QA-Browser PE; QA agent OPEN-ISSUES-06-PG)
+Task: Unblock GitHub publication (MJG-031/047), fresh browser-E2E + PG-gate evidence on the released tree, publish main+dev, remote branch hygiene.
+
+Work Log:
+- Credential probe: upload/sharkpush.txt (untracked+ignored) proved OPERATIONAL via GIT_ASKPASS helper scripts/askpass-github.sh (token read at prompt time; never in argv/URLs/output). Earlier 401 record is stale — credential was repaired server-side.
+- Fetch + ancestry: remote main f8e8c4e ("Merge PR #414: adopt validated product lineage") and remote dev 1600308 are ANCESTORS of local main 83fdac8 / dev 716d788 → fast-forward publication possible; no force, remote history preserved in graph (MJG-031's approved mechanism, simplified because PR #414 had already merged remotely).
+- Browser E2E on release tree (throwaway DB copy file:/tmp/mjengo-e2e.db, server :3100, agent-browser): landing renders (hero/pillars/CTAs); #get-started → "Create your organization" REGISTER mode with Constructor/Supplier/Logistics radios (partner registration live in UI); registered E2E org → authenticated shell, real persistence, correct empty state; zero page errors; only non-2xx = expected pre-auth /api/auth/me 401; logout; #signin → LOGIN mode; login → dashboard. Observation: hero Get Started button scrolls to auth without setting the hash → LOGIN mode (deep-link contract intact) → filed MJG-069 P3 OPEN (UX polish candidate).
+- PG gate via isolated agent (worktree @ 83fdac8, /tmp only): PASS first attempt — 43/43 pass, 228 assertions; prisma migrate deploy applied all 3 migrations (init, partner_org_types, partner_phase2); Postgres-backed server healthy on :3113; teardown self-verified (SQLite client restored, data dir removed); worktree removed; ports 3112/3113 confirmed free (ss). Zero error/warn lines in 253-line log.
+- Registry: MJG-031 → DONE, MJG-047 → DONE (rotation now hygiene-only), MJG-069 filed OPEN (P3); OPEN-ISSUES-06 publication record appended. Report §1/§9/§10/§11 updated (69 total / 68 DONE / 1 P3 open / 0 blockers).
+- Merge via plumbing: chore/publication-06 → dev (registry, report, worklog, askpass helper). Release OPEN-ISSUES-06 to main; FF push main+dev; remote non-permanent branch cleanup; parity verified.
+
+Stage Summary:
+- GitHub publication EXECUTED (MJG-031/047 DONE). Registry: 68 DONE / 1 OPEN (MJG-069 P3). All mandate gates re-proven on the published lineage: lint, tsc, SQLite 43/43, PG 43/43 (migrations replayed), browser E2E golden paths, secret scan 0 hits.
+- Next: Vercel/Render project setup tracks main (docs/DEPLOYMENT.md env pairing), post-deploy smoke, MJG-069 one-line fix in next frontend wave.
