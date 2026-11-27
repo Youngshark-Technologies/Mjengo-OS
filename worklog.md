@@ -543,3 +543,18 @@ Work Log:
 
 Stage Summary:
 - Publication proceeded on scrubbed lineage. Registry 69/70 DONE; OPEN = MJG-069 (P3 UX polish) only.
+
+---
+Task ID: OPEN-ISSUES-06 (addendum 2 — registry recovery + publication close)
+Agent: Staff Engineer
+Task: Re-apply MJG-070 registry content lost to a sandbox-daemon revert; record final publication state.
+
+Work Log:
+- Diagnosis: commit f8c306b (chore/scrub-record) captured the worklog addendum + scripts/scrub-history.sh but a STALE issues/INDEX.md — the daemon reverted the file between edit and plumbing staging (known sandbox behavior, cf. MJG-047). MJG-070 row/detail absent from the published dev/main trees; release/PR metadata itself already documents MJG-070 (commit b2d4388 message + PR #415 title/body).
+- Re-applied: MJG-070 row + detail section (incl. PR #415 / add6d05 publication status + recovery note); MJG-031 branch col → release/pull-415; tracked scripts/github-publish-pr.ts (PR open+merge API helper; token read from GH_TOKEN env only, never printed).
+- Committed via plumbing and VERIFIED IN THE COMMITTED TREE (git show dev:issues/INDEX.md | grep -c MJG-070 > 0) before pushing — lesson from the daemon race.
+- Final remote state: exactly main (add6d05, PR #415 merge) + dev (this commit); head/temp branches deleted both sides; refs/original deleted after verification; local main aligned to origin/main; dev ⊇ main via bridge 116f150 → this commit's parent chain.
+
+Stage Summary:
+- Publication CLOSED. Remote: validated lineage on main via PR #415; two permanent branches only; zero secrets in published history (push-protection enforced, twice verified).
+- Open work: MJG-069 (P3 UX polish) only. Vercel/Render project setup tracks main (docs/DEPLOYMENT.md).

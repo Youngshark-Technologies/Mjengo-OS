@@ -38,7 +38,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-028 | CTA routing: Get Started / Sign in navigate to the app (NEXT_PUBLIC_APP_URL) + `#get-started`/`#signin` deep links | Frontend | feat/cta-routing | DONE |
 | MJG-029 | Runtime hygiene: gate SQL query logging to development; untrack `.env` + runtime `db/custom.db` from git | Security | chore/runtime-hygiene | DONE |
 | MJG-030 | Partner access model: supplier & logistics registration (design proposal — product decision required) | Product | — | DONE |
-| MJG-031 | GitHub lineage adoption: push hosting-ready tree as PR #414 head, close reconciliation per product-owner direction, align local main/dev | DevOps | release/push | DONE |
+| MJG-031 | GitHub lineage adoption: push hosting-ready tree as PR #414 head, close reconciliation per product-owner direction, align local main/dev | DevOps | release/pull-415 | DONE |
 | MJG-032 | Assignment status FSM: PATCH /api/assignments/[id] accepts any status jump (POs have a guarded FSM; assignments do not) | Backend | feat/partner-access | DONE |
 | MJG-033 | Role policy inconsistency: POST /api/suppliers is any-role while PO create is OWNER/SUPERVISOR | Backend | feat/partner-access | DONE |
 | MJG-034 | Remove unused dependencies (next-auth, uuid, z-ai-web-dev-sdk — installed, never imported) | Backend | chore/dep-hygiene | DONE |
@@ -77,6 +77,7 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-067 | SQLite gate assumes a schema-current Prisma client (twin of MJG-059) — harness now regenerates the client before db push/build | QA | chore/gate-client-sync | DONE |
 | MJG-068 | Close-out: bun.lock records prisma postinstall trust (deterministic gate-install artifact) + §12 Engineering Execution Final Report | DevOps/Docs | chore/final-closeout | DONE |
 | MJG-069 | P3 UX polish: hero "Get Started" button opens auth in LOGIN mode (scrolls without setting #get-started hash); hash deep-link contract itself intact | Frontend | (open) | OPEN |
+| MJG-070 | History-level secret purge: daemon-era PATs (upload/sharkpush.txt, upload/ferrix.txt) reachable in UNPUSHED history commits (21beec1 et al.); GitHub push protection correctly blocked publication → targeted filter-branch scrub of unpushed ranges (tips' trees byte-identical, FF ancestry preserved, 0 junk objects) | Security | release/scrub | DONE |
 
 ---
 
@@ -428,3 +429,10 @@ Ten parallel read-only audits (2026-11-12): CTA wiring, FE/BE integration, secur
 **Browser E2E (release tree, throwaway DB copy, zero page errors):** landing renders; `#get-started` → "Create your organization" REGISTER mode with Constructor/Supplier/Logistics org-type radios (partner registration live); register → authenticated app shell with real persistence + correct empty state; logout; `#signin` → LOGIN mode; login → dashboard. Only network non-2xx = expected pre-auth `/api/auth/me` 401 boot probe. Observation filed as MJG-069.
 **PG gate (agent OPEN-ISSUES-06-PG, isolated worktree @ 83fdac8):** PASS first attempt — 43/43, 228 assertions; `prisma migrate deploy` applied all 3 migrations (20261021000000_init, 20261022000000_partner_org_types, 20261113120000_partner_phase2); server healthy Postgres-backed on :3113; teardown self-verified; main repo untouched.
 **MJG-069 filed (P3, OPEN):** hero CTA scrolls to auth without setting the `#get-started` hash, so the view opens in LOGIN mode; hash deep links themselves verified correct. One-line fix candidate for next frontend wave.
+
+## MJG-070 — history-level secret purge at publication (DONE — release/scrub)
+**Finding (2026-11-28, first push attempt):** GitHub PUSH PROTECTION rejected the FF publication of main+dev — two GitHub PATs (`upload/sharkpush.txt`, `upload/ferrix.txt`) are reachable as blobs in daemon-era history commits (flagged at commit 21beec1) inside the UNPUSHED ranges. The MJG-047 release purge was TREE-level only (tips clean); intermediate commits still carried the junk. Tokens were NEVER published (remote heads predate those commits; ancestry verified). Unblock URLs were NOT used — live credentials must never be whitelisted.
+**Fix:** targeted history rewrite limited to the unpushed ranges (`git filter-branch --index-filter` removing `.env`, `db/custom.db`, `upload/`, `download/`, `tool-results/`, `worklog-entries/`, `server.log` across `origin/main..main` + `origin/dev..dev`; a first full-history attempt was discarded from refs/original BEFORE any push — published SHAs untouched). Scrub script tracked at `scripts/scrub-history.sh`.
+**Verify:** junk objects in unpushed ranges = 0 (was 96 paths); tip trees byte-identical to pre-rewrite (diff empty); `origin/main`/`origin/dev` still ancestors (fast-forward preserved); dev/main parity empty; secret scan on tips already 0 hits; remote push-protection passes on the scrubbed lineage.
+**Owner:** Security PE. **Accept:** publication passes push protection without whitelisting any secret. **Status:** publication executed via **PR #415** (merge commit `add6d05`) — remote main is PR-protected (GH006), the approved PR path was used; head branch + remote temp branches deleted; remote = exactly `main` + `dev`.
+**Note (registry recovery):** this row + record were re-applied after a sandbox-daemon revert of `issues/INDEX.md` between edit and commit — commit f8c306b had captured the worklog addendum + scrub script but a stale INDEX; content verified in the committed tree this time (evidence discipline).
