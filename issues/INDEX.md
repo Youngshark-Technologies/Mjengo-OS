@@ -76,10 +76,10 @@ Single source of truth for task status, ownership, and evidence. Workflow per is
 | MJG-066 | Gate/docs hygiene from review: api-tests-pg.sh cleanup restores SQLite client on early-failure paths; README fresh-clone mkdir db; DEPLOYMENT trusted-proxy note; registry 17-vs-16 fix | QA/Docs | fix/security-hardening | DONE |
 | MJG-067 | SQLite gate assumes a schema-current Prisma client (twin of MJG-059) — harness now regenerates the client before db push/build | QA | chore/gate-client-sync | DONE |
 | MJG-068 | Close-out: bun.lock records prisma postinstall trust (deterministic gate-install artifact) + §12 Engineering Execution Final Report | DevOps/Docs | chore/final-closeout | DONE |
-| MJG-069 | P3 UX polish: hero "Get Started" button opens auth in LOGIN mode (scrolls without setting #get-started hash); hash deep-link contract itself intact | Frontend | (open) | OPEN |
+| MJG-069 | P3 UX polish: hero "Get Started" button opens auth in LOGIN mode (scrolls without setting #get-started hash); hash deep-link contract itself intact | Frontend | fix/cta-intent | DONE |
 | MJG-070 | History-level secret purge: daemon-era PATs (upload/sharkpush.txt, upload/ferrix.txt) reachable in UNPUSHED history commits (21beec1 et al.); GitHub push protection correctly blocked publication → targeted filter-branch scrub of unpushed ranges (tips' trees byte-identical, FF ancestry preserved, 0 junk objects) | Security | release/scrub | DONE |
-| MJG-071 | Release SOP: remote main is PR-protected (GH006 observed) — docs updated; releases flow dev → release/* head branch → PR merge via generalized scripts/github-publish-pr.ts (env-token, CLI args) | DevOps/Docs | chore/release-sop | OPEN |
-| MJG-072 | Frontend pagination for the bounded list endpoints (MJG-053 take:500 deferral): backward-compatible page/pageSize + X-Total-Count on payments, deliveries, evidence, assignments, inventory movements, purchase orders; pager UI in views; suite cases | Backend/Frontend/QA | feat/list-pagination | OPEN |
+| MJG-071 | Release SOP: remote main is PR-protected (GH006 observed) — docs updated; releases flow dev → release/* head branch → PR merge via generalized scripts/github-publish-pr.ts (env-token, CLI args) | DevOps/Docs | chore/release-sop | DONE |
+| MJG-072 | Frontend pagination for the bounded list endpoints (MJG-053 take:500 deferral): backward-compatible page/pageSize + X-Total-Count on payments, deliveries, evidence, assignments, inventory movements, purchase orders; pager UI in views; suite cases | Backend/Frontend/QA | feat/list-pagination | DONE |
 
 ---
 
@@ -439,12 +439,12 @@ Ten parallel read-only audits (2026-11-12): CTA wiring, FE/BE integration, secur
 **Owner:** Security PE. **Accept:** publication passes push protection without whitelisting any secret. **Status:** publication executed via **PR #415** (merge commit `add6d05`) — remote main is PR-protected (GH006), the approved PR path was used; head branch + remote temp branches deleted; remote = exactly `main` + `dev`.
 **Note (registry recovery):** this row + record were re-applied after a sandbox-daemon revert of `issues/INDEX.md` between edit and commit — commit f8c306b had captured the worklog addendum + scrub script but a stale INDEX; content verified in the committed tree this time (evidence discipline).
 
-## MJG-071 — release SOP under PR-protected main (OPEN — chore/release-sop)
+## MJG-071 — release SOP under PR-protected main (DONE — chore/release-sop)
 **Basis (observed 2026-11-28):** remote `main` rejects direct pushes (GH006 "Changes must be made through a pull request") — the §10 policy is enforced server-side. The documented direct-push release commands are now invalid.
 **Fix:** DEPLOYMENT.md gains a "Release SOP (main is PR-protected)" subsection; README/report push commands corrected; `scripts/github-publish-pr.ts` generalized (CLI: head, base, title, bodyFile; GH_TOKEN env) so every future release is: push `dev` → push `release/*` head → open+merge PR via the script → align local main to origin/main → bridge dev.
 **Owner:** DevOps/Docs PE. **Accept:** no remaining doc instructs pushing directly to main; SOP matches the script's actual CLI. **Verify:** doc-vs-code cross-check.
 
-## MJG-072 — frontend pagination for bounded lists (OPEN — feat/list-pagination)
+## MJG-072 — frontend pagination for bounded lists (DONE — feat/list-pagination)
 **Basis:** MJG-053 capped six list endpoints at `take: 500` and explicitly deferred frontend pagination ("lists stay UI-compatible at realistic sizes; ceiling documented"). Product direction now: deliver the deferred capability.
 **Scope:** list GETs (payments, deliveries, evidence, assignments, inventory/movements, purchase-orders) accept optional zod-validated `page` (>=1) + `pageSize` (1..100, default 25); NO params means byte-compatible current behavior; response stays an array; org-filtered total exposed via `X-Total-Count` header. `src/lib/api-client.ts` gains a paginated helper (missing header means unknown total so hide count); six views gain a minimal Prev/Next + count pager per existing UI patterns, no new deps. Suite: no-param compatibility, page math, header count, 400s on garbage, cross-tenant exclusion.
 **Owner:** Backend+Frontend PE, QA gates. **Accept:** all prior suite cases green unchanged + new pagination cases green; lint/tsc clean. **Verify:** full SQLite suite + browser sanity pass.
