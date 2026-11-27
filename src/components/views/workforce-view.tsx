@@ -172,6 +172,50 @@ function EmptyState({
   )
 }
 
+// MJG-072 — server pagination page size (kicks in on the first Next click).
+const LIST_PAGE_SIZE = 25
+
+// MJG-072 — minimal pager below the assignments list. Prev/Next bounds are
+// disabled at the edges; while the fetch is param-less the total is unknown,
+// so the label falls back to the loaded record count and only Next is enabled.
+function ListPager({
+  page,
+  paged,
+  total,
+  itemCount,
+  onPrev,
+  onNext,
+}: {
+  page: number
+  paged: boolean
+  total: number | null
+  itemCount: number
+  onPrev: () => void
+  onNext: () => void
+}) {
+  const totalPages = total !== null ? Math.max(1, Math.ceil(total / LIST_PAGE_SIZE)) : null
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-xs text-stone-500" aria-live="polite">
+        {paged && totalPages !== null ? `Page ${page} of ${totalPages}` : `${itemCount} records`}
+      </p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" disabled={!paged || page <= 1} onClick={onPrev}>
+          Previous
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={paged && totalPages !== null ? page >= totalPages : false}
+          onClick={onNext}
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 export function WorkforceView() {
   const [tab, setTab] = useState('workers')
 
@@ -454,6 +498,10 @@ function AssignmentsTab() {
   const [workerId, setWorkerId] = useState('')
   const [assignSiteId, setAssignSiteId] = useState('')
   const [startDate, setStartDate] = useState('')
+  // MJG-072 — the first fetch stays param-less (legacy behavior). Pagination
+  // only starts once the user clicks Next; a filter change resets to page 1.
+  const [page, setPage] = useState(1)
+  const [paged, setPaged] = useState(false)
 
   const sitesQuery = useQuery({
     queryKey: ['sites'],
@@ -464,14 +512,32 @@ function AssignmentsTab() {
     queryFn: () => api.get<WorkerDTO[]>('/api/workers'),
   })
   const assignmentsQuery = useQuery({
-    queryKey: ['assignments'],
-    queryFn: () => api.get<AssignmentDTO[]>('/api/assignments'),
+    queryKey: ['assignments', siteFilter, page, paged],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (siteFilter !== 'ALL') params.set('siteId', siteFilter)
+      if (paged) {
+        params.set('page', String(page))
+        params.set('pageSize', String(LIST_PAGE_SIZE))
+      }
+      const qs = params.toString()
+      return api.list<AssignmentDTO>(`/api/assignments${qs ? `?${qs}` : ''}`)
+    },
   })
 
+  // While paged the server already filtered by siteId; otherwise the legacy
+  // client-side filter applies.
   const filtered = useMemo(() => {
-    const list = assignmentsQuery.data ?? []
-    return siteFilter === 'ALL' ? list : list.filter((a) => a.siteId === siteFilter)
-  }, [assignmentsQuery.data, siteFilter])
+    const items = assignmentsQuery.data?.items ?? []
+    return paged ? items : siteFilter === 'ALL' ? items : items.filter((a) => a.siteId === siteFilter)
+  }, [assignmentsQuery.data, paged, siteFilter])
+  const assignmentsTotal = assignmentsQuery.data?.total ?? null
+
+  const changeSiteFilter = (v: string) => {
+    setSiteFilter(v)
+    setPage(1)
+    setPaged(false)
+  }
 
   const setStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: AssignmentStatus }) =>
@@ -522,7 +588,7 @@ function AssignmentsTab() {
           <Label htmlFor="assignment-site-filter" className="sr-only">
             Filter by site
           </Label>
-          <Select value={siteFilter} onValueChange={setSiteFilter}>
+          <Select value={siteFilter} onValueChange={changeSiteFilter}>
             <SelectTrigger id="assignment-site-filter" className="h-11 w-full sm:w-60">
               <SelectValue placeholder="Filter by site" />
             </SelectTrigger>
@@ -673,6 +739,20 @@ function AssignmentsTab() {
           </div>
         </>
       )}
+
+      {/* MJG-072 — pager: param-less until the first Next click, then
+          Page X of Y from the org-filtered X-Total-Count header. */}
+      <ListPager
+        page={page}
+        paged={paged}
+        total={assignmentsTotal}
+        itemCount={filtered.length}
+        onPrev={() => setPage((p) => Math.max(1, p - 1))}
+        onNext={() => {
+          setPage((p) => p + 1)
+          setPaged(true)
+        }}
+      />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-md">

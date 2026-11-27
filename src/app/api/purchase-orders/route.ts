@@ -1,3 +1,4 @@
+import { NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { db } from '@/lib/db'
@@ -54,6 +55,9 @@ function toPurchaseOrderDTO(po: PurchaseOrderWithRelations): PurchaseOrderDTO {
 const listQuerySchema = z.object({
   siteId: z.string().min(1).optional(),
   status: z.enum(PO_STATUS_VALUES).optional(),
+  // MJG-072 — optional page/pageSize pagination (see GET below).
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
 })
 
 const poItemSchema = z.object({
@@ -71,23 +75,41 @@ const createPOSchema = z.object({
 })
 
 // ─── GET /api/purchase-orders — list POs, optional siteId/status filters ──────
-
+// MJG-072: with page, returns that PO-row slice (items stay nested per row)
+// plus an org-filtered X-Total-Count header; without page params the legacy
+// behavior (array, take: 500, no header) is unchanged. id tiebreaker keeps
+// slices deterministic on ties.
 export async function GET(req: Request) {
   return handle(async () => {
     const user = await requireUser()
     const query = await parseQuery(req, listQuerySchema)
 
-    const purchaseOrders = await db.purchaseOrder.findMany({
-      where: {
-        organizationId: user.organizationId,
-        ...(query.siteId ? { siteId: query.siteId } : {}),
-        ...(query.status ? { status: query.status } : {}),
-      },
-      include: poInclude,
-      orderBy: { createdAt: 'desc' },
-      take: 500,
-    })
-    return ok(purchaseOrders.map(toPurchaseOrderDTO))
+    const where: Prisma.PurchaseOrderWhereInput = {
+      organizationId: user.organizationId,
+      ...(query.siteId ? { siteId: query.siteId } : {}),
+      ...(query.status ? { status: query.status } : {}),
+    }
+    // pageSize only applies when page is present; no params → legacy take: 500.
+    const paged = query.page !== undefined
+    const take = paged ? (query.pageSize ?? 25) : 500
+
+    const [purchaseOrders, total] = await Promise.all([
+      db.purchaseOrder.findMany({
+        where,
+        include: poInclude,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: paged ? (query.page! - 1) * take : undefined,
+        take,
+      }),
+      paged ? db.purchaseOrder.count({ where }) : Promise.resolve(0),
+    ])
+
+    const rows = purchaseOrders.map(toPurchaseOrderDTO)
+    if (!paged) return ok(rows)
+    return NextResponse.json(
+      { data: rows },
+      { headers: { 'X-Total-Count': String(total) } },
+    )
   })
 }
 

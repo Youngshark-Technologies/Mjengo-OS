@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { NextResponse } from 'next/server'
 import type { StockMovement } from '@prisma/client'
 import { db } from '@/lib/db'
 import { ok, handle, parseBody, parseQuery, requireUser, ApiError } from '@/lib/api-helpers'
@@ -25,6 +26,10 @@ function toMovementDTO(movement: MovementWithRefs): StockMovementDTO {
 const querySchema = z.object({
   siteId: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
+  // MJG-072 — optional page/pageSize pagination (see GET below). pageSize
+  // only applies when page is present; page overrides the legacy `limit`.
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
 })
 
 const createSchema = z
@@ -44,23 +49,40 @@ const createSchema = z
     path: ['quantity'],
   })
 
-// GET /api/inventory/movements?siteId=&limit=50 — movement ledger, newest first.
+// GET /api/inventory/movements?siteId=&limit=50[&page=&pageSize=] — ledger, newest first.
+// MJG-072: with page, returns that slice (pageSize, default 25 — `limit` is
+// not applied) plus an org-filtered X-Total-Count header; without page params
+// the legacy behavior (array, take: limit) is unchanged. id tiebreaker keeps
+// slices deterministic on ties.
 export async function GET(req: Request) {
   return handle(async () => {
     const user = await requireUser()
-    const { siteId, limit } = parseQuery(req, querySchema)
+    const { siteId, limit, page, pageSize } = parseQuery(req, querySchema)
 
-    const movements = await db.stockMovement.findMany({
-      where: { organizationId: user.organizationId, ...(siteId ? { siteId } : {}) },
-      include: {
-        site: { select: { name: true } },
-        material: { select: { name: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    })
+    const where = { organizationId: user.organizationId, ...(siteId ? { siteId } : {}) }
+    const paged = page !== undefined
+    const take = paged ? (pageSize ?? 25) : limit
 
-    return ok(movements.map(toMovementDTO))
+    const [movements, total] = await Promise.all([
+      db.stockMovement.findMany({
+        where,
+        include: {
+          site: { select: { name: true } },
+          material: { select: { name: true } },
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: paged ? (page - 1) * take : undefined,
+        take,
+      }),
+      paged ? db.stockMovement.count({ where }) : Promise.resolve(0),
+    ])
+
+    const rows = movements.map(toMovementDTO)
+    if (!paged) return ok(rows)
+    return NextResponse.json(
+      { data: rows },
+      { headers: { 'X-Total-Count': String(total) } },
+    )
   })
 }
 
