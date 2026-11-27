@@ -560,5 +560,5 @@ Work Log:
 - Merges: fix/cta-intent, chore/release-sop, feat/list-pagination, chore/wave-7-registry (all plumbing into dev, HEAD-flip immune; committed trees verified per merge).
 
 Stage Summary:
-- Registry: 72 rows, 71 DONE, 0 engineering OPEN (CI enablement stays external/dormant; Vercel/Render connection + PAT rotation = user actions).
+- Registry: 72 rows, 72 DONE, 0 OPEN (CI enablement external/dormant; Vercel/Render connection + PAT rotation = user actions) (CI enablement stays external/dormant; Vercel/Render connection + PAT rotation = user actions).
 - Next: release via the NEW SOP (dev push → release/open-issues-07 head → PR merge via scripts/github-publish-pr.ts → align main → bridge dev).
