@@ -182,6 +182,8 @@ Database migrations are **versioned Postgres SQL** in `prisma/migrations/`
    - Do **not** set `DATABASE_URL` on Vercel — the frontend holds no database.
 5. Deploy. Every push to `main` produces a production deployment; the Vercel
    git integration is the redeploy mechanism (no manual redeploy needed).
+   Pushes to `main` happen only via release PR merges (see the Release SOP
+   below) — direct pushes are rejected by the remote.
 
 > **IMPORTANT — BUILD-TIME environment variables on Vercel (MJG-040 — read before
 > configuring):** `NEXT_PUBLIC_APP_URL` and `BACKEND_URL` must be present at
@@ -206,10 +208,52 @@ Database migrations are **versioned Postgres SQL** in `prisma/migrations/`
 
 - `main` = production branch (Render `branch: main`, Vercel production branch
   `main`). `dev` = local integration branch; work reaches `main` only through
-  the governed release (issue → temp branch → gates → merge to dev → release).
+  the governed release (issue → temp branch → gates → merge to dev → release
+  PR — see the Release SOP below; `main` is PR-protected).
 - Rollback: Render Dashboard → deploys → **Rollback** (redeploys a prior
   build; migrations are forward-only — coordinate schema rollbacks with the
   Database team). Vercel → Deployments → **Instant Rollback**.
+
+### Release SOP (main is PR-protected) (MJG-071)
+
+The remote `main` branch is **PR-protected**: direct pushes are rejected with
+`GH006` ("Changes must be made through a pull request"). Older instructions
+that published a release with `git push https://<token>@github.com/... main`
+are **dead** — do not use them and do not re-add them. A release is:
+
+1. Engineering lands on `dev` via short-lived temp branches (plumbing
+   merges); local QA gates are green on `dev`.
+2. Push the integration branch: `git push origin dev`.
+3. Create and push a release head branch at the release commit:
+   `git branch release/<name>` + `git push origin release/<name>`.
+4. Open the PR into `main` and merge it via the API with the generalized
+   helper `scripts/github-publish-pr.ts` (one step: opens the PR — reusing
+   an already-open PR for the same head/base — then merges it as a merge
+   commit; prints PR number, URL and merge SHA):
+
+   ```bash
+   GH_TOKEN=<token> bun scripts/github-publish-pr.ts <head> <base> <title> <bodyFile>
+   ```
+
+   - `<head>` — the release branch already pushed to the remote (e.g.
+     `release/<name>`); `<base>` — target branch, normally `main`;
+     `<title>` — PR title (quote it); `<bodyFile>` — path to a markdown
+     file with the PR body.
+   - `GH_TOKEN` is read from the environment and never printed. Token
+     hygiene (MJG-047): pass the PAT only via `GH_TOKEN`; rotation remains
+     recommended hygiene.
+5. Align and bridge:
+   - Align local `main` to the remote: `git fetch origin && git checkout main
+     && git merge --ff-only origin/main` (fast-forwards to the PR merge
+     commit).
+   - Bridge `dev`: merge `origin/main` into `dev` as a merge commit whose
+     tree is identical to `origin/main`'s and whose parents are
+     `origin/main` and the previous `dev` tip, then push it —
+     `git checkout dev && git merge --no-ff origin/main -m "Bridge dev after release <name>" && git push origin dev`.
+     Both pushes in this step are fast-forwards.
+
+After the PR merge, production deploys (Render/Vercel) fire from `main` as
+usual.
 
 ### Environment variable matrix
 
