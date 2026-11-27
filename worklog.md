@@ -545,16 +545,20 @@ Stage Summary:
 - Publication proceeded on scrubbed lineage. Registry 69/70 DONE; OPEN = MJG-069 (P3 UX polish) only.
 
 ---
-Task ID: OPEN-ISSUES-06 (addendum 2 — registry recovery + publication close)
-Agent: Staff Engineer
-Task: Re-apply MJG-070 registry content lost to a sandbox-daemon revert; record final publication state.
+Task ID: OPEN-ISSUES-07 (features wave — full chat review)
+Agent: Staff Engineer + 3 parallel agents (Frontend-CTA, DevOps/Docs-SOP, Full-stack-Pagination)
+Task: Review the complete MjengoOS chat lineage, enumerate every feature ever discussed (docs/FEATURE_INVENTORY.md), and implement all pending engineering items: MJG-069, MJG-071, MJG-072.
 
 Work Log:
-- Diagnosis: commit f8c306b (chore/scrub-record) captured the worklog addendum + scripts/scrub-history.sh but a STALE issues/INDEX.md — the daemon reverted the file between edit and plumbing staging (known sandbox behavior, cf. MJG-047). MJG-070 row/detail absent from the published dev/main trees; release/PR metadata itself already documents MJG-070 (commit b2d4388 message + PR #415 title/body).
-- Re-applied: MJG-070 row + detail section (incl. PR #415 / add6d05 publication status + recovery note); MJG-031 branch col → release/pull-415; tracked scripts/github-publish-pr.ts (PR open+merge API helper; token read from GH_TOKEN env only, never printed).
-- Committed via plumbing and VERIFIED IN THE COMMITTED TREE (git show dev:issues/INDEX.md | grep -c MJG-070 > 0) before pushing — lesson from the daemon race.
-- Final remote state: exactly main (add6d05, PR #415 merge) + dev (this commit); head/temp branches deleted both sides; refs/original deleted after verification; local main aligned to origin/main; dev ⊇ main via bridge 116f150 → this commit's parent chain.
+- Chat-lineage sweep: every directive mapped to registry state; gaps = MJG-069 (hero CTA intent), MJG-071 (release SOP under PR-protected main — GH006 observed), MJG-072 (pagination deferred by MJG-053). MJG-073 (health enrichment) dropped on inspection — /api already DB-aware (503-degraded).
+- Agent A (MJG-069): single-source intent fix in src/app/page.tsx — openAuthIntentHash('#get-started') routes ALL marketing Get Started CTAs through the existing MJG-028/055 hashchange machinery (same-hash re-trigger handled via ''-then-target macrotask). Only page.tsx touched; marketing components untouched. lint+tsc green.
+- Agent B (MJG-071): DEPLOYMENT.md "Release SOP (main is PR-protected)" subsection; README branch-model + GH_TOKEN note (MJG-047); report §1/§9/§10/§11 publication record corrected (PR #415 / add6d05). Doc-vs-code verified against the generalized script CLI (head, base, title, bodyFile).
+- Agent C (MJG-072): six list GETs (payments, deliveries, evidence, assignments, inventory/movements, purchase-orders) gain zod-validated page/pageSize (1..100, default 25) + org-filtered X-Total-Count header; no-param mode byte-identical legacy; deterministic orderBy tiebreaker (+id desc). api-client.list() returns {items,total}; six views gain Prev/Next + count pager (first fetch stays param-less; paged only on Next; reset on filter change). Suite +6 cases.
+- Combined gates on the unified tree: lint PASS, tsc PASS, suite 49/49 pass / 358 assertions PASS (API TESTS PASSED).
+- Browser E2E (throwaway DB copy, production standalone build): hero Get Started → "Create your organization" REGISTER mode with 3 org-type radios (MJG-069 live); registered fresh org → Payments view pager live ("0 records", Previous disabled, Next present) (MJG-072 UI live). Teardown clean.
+- Registry: MJG-069/071/072 → DONE; docs/FEATURE_INVENTORY.md authored (master feature list per all chats: 7 SHIPPED domains + OPEN + USER ACTIONS).
+- Merges: fix/cta-intent, chore/release-sop, feat/list-pagination, chore/wave-7-registry (all plumbing into dev, HEAD-flip immune; committed trees verified per merge).
 
 Stage Summary:
-- Publication CLOSED. Remote: validated lineage on main via PR #415; two permanent branches only; zero secrets in published history (push-protection enforced, twice verified).
-- Open work: MJG-069 (P3 UX polish) only. Vercel/Render project setup tracks main (docs/DEPLOYMENT.md).
+- Registry: 72 rows, 71 DONE, 0 engineering OPEN (CI enablement stays external/dormant; Vercel/Render connection + PAT rotation = user actions).
+- Next: release via the NEW SOP (dev push → release/open-issues-07 head → PR merge via scripts/github-publish-pr.ts → align main → bridge dev).
