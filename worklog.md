@@ -528,3 +528,18 @@ Work Log:
 Stage Summary:
 - GitHub publication EXECUTED (MJG-031/047 DONE). Registry: 68 DONE / 1 OPEN (MJG-069 P3). All mandate gates re-proven on the published lineage: lint, tsc, SQLite 43/43, PG 43/43 (migrations replayed), browser E2E golden paths, secret scan 0 hits.
 - Next: Vercel/Render project setup tracks main (docs/DEPLOYMENT.md env pairing), post-deploy smoke, MJG-069 one-line fix in next frontend wave.
+
+---
+Task ID: OPEN-ISSUES-06 (addendum — push protection + history scrub)
+Agent: Staff Engineer + Security PE
+Task: Resolve GitHub PUSH PROTECTION rejection (MJG-070), scrub daemon-junk from unpushed history, publish.
+
+Work Log:
+- First push attempt (FF, main+dev) rejected: GH013 PUSH PROTECTION — two GitHub PATs flagged at upload/sharkpush.txt:1 + upload/ferrix.txt:1, commit 21beec1 (daemon-era junk-tracking commits inside the UNPUSHED ranges). Ancestry check: flagged commits NOT on remote → tokens never published. Unblock URLs deliberately NOT used.
+- Root cause: MJG-047 release purge was tree-level; intermediate commits retained junk blobs. Filed MJG-070 (Security, DONE in-wave).
+- Remediation: (1) first filter-branch attempt rewrote FULL history (618 commits) — discarded via refs/original restore BEFORE any push (published SHAs preserved); (2) targeted rewrite: FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --index-filter 'git rm -r --cached --ignore-unmatch -q .env db/custom.db upload download tool-results worklog-entries server.log' -- origin/main..main origin/dev..dev → 165 commits rewritten.
+- Verification: junk objects in unpushed ranges 0→0 (was 96 paths); origin/main & origin/dev still ancestors (FF preserved); tip trees byte-identical to pre-rewrite (05c3ccd/baf8d3b diffs empty); dev/main parity empty. Scrub script tracked: scripts/scrub-history.sh.
+- Refs/original retained locally until post-push verification, then deleted (they still reference token blobs; local-only, upload/ itself is on-disk untracked anyway).
+
+Stage Summary:
+- Publication proceeded on scrubbed lineage. Registry 69/70 DONE; OPEN = MJG-069 (P3 UX polish) only.
