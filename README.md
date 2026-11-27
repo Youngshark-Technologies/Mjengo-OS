@@ -84,7 +84,7 @@ bun run dev                 # http://localhost:3000 (output tee'd into dev.log)
 | `NEXT_PUBLIC_APP_URL` | optional | Public app origin for the marketing CTA deep links (`/#get-started`, `/#signin` — `src/lib/app-url.ts`). **BUILD-time on Vercel**: inlined into the client bundle; runtime-only values silently do nothing. Empty ⇒ in-page auth (sandbox default). |
 | `BACKEND_URL`         | optional | Split deploy only: set on the **Vercel frontend** to the Render service URL → proxies `/api/*`. **BUILD-time on Vercel**: baked into the routes manifest. Must stay **unset** on the Render backend (proxy loop) and locally. |
 | `MJENGO_API_BASE`     | no       | Test tooling only (`scripts/api-tests*.sh`, `tests/api-mjengo.test.ts`); never needed by the app.                                                                   |
-| `GH_TOKEN`            | no       | GitHub tooling scripts only (`scripts/github-open-pr.ts`, `scripts/gh_*.py`); never needed by the app.                                                              |
+| `GH_TOKEN`            | no       | GitHub tooling scripts only (`scripts/github-open-pr.ts`, `scripts/github-publish-pr.ts`, `scripts/gh_*.py`); never needed by the app. Pass via env only and rotate PATs regularly (MJG-047 hygiene).                                                                                              |
 | `PORT`                | no       | Standalone-server port (default 3000); also read by the Docker entrypoint.                                                                                          |
 
 `.env.example` is the template; copy it to `.env` for local dev.
@@ -102,7 +102,9 @@ bun run dev                 # http://localhost:3000 (output tee'd into dev.log)
 - **Deploy-from-main-only:** production deploys trigger **only** from `main`
   (Vercel production branch `main`; `render.yaml` pins `branch: main`,
   `autoDeploy: true`). `dev` is never deployed — it is validated locally and
-  released to `main`. PRs and temp branches never deploy.
+  released to `main` via the release PR flow (`main` is PR-protected — direct
+  pushes are rejected, see `docs/DEPLOYMENT.md` § Release SOP). PRs and temp
+  branches never deploy.
 
 Full runbook (steps, env matrix, rollbacks, region notes): **`docs/DEPLOYMENT.md`**.
 
@@ -112,6 +114,12 @@ Two permanent branches: **`main`** (production-ready) and **`dev`**
 (integration). Work flows through short-lived temp branches → PR into `dev`;
 `main` receives only verified releases (issue → temp branch → gates → merge
 to `dev` → release to `main`).
+
+`main` is **PR-protected** (direct pushes rejected, GH006): a release = push
+`dev` → push a `release/*` head branch at the release commit → open a PR into
+`main` and merge it via `GH_TOKEN=<token> bun scripts/github-publish-pr.ts <head> <base> <title> <bodyFile>`
+→ align local `main` to `origin/main` and bridge `dev` (tree-identical merge
+commit). Full SOP: `docs/DEPLOYMENT.md` § Release SOP (MJG-071).
 
 ## Testing / QA gates (local, authoritative)
 

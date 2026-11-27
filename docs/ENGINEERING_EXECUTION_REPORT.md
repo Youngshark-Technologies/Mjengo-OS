@@ -12,12 +12,12 @@
 | Total issues identified | **69** | MJG-001 … MJG-069 |
 | Resolved (DONE) | **68** | Every DONE row carries branch, fix summary, owner, acceptance + verification evidence |
 | Remaining open | **1** | MJG-069 only — P3 UX polish (hero CTA hash intent); zero P0/P1/P2 open |
-| Blocked on user action | **0** | MJG-031 + MJG-047 resolved 2026-11-28: credential operational, fast-forward push executed |
+| Blocked on user action | **0** | MJG-031 + MJG-047 resolved 2026-11-28: credential operational; publication executed — `dev` fast-forward-pushed, `main` published via PR #415 (merge `add6d05`; `main` is PR-protected, MJG-071) |
 | Blocked on engineering | **0** | — |
 | False completions found | **0** | Every completion claim is re-verified by the regression suite (see §4) |
 
 No remaining user-action blockers (resolved 2026-11-28, see OPEN-ISSUES-06 record in the registry):
-- **MJG-031 (DONE)** — stored push-scoped credential proved operational; remote `main` (`f8e8c4e` = merged PR #414) and `dev` verified as ancestors of local → clean fast-forward publication, remote history preserved in graph.
+- **MJG-031 (DONE)** — stored push-scoped credential proved operational; remote `main` (`f8e8c4e` = merged PR #414) and `dev` verified as ancestors of local. Correction (MJG-071): only `dev` was fast-forward-pushed — a direct push to `main` is rejected (GH006, PR-protected), so `main` was published via PR #415 (merge `add6d05`); remote history preserved in graph.
 - **MJG-047 (DONE)** — released tree free of token paths (scan 0 hits); push path operational; PAT rotation remains recommended hygiene.
 
 ## 2. Issues per Principal Engineer (team column of registry)
@@ -91,7 +91,7 @@ Suite coverage (the 43 cases are the end-to-end API golden journey over real HTT
 
 | Risk | Severity | Mitigation / owner |
 |---|---|---|
-| GitHub push — RESOLVED 2026-11-28 (MJG-031) | — | Credential operational; FF push executed; remote history preserved |
+| GitHub push — RESOLVED 2026-11-28 (MJG-031) | — | Credential operational; `dev` FF-pushed; `main` published via PR #415 (`add6d05`) — `main` is PR-protected (MJG-071) |
 | PAT rotation (MJG-047) | Hygiene only | Push path proven operational; rotation still recommended; released tree free of token paths |
 | CI dormant (billing lock) | Process | Local dual-engine gates remain the enforced barrier; CI workflow ships dormant and activates on enablement |
 | Single-app topology serves UI+API together | Accepted | Split deploy achieved via env-driven proxy (beforeFiles `/api` rewrite to Render backend); both full-app (Render) and split (Vercel→Render) topologies documented + tested in `docs/DEPLOYMENT.md` |
@@ -99,14 +99,14 @@ Suite coverage (the 43 cases are the end-to-end API golden journey over real HTT
 
 ## 10. Release-readiness assessment
 
-**PUBLISHED 2026-11-28 — release OPEN-ISSUES-06 fast-forward-pushed to GitHub (`main` + `dev`); remote temp branches cleaned; zero blockers.**
+**PUBLISHED 2026-11-28 — release OPEN-ISSUES-06 on GitHub: `dev` fast-forward-pushed; `main` published via PR #415 (merge commit `add6d05`) because remote `main` is PR-protected (GH006) — record corrected under MJG-071; remote temp branches cleaned; zero blockers.**
 Evidence: §4 gate table all green on the released tree; migrations versioned and replayable (`prisma/migrations/` init → partner_org_types → partner_phase2; `db:migrate:deploy` on hosted Postgres verified twice); deploy-from-`main`-only encoded in docs + configs; rollback reviewed (previous standalone build + `db` backup/restore kit `scripts/db-backup.ts` / `db-restore.ts`, `docs/BACKUPS.md`).
 
 ## 11. Recommended next steps (deployment & production monitoring)
 
-1. **Publish — DONE 2026-11-28:** fast-forward push of `main` + `dev` executed with the stored push-scoped credential (no force; remote PR #414 lineage preserved in graph).
+1. **Publish — DONE 2026-11-28 (publication record corrected MJG-071):** `dev` was fast-forward-pushed with the stored push-scoped credential (no force; remote PR #414 lineage preserved in graph). The `main` half of the originally recorded "fast-forward push of `main` + `dev`" did **not** happen: remote `main` is PR-protected (direct pushes rejected with GH006 "Changes must be made through a pull request"), so `main` was published via **PR #415**, merged as commit **`add6d05`** through `scripts/github-publish-pr.ts`. Future releases use the `release/*` PR flow: push `dev` → push `release/*` head branch → open + merge PR via the script → align local `main` to `origin/main` → bridge `dev` (see `docs/DEPLOYMENT.md` § Release SOP).
 2. **Render (backend):** Blueprint deploy from `main`; set `DATABASE_URL` (hosted Postgres), `NEXT_PUBLIC_APP_URL`, `BACKEND_URL`; first deploy runs `prisma migrate deploy` (render.yaml preDeploy/migrate step).
 3. **Vercel (frontend + website):** import both projects, track `main` only, set `NEXT_PUBLIC_BACKEND_URL` (or proxy target) + `NEXT_PUBLIC_APP_URL` pairing per `docs/DEPLOYMENT.md`; region fra1 to pair with Render.
 4. **Post-deploy smoke:** `bash scripts/smoke.sh https://<render-app>` and the website CTA check (`Get started`/`Sign in` → main app URL).
 5. **Monitoring:** app logs to Render/Vercel dashboards; watch 429 budgets, p95 latency on list endpoints (bounded `take:500`), session-table growth (auto-pruned), and `prisma migrate deploy` exit codes per release.
-6. **Process:** enable CI when billing unlocks; keep the two-branch flow (temp branch → gates → `dev` → release → `main`).
+6. **Process:** enable CI when billing unlocks; keep the two-branch flow (temp branch → gates → `dev` → release → `main` via the `release/*` PR flow, MJG-071 — direct pushes to `main` are rejected).
