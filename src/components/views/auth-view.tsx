@@ -4,13 +4,15 @@
 
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { Boxes, ClipboardCheck, HardHat, Loader2, Wallet } from 'lucide-react'
+import { Building2, Boxes, ClipboardCheck, HardHat, Loader2, Package, Truck, Wallet } from 'lucide-react'
 
 import { api } from '@/lib/api-client'
 import { useAppStore } from '@/lib/store'
+import type { OrganizationType } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { cn } from '@/lib/utils'
 
 const PROOF_POINTS = [
   { icon: ClipboardCheck, label: 'Human-verified site evidence' },
@@ -18,12 +20,32 @@ const PROOF_POINTS = [
   { icon: Wallet, label: 'Owner-approved payments' },
 ]
 
+// MJG-035 — register as a constructor, a material supplier, or a logistics
+// company. The org type drives which portal a session sees after sign-in.
+const ORG_TYPE_OPTIONS: Array<{
+  value: OrganizationType
+  label: string
+  hint: string
+  icon: typeof HardHat
+}> = [
+  { value: 'CONSTRUCTOR', label: 'Constructor', hint: 'Manage sites, stock & crews', icon: Building2 },
+  { value: 'SUPPLIER', label: 'Supplier', hint: 'Receive & track purchase orders', icon: Package },
+  { value: 'LOGISTICS', label: 'Logistics', hint: 'Transport & delivery partner', icon: Truck },
+]
+
+const REGISTER_SUBTITLE: Record<OrganizationType, string> = {
+  CONSTRUCTOR: 'Set up MjengoOS for your construction business.',
+  SUPPLIER: 'Register your supply business to receive purchase orders from constructors on MjengoOS.',
+  LOGISTICS: 'Register your transport business to partner with constructors on MjengoOS.',
+}
+
 export function AuthView({ onAuthed }: { onAuthed: () => void }) {
   const mode = useAppStore((s) => s.authMode)
   const setAuthMode = useAppStore((s) => s.setAuthMode)
 
   const [name, setName] = useState('')
   const [organizationName, setOrganizationName] = useState('')
+  const [organizationType, setOrganizationType] = useState<OrganizationType>('CONSTRUCTOR')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -41,6 +63,7 @@ export function AuthView({ onAuthed }: { onAuthed: () => void }) {
         email: email.trim(),
         password,
         organizationName: organizationName.trim(),
+        organizationType,
       }),
     onSuccess: () => onAuthed(),
     onError: (e: Error) => setError(e.message),
@@ -214,10 +237,49 @@ export function AuthView({ onAuthed }: { onAuthed: () => void }) {
                   <h1 className="text-xl font-semibold tracking-tight text-stone-900">
                     Create your organization
                   </h1>
-                  <p className="text-sm text-stone-500">
-                    Set up MjengoOS for your construction business.
-                  </p>
+                  <p className="text-sm text-stone-500">{REGISTER_SUBTITLE[organizationType]}</p>
                 </div>
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium text-stone-700">Organization type</legend>
+                  {/* MJG-055 — the role="radio" buttons need an owning radiogroup
+                      with an accessible name; the fieldset/legend above is only
+                      visual grouping. Keyboard behavior is unchanged. */}
+                  <div
+                    role="radiogroup"
+                    aria-label="Organization type"
+                    className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+                  >
+                    {ORG_TYPE_OPTIONS.map(({ value, label, hint, icon: Icon }) => {
+                      const selected = organizationType === value
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          onClick={() => {
+                            setOrganizationType(value)
+                            clearError()
+                          }}
+                          disabled={pending}
+                          className={cn(
+                            'flex flex-col items-start gap-1.5 rounded-lg border p-3 text-left transition-colors',
+                            selected
+                              ? 'border-amber-500 bg-amber-500/10 ring-1 ring-amber-500'
+                              : 'border-stone-200 bg-white hover:border-stone-300',
+                          )}
+                        >
+                          <Icon
+                            className={cn('size-4', selected ? 'text-amber-600' : 'text-stone-500')}
+                            aria-hidden
+                          />
+                          <span className="text-sm font-medium text-stone-900">{label}</span>
+                          <span className="text-xs leading-snug text-stone-500">{hint}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </fieldset>
                 <div className="space-y-2">
                   <Label htmlFor="register-name">Your name</Label>
                   <Input

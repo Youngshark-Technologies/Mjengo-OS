@@ -1,0 +1,70 @@
+# MJG-046 — CI workflow (DORMANT).
+#
+# IMPORTANT: THIS WORKFLOW IS DORMANT — GitHub Actions is currently suspended by a
+# billing lock on the account, so nothing here runs today. The workflow is
+# committed and valid so that checks resume AUTOMATICALLY once Actions is
+# re-enabled — no further change is needed at that point. Until then the
+# LOCAL QA gates remain the authoritative quality bar and are run before
+# every merge/release:
+#   bun run lint
+#   bunx tsc --noEmit
+#   bun scripts/check-schema-parity.ts
+#   bun run test:api      (real production build on :3111 + 30-case API suite)
+#   bun run test:api:pg   (same suite against embedded Postgres)
+
+name: CI
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [main]
+
+# MJG-062 — least privilege: the gates only ever read the repository (no
+# releases, packages, deployments or PR writes), so the workflow gets an
+# explicit read-only token instead of the default permissive one.
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: lint → typecheck → schema parity → build → API suite
+    runs-on: ubuntu-latest
+    env:
+      # Placeholder for `prisma generate` / `next build` (never connected to);
+      # the API-suite step overrides it with its own isolated SQLite DB.
+      DATABASE_URL: file:./db/ci-placeholder.db
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # bun blocks lifecycle scripts of untrusted dependencies, so the Prisma
+      # client is NOT auto-generated on install — generate it explicitly
+      # (lint/typecheck/build and the API suite all need the client).
+      - name: Generate Prisma client
+        run: bun run db:generate
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bunx tsc --noEmit
+
+      - name: Schema parity (SQLite vs Postgres)
+        run: bun scripts/check-schema-parity.ts
+
+      - name: Build (standalone output)
+        run: bun run build
+
+      # The long step: rebuilds a production bundle, boots the standalone
+      # server on :3111 against an isolated SQLite DB and runs the full
+      # 30-case integration suite (scripts/api-tests.sh).
+      - name: API integration suite (long)
+        run: bun run test:api
+        timeout-minutes: 30

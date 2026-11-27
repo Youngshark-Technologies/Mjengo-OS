@@ -2,7 +2,7 @@
 // Sequence: embedded Postgres (real binaries, port 3112) → `prisma migrate deploy`
 // (applies prisma/migrations/** against the PG server) → regenerate the Prisma
 // client from the postgres schema → boot the production standalone server on
-// :3113 against the migrated PG database → run the full 21-case API golden-journey
+// :3113 against the migrated PG database → run the full 30-case API golden-journey
 // suite → teardown (server killed, PG stopped, SQLite client restored).
 // Any phase failure exits non-zero.
 import { spawn, spawnSync } from 'node:child_process'
@@ -19,8 +19,11 @@ function run(cmd: string, args: string[], env: Record<string, string>, label: st
   console.log(`[pg-verify] $ ${cmd} ${args.join(' ')}  (${label})`)
   const res = spawnSync(cmd, args, { env: { ...process.env, ...env }, stdio: 'inherit' })
   if (res.status !== 0) {
-    console.error(`[pg-verify] FAIL at: ${label}`)
-    process.exit(1)
+    // MJG-060 — throw (do NOT process.exit here): main()'s .catch runs the
+    // teardown (server kill, PG stop, SQLite client restore). A process.exit
+    // inside main() bypasses teardown and leaks the :3113 server + :3112 PG,
+    // making every subsequent gate run fail with EADDRINUSE.
+    throw new Error(`FAIL at: ${label}`)
   }
 }
 
@@ -67,17 +70,20 @@ async function main(): Promise<void> {
       if (res.ok) { healthy = true; break }
     } catch { /* not up yet */ }
     if (server.exitCode !== null && server.exitCode !== 0) {
-      console.error('[pg-verify] server process died while booting')
-      process.exit(1)
+      // MJG-060 — throw so teardown runs (leaked servers broke later runs)
+      throw new Error('server process died while booting')
     }
     await new Promise((r) => setTimeout(r, 1000))
   }
-  if (!healthy) { console.error('[pg-verify] server never became healthy'); process.exit(1) }
+  if (!healthy) {
+    // MJG-060 — throw so teardown runs (leaked servers broke later runs)
+    throw new Error('server never became healthy')
+  }
   console.log(`[pg-verify] server healthy on ${API_BASE}/api — Postgres-backed`)
 
   // 5 — full API golden-journey suite against the migrated Postgres database
   run('bun', ['test', 'tests/api-mjengo.test.ts'],
-    { MJENGO_API_BASE: API_BASE, DATABASE_URL: PG_URL }, '21-case API suite on Postgres')
+    { MJENGO_API_BASE: API_BASE, DATABASE_URL: PG_URL }, '30-case API suite on Postgres')
 
   // 6 — teardown
   console.log('[pg-verify] 6/6 teardown')

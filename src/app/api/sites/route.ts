@@ -49,7 +49,7 @@ export async function GET(req: Request) {
 // POST /api/sites — create a site (any role).
 export async function POST(req: Request) {
   return handle(async () => {
-    const user = await requireUser()
+    const user = await requireUser(undefined, { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, createSchema)
 
     const site = await db.site.create({

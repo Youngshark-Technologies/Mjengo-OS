@@ -67,7 +67,7 @@ export async function GET(req: Request) {
 // POST /api/inventory/movements — record IN/OUT/ADJUST and apply it to the stock level.
 export async function POST(req: Request) {
   return handle(async () => {
-    const user = await requireUser()
+    const user = await requireUser(undefined, { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, createSchema)
 
     const site = await db.site.findFirst({

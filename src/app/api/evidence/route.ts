@@ -62,6 +62,7 @@ export async function GET(req: Request) {
       },
       include: { site: true, milestone: true, reportedBy: true, verifiedBy: true },
       orderBy: { createdAt: 'desc' },
+      take: 500,
     })
 
     return ok(evidence.map(toEvidenceDTO))
@@ -71,7 +72,7 @@ export async function GET(req: Request) {
 // POST /api/evidence — any crew member can report field evidence. Human verification happens later.
 export async function POST(req: Request) {
   return handle(async () => {
-    const user = await requireUser()
+    const user = await requireUser(undefined, { orgType: ['CONSTRUCTOR'] })
     const body = await parseBody(req, createSchema)
 
     await findOrgRecord(db.site, body.siteId, user.organizationId, 'Site')

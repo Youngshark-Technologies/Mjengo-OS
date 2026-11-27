@@ -9,6 +9,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ClipboardList,
+  Link2,
   Mail,
   Package,
   Phone,
@@ -17,6 +18,7 @@ import {
   Store,
   Trash2,
   Truck,
+  Unlink,
   XCircle,
 } from 'lucide-react'
 
@@ -26,8 +28,10 @@ import {
   formatMoney,
   PO_STATUS_VALUES,
   type MaterialDTO,
+  type PartnerOrgDTO,
   type POStatus,
   type PurchaseOrderDTO,
+  type SessionUser,
   type SiteDTO,
   type SupplierDTO,
 } from '@/lib/types'
@@ -119,7 +123,7 @@ interface PoItemDraft {
 
 const EMPTY_ITEM: PoItemDraft = { materialId: '', quantity: '', unitCost: '' }
 
-export function ProcurementView() {
+export function ProcurementView({ user }: { user?: SessionUser }) {
   return (
     <Tabs defaultValue="orders" className="gap-4">
       <TabsList className="h-11 w-full rounded-lg bg-stone-100 p-1 sm:w-auto">
@@ -134,7 +138,7 @@ export function ProcurementView() {
         <PurchaseOrdersTab />
       </TabsContent>
       <TabsContent value="suppliers" className="flex flex-col gap-4">
-        <SuppliersTab />
+        <SuppliersTab user={user} />
       </TabsContent>
     </Tabs>
   )
@@ -654,15 +658,27 @@ function PoRowActions({
   )
 }
 
-function SuppliersTab() {
+function SuppliersTab({ user }: { user?: SessionUser }) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [addOpen, setAddOpen] = useState(false)
   const [form, setForm] = useState({ name: '', phone: '', email: '', category: '' })
+  // MJG-035 — link a supplier record to a registered partner organization.
+  const [linkTarget, setLinkTarget] = useState<SupplierDTO | null>(null)
+  const [linkPartnerId, setLinkPartnerId] = useState<string>('')
+
+  // Server enforces OWNER/SUPERVISOR (403 backstop); the UI mirrors the policy.
+  const canManage = user?.role === 'OWNER' || user?.role === 'SUPERVISOR'
 
   const suppliers = useQuery({
     queryKey: ['suppliers'],
     queryFn: () => api.get<SupplierDTO[]>('/api/suppliers'),
+  })
+
+  const partners = useQuery({
+    queryKey: ['partners', 'SUPPLIER'],
+    queryFn: () => api.get<PartnerOrgDTO[]>('/api/partners?type=SUPPLIER'),
+    enabled: canManage && linkTarget !== null,
   })
 
   const addSupplier = useMutation({
@@ -675,6 +691,21 @@ function SuppliersTab() {
     },
     onError: (e: Error) =>
       toast({ variant: 'destructive', title: 'Could not add supplier', description: e.message }),
+  })
+
+  const setPartnerLink = useMutation({
+    mutationFn: ({ id, partnerOrganizationId }: { id: string; partnerOrganizationId: string | null }) =>
+      api.patch<SupplierDTO>(`/api/suppliers/${id}`, { partnerOrganizationId }),
+    onSuccess: (updated) => {
+      queryClient.invalidateQueries({ queryKey: ['suppliers'] })
+      toast({
+        title: updated.partnerOrganizationId ? 'Partner organization linked' : 'Partner organization unlinked',
+        description: updated.partnerOrganizationName ?? undefined,
+      })
+      setLinkTarget(null)
+    },
+    onError: (e: Error) =>
+      toast({ variant: 'destructive', title: 'Could not update the link', description: e.message }),
   })
 
   function submitSupplier() {
@@ -757,6 +788,8 @@ function SuppliersTab() {
                   <TableHead>Category</TableHead>
                   <TableHead>Phone</TableHead>
                   <TableHead>Email</TableHead>
+                  <TableHead>Partner org</TableHead>
+                  {canManage && <TableHead className="w-32">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -766,6 +799,33 @@ function SuppliersTab() {
                     <TableCell className="text-stone-600">{s.category || '—'}</TableCell>
                     <TableCell className="text-stone-600">{s.phone || '—'}</TableCell>
                     <TableCell className="text-stone-600">{s.email || '—'}</TableCell>
+                    <TableCell className="text-stone-600">
+                      {s.partnerOrganizationName ? (
+                        <Badge
+                          variant="outline"
+                          className="border-emerald-300 bg-emerald-50 text-emerald-700"
+                        >
+                          <Link2 className="size-3" aria-hidden /> {s.partnerOrganizationName}
+                        </Badge>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                    {canManage && (
+                      <TableCell>
+                        <Button
+                          variant="outline"
+                          className={cn('h-9 gap-1.5 border-stone-300 text-stone-700', CONTROL)}
+                          onClick={() => {
+                            setLinkPartnerId(s.partnerOrganizationId ?? '')
+                            setLinkTarget(s)
+                          }}
+                        >
+                          {s.partnerOrganizationId ? <Unlink /> : <Link2 />}
+                          {s.partnerOrganizationId ? 'Partner' : 'Link partner'}
+                        </Button>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -798,7 +858,25 @@ function SuppliersTab() {
                     </span>
                   )}
                   {!s.phone && !s.email && <span className="text-xs text-stone-400">No contact details</span>}
+                  {s.partnerOrganizationName && (
+                    <span className="inline-flex items-center gap-1.5 text-emerald-700">
+                      <Link2 className="size-3.5" aria-hidden /> {s.partnerOrganizationName}
+                    </span>
+                  )}
                 </div>
+                {canManage && (
+                  <Button
+                    variant="outline"
+                    className="mt-3 h-11 w-full gap-1.5 border-stone-300 text-stone-700"
+                    onClick={() => {
+                      setLinkPartnerId(s.partnerOrganizationId ?? '')
+                      setLinkTarget(s)
+                    }}
+                  >
+                    {s.partnerOrganizationId ? <Unlink /> : <Link2 />}
+                    {s.partnerOrganizationId ? 'Manage partner link' : 'Link partner org'}
+                  </Button>
+                )}
               </Card>
             ))}
           </div>
@@ -880,6 +958,82 @@ function SuppliersTab() {
               onClick={submitSupplier}
             >
               {addSupplier.isPending ? 'Saving…' : 'Add supplier'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MJG-035 — link/unlink a registered partner organization */}
+      <Dialog
+        open={linkTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setLinkTarget(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Partner organization</DialogTitle>
+            <DialogDescription>
+              Link {linkTarget?.name ?? 'this supplier'} to the supplier's registered MjengoOS
+              organization. Once linked, purchase orders you send appear in their partner portal.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="supplier-partner">Registered supplier organization</Label>
+              <Select value={linkPartnerId} onValueChange={setLinkPartnerId}>
+                <SelectTrigger id="supplier-partner" className={CONTROL}>
+                  <SelectValue
+                    placeholder={partners.isLoading ? 'Loading partners…' : 'Select partner organization'}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {(partners.data ?? []).map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                  {(partners.data ?? []).length === 0 && !partners.isLoading && (
+                    <div className="px-3 py-2 text-xs text-stone-500">
+                      No registered supplier organizations yet — they appear here once a supplier
+                      registers on MjengoOS.
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            {linkTarget?.partnerOrganizationId && (
+              <Button
+                variant="outline"
+                className={cn('border-red-300 text-red-700 hover:bg-red-50', CONTROL)}
+                disabled={setPartnerLink.isPending}
+                onClick={() => {
+                  if (linkTarget) setPartnerLink.mutate({ id: linkTarget.id, partnerOrganizationId: null })
+                }}
+              >
+                <Unlink />
+                Unlink
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              className={CONTROL}
+              onClick={() => setLinkTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              className={cn('bg-amber-500 text-white hover:bg-amber-600', CONTROL)}
+              disabled={setPartnerLink.isPending || linkPartnerId === ''}
+              onClick={() => {
+                if (linkTarget && linkPartnerId !== '') {
+                  setPartnerLink.mutate({ id: linkTarget.id, partnerOrganizationId: linkPartnerId })
+                }
+              }}
+            >
+              {setPartnerLink.isPending ? 'Saving…' : 'Save link'}
             </Button>
           </DialogFooter>
         </DialogContent>

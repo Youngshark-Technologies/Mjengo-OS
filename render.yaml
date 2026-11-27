@@ -15,7 +15,7 @@ services:
     plan: free            # NOTE: free Postgres expires after 30 days — upgrade the database to starter for production use
     branch: main          # deploy-from-main-only (MJG-027 acceptance)
     autoDeploy: true      # every push to main = one deploy; PRs/branches never deploy
-    buildCommand: npm install && npx prisma generate --schema prisma/schema.postgres.prisma && npm run build
+    buildCommand: npm ci --include=dev && npx prisma generate --schema prisma/schema.postgres.prisma && npm run build
     # Free plans have no preDeployCommand, so the versioned migrations (MJG-026)
     # are applied idempotently before boot. `migrate deploy` is a no-op when
     # the database is already up to date.
