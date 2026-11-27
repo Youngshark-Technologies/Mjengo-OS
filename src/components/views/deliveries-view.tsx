@@ -64,6 +64,9 @@ const DELIVERY_BADGE_CLASS: Record<DeliveryStatus, string> = {
   REJECTED: 'border-red-200 bg-red-100 text-red-700',
 }
 
+// MJG-072 — server pagination page size (kicks in on the first Next click).
+const LIST_PAGE_SIZE = 25
+
 function DeliveryBadge({ status }: { status: DeliveryStatus }) {
   return (
     <Badge variant="outline" className={DELIVERY_BADGE_CLASS[status]}>
@@ -79,6 +82,47 @@ interface DeliveryItemDraft {
 
 const EMPTY_DELIVERY_ITEM: DeliveryItemDraft = { materialId: '', quantityDelivered: '' }
 
+// MJG-072 — minimal pager below the list. Prev/Next bounds are disabled at
+// the edges; while the fetch is param-less the total is unknown, so the label
+// falls back to the loaded record count and only Next is enabled.
+function ListPager({
+  page,
+  paged,
+  total,
+  itemCount,
+  onPrev,
+  onNext,
+}: {
+  page: number
+  paged: boolean
+  total: number | null
+  itemCount: number
+  onPrev: () => void
+  onNext: () => void
+}) {
+  const totalPages = total !== null ? Math.max(1, Math.ceil(total / LIST_PAGE_SIZE)) : null
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-xs text-stone-500" aria-live="polite">
+        {paged && totalPages !== null ? `Page ${page} of ${totalPages}` : `${itemCount} records`}
+      </p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" disabled={!paged || page <= 1} onClick={onPrev}>
+          Previous
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={paged && totalPages !== null ? page >= totalPages : false}
+          onClick={onNext}
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 export function DeliveriesView({ user }: { user: SessionUser }) {
   const queryClient = useQueryClient()
   const canVerify = user.role !== 'WORKER'
@@ -87,28 +131,49 @@ export function DeliveriesView({ user }: { user: SessionUser }) {
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [recordOpen, setRecordOpen] = useState(false)
   const [reviewing, setReviewing] = useState<DeliveryDTO | null>(null)
+  // MJG-072 — the first fetch stays param-less (legacy behavior). Pagination
+  // only starts once the user clicks Next; a filter change resets to page 1.
+  const [page, setPage] = useState(1)
+  const [paged, setPaged] = useState(false)
 
   const sites = useQuery({ queryKey: ['sites'], queryFn: () => api.get<SiteDTO[]>('/api/sites') })
 
   const deliveries = useQuery({
-    queryKey: ['deliveries', siteFilter, statusFilter],
+    queryKey: ['deliveries', siteFilter, statusFilter, page, paged],
     queryFn: () => {
       const params = new URLSearchParams()
       if (siteFilter !== 'ALL') params.set('siteId', siteFilter)
       if (statusFilter !== 'ALL') params.set('status', statusFilter)
+      if (paged) {
+        params.set('page', String(page))
+        params.set('pageSize', String(LIST_PAGE_SIZE))
+      }
       const qs = params.toString()
-      return api.get<DeliveryDTO[]>(`/api/deliveries${qs ? `?${qs}` : ''}`)
+      return api.list<DeliveryDTO>(`/api/deliveries${qs ? `?${qs}` : ''}`)
     },
     placeholderData: keepPreviousData,
   })
 
-  const deliveryList = deliveries.data ?? []
+  const changeSiteFilter = (v: string) => {
+    setSiteFilter(v)
+    setPage(1)
+    setPaged(false)
+  }
+
+  const changeStatusFilter = (v: string) => {
+    setStatusFilter(v)
+    setPage(1)
+    setPaged(false)
+  }
+
+  const deliveryList = deliveries.data?.items ?? []
+  const deliveriesTotal = deliveries.data?.total ?? null
   const pendingCount = deliveryList.filter((d) => d.status === 'PENDING').length
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <Select value={siteFilter} onValueChange={setSiteFilter}>
+        <Select value={siteFilter} onValueChange={changeSiteFilter}>
           <SelectTrigger aria-label="Filter by site" className={cn('w-full bg-white sm:w-52', CONTROL)}>
             <SelectValue placeholder="All sites" />
           </SelectTrigger>
@@ -121,7 +186,7 @@ export function DeliveriesView({ user }: { user: SessionUser }) {
             ))}
           </SelectContent>
         </Select>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select value={statusFilter} onValueChange={changeStatusFilter}>
           <SelectTrigger aria-label="Filter by status" className={cn('w-full bg-white sm:w-44', CONTROL)}>
             <SelectValue placeholder="All statuses" />
           </SelectTrigger>
@@ -285,6 +350,20 @@ export function DeliveriesView({ user }: { user: SessionUser }) {
           </div>
         </>
       )}
+
+      {/* MJG-072 — pager: param-less until the first Next click, then
+          Page X of Y from the org-filtered X-Total-Count header. */}
+      <ListPager
+        page={page}
+        paged={paged}
+        total={deliveriesTotal}
+        itemCount={deliveryList.length}
+        onPrev={() => setPage((p) => Math.max(1, p - 1))}
+        onNext={() => {
+          setPage((p) => p + 1)
+          setPaged(true)
+        }}
+      />
 
       {recordOpen && (
         <RecordDeliveryDialog

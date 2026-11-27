@@ -57,6 +57,24 @@ function BootErrorCard({ message, onRetry }: { message?: string; onRetry: () => 
   )
 }
 
+// MJG-069 — in-page Get Started CTAs reuse the same hash-intent path as the
+// deep links (#get-started → REGISTER, #signin → LOGIN), so the mode seeding
+// in the effect below stays the single source of truth. Because that effect
+// clears the hash right after opening the auth view, the same CTA can be
+// clicked again later; when the hash already equals the target a plain
+// re-assignment fires no `hashchange`, so clear first and re-apply the target
+// on a macrotask to guarantee the listener re-runs.
+function openAuthIntentHash(target: '#get-started' | '#signin') {
+  if (window.location.hash === target) {
+    window.location.hash = ''
+    window.setTimeout(() => {
+      window.location.hash = target
+    }, 0)
+    return
+  }
+  window.location.hash = target
+}
+
 function Root() {
   const queryClient = useQueryClient()
   const [showAuth, setShowAuth] = useState(false)
@@ -150,7 +168,9 @@ function Root() {
       onExplore={() => {
         document.getElementById('pillars')?.scrollIntoView({ behavior: 'smooth' })
       }}
-      onGetStarted={() => setShowAuth(true)}
+      // MJG-069 — set the #get-started intent instead of opening auth
+      // directly, so the view opens in REGISTER mode, not the LOGIN default.
+      onGetStarted={() => openAuthIntentHash('#get-started')}
       getStartedHref={getStartedHref}
     />
   )

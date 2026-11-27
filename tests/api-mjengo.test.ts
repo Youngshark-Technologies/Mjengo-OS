@@ -16,6 +16,10 @@
 //     MJG-050/MJG-058/MJG-044/MJG-051 guard regressions, cross-constructor
 //     tenancy, and the MJG-043 register rate limit (429) as the suite-FINAL
 //     case — the in-memory register bucket is shared by every call above.
+//   → MJG-072 list pagination: no-param backward compatibility, page/pageSize
+//     slice math, org-filtered X-Total-Count header, 400s on garbage params,
+//     cross-tenant totals (cases 44-49 run before the rate-limit final case
+//     and make NO register calls, so the bucket math is unaffected).
 //
 // The dev server on :3000 is never touched. The database file is removed by
 // the orchestrating script after the run.
@@ -86,6 +90,20 @@ async function call(
 
 const data = (r: Res) => r.body?.data
 const errMsg = (r: Res) => r.body?.error?.message
+
+// MJG-072 — like `call` for GETs, but also exposes response headers so the
+// org-filtered X-Total-Count pagination header can be asserted.
+async function callWithHeaders(
+  path: string,
+  session: keyof typeof jars,
+): Promise<{ status: number; body: any; headers: Headers }> {
+  const cookie = sessionHeader(session)
+  const res = await fetch(`${BASE}${path}`, {
+    headers: cookie ? { cookie } : {},
+  })
+  const body = await res.json().catch(() => null)
+  return { status: res.status, body, headers: res.headers }
+}
 
 // Journey state shared across the ordered tests.
 const S: {
@@ -1154,6 +1172,171 @@ describe('MJG-020 — API golden journey (isolated server)', () => {
       body: { carrierName: 'Suite Haulage Ltd' },
     })
     expect(deadShipment.status).toBe(422)
+  })
+
+  // ─── MJG-072 — list pagination (page/pageSize + X-Total-Count) ──────────
+  // Runs BEFORE the register-rate-limit case and makes NO register calls, so
+  // the documented bucket math below is unaffected.
+
+  test('44 MJG-072 — seed 26 payments; no-param list keeps legacy shape (no header, uncapped)', async () => {
+    // Pagination fixture: 26 extra PENDING payments (owner session, golden site).
+    for (let i = 1; i <= 26; i++) {
+      const r = await call('/api/payments', {
+        method: 'POST',
+        session: 'owner',
+        body: {
+          siteId: S.siteId,
+          category: 'MATERIAL',
+          method: 'CASH',
+          amount: 100 + i,
+          reference: `SUITE-PG-${String(i).padStart(2, '0')}`,
+        },
+      })
+      expect(r.status).toBe(201)
+    }
+
+    // No query params → byte-compatible legacy behavior: the FULL ledger
+    // (28 rows — a regression that silently applied page=1&pageSize=25 would
+    // return only 25), no X-Total-Count header, same DTO keys.
+    const all = await callWithHeaders('/api/payments', 'owner')
+    expect(all.status).toBe(200)
+    const rows = all.body.data as Array<Record<string, unknown>>
+    expect(rows).toHaveLength(28)
+    expect(all.headers.get('x-total-count')).toBeNull()
+
+    const golden = rows.find((p) => p.id === S.paymentId)
+    expect(golden).toBeTruthy()
+    expect(golden!.siteName).toBe('Suite Tower')
+    expect(golden!.status).toBe('PAID')
+    for (const key of [
+      'id',
+      'siteId',
+      'siteName',
+      'purchaseOrderId',
+      'milestoneName',
+      'category',
+      'method',
+      'amount',
+      'status',
+      'reference',
+      'recordedByName',
+      'createdAt',
+    ]) {
+      expect(key in rows[0]).toBe(true)
+    }
+    // Envelope stays { data: [...] } — not a { items, total } object.
+    expect(Array.isArray(all.body.data)).toBe(true)
+    expect(all.body.items).toBeUndefined()
+  })
+
+  test('45 MJG-072 — page=2&pageSize=5 returns the stable orderBy slice; header = org total', async () => {
+    const full = await call('/api/payments', { session: 'owner' })
+    expect(full.status).toBe(200)
+    const allIds = (data(full) as Array<{ id: string }>).map((p) => p.id)
+    expect(allIds).toHaveLength(28)
+
+    const p1 = await callWithHeaders('/api/payments?page=1&pageSize=5', 'owner')
+    expect(p1.status).toBe(200)
+    const p1Ids = (p1.body.data as Array<{ id: string }>).map((p) => p.id)
+    expect(p1Ids).toHaveLength(5)
+    expect(p1.headers.get('x-total-count')).toBe('28')
+
+    const p2 = await callWithHeaders('/api/payments?page=2&pageSize=5', 'owner')
+    expect(p2.status).toBe(200)
+    const p2Ids = (p2.body.data as Array<{ id: string }>).map((p) => p.id)
+    expect(p2Ids).toHaveLength(5)
+    expect(p2.headers.get('x-total-count')).toBe('28')
+
+    // Paged slices reproduce the un-paged order exactly (createdAt desc with
+    // an id tiebreaker, so same-millisecond rows cannot shuffle pages).
+    expect([...p1Ids, ...p2Ids]).toEqual(allIds.slice(0, 10))
+    // Pages never overlap.
+    expect(p1Ids.filter((id) => p2Ids.includes(id))).toHaveLength(0)
+  })
+
+  test('46 MJG-072 — X-Total-Count is filter-aware; pageSize alone ignored; page beyond end → []', async () => {
+    const pending = await callWithHeaders('/api/payments?status=PENDING&page=1&pageSize=5', 'owner')
+    expect(pending.status).toBe(200)
+    const rows = pending.body.data as Array<{ status: string }>
+    expect(rows).toHaveLength(5)
+    expect(rows.every((p) => p.status === 'PENDING')).toBe(true)
+    // 26 seeded PENDING payments (the two golden ones are PAID / APPROVED).
+    expect(pending.headers.get('x-total-count')).toBe('26')
+
+    // pageSize WITHOUT page is ignored — legacy param-less behavior, no header.
+    const noPage = await callWithHeaders('/api/payments?pageSize=5', 'owner')
+    expect(noPage.status).toBe(200)
+    expect(noPage.body.data).toHaveLength(28)
+    expect(noPage.headers.get('x-total-count')).toBeNull()
+
+    // A page beyond the end is an empty array, not an error; total still set.
+    const beyond = await callWithHeaders('/api/payments?page=999&pageSize=5', 'owner')
+    expect(beyond.status).toBe(200)
+    expect(beyond.body.data).toHaveLength(0)
+    expect(beyond.headers.get('x-total-count')).toBe('28')
+  })
+
+  test('47 MJG-072 — page=0 / pageSize=0 / pageSize=101 / garbage → 400 with the standard envelope', async () => {
+    for (const qs of ['page=0', 'pageSize=0', 'pageSize=101', 'page=abc', 'page=1.5']) {
+      const r = await call(`/api/payments?${qs}`, { session: 'owner' })
+      expect(r.status).toBe(400)
+      const param = qs.split('=')[0]
+      expect(typeof errMsg(r)).toBe('string')
+      expect(errMsg(r)!.toLowerCase()).toContain(param.toLowerCase())
+    }
+  })
+
+  test('48 MJG-072 — cross-tenant: owner2 paginates its OWN ledger (total 0), never org 1 rows', async () => {
+    const own = await callWithHeaders('/api/payments?page=1&pageSize=5', 'owner2')
+    expect(own.status).toBe(200)
+    expect(own.body.data).toHaveLength(0)
+    expect(own.headers.get('x-total-count')).toBe('0')
+
+    // The second org's page can never contain the first org's rows, and its
+    // total (0) is never the first org's total (28).
+    const ownerPage = await callWithHeaders('/api/payments?page=1&pageSize=5', 'owner')
+    expect(ownerPage.headers.get('x-total-count')).toBe('28')
+    const ownerIds = new Set((ownerPage.body.data as Array<{ id: string }>).map((p) => p.id))
+    for (const row of own.body.data as Array<{ id: string }>) {
+      expect(ownerIds.has(row.id)).toBe(false)
+    }
+
+    const ownPos = await callWithHeaders('/api/purchase-orders?page=1&pageSize=5', 'owner2')
+    expect(ownPos.status).toBe(200)
+    expect(ownPos.body.data).toHaveLength(0)
+    expect(ownPos.headers.get('x-total-count')).toBe('0')
+  })
+
+  test('49 MJG-072 — pagination live on all six list routes (header = un-paged length)', async () => {
+    const paths = [
+      '/api/payments',
+      '/api/deliveries',
+      '/api/evidence',
+      '/api/assignments',
+      '/api/inventory/movements',
+      '/api/purchase-orders',
+    ]
+    for (const path of paths) {
+      const full = await callWithHeaders(path, 'owner')
+      expect(full.status).toBe(200)
+      const expectedTotal = (full.body.data as unknown[]).length
+      expect(expectedTotal).toBeGreaterThan(0)
+      expect(full.headers.get('x-total-count')).toBeNull()
+
+      const paged = await callWithHeaders(`${path}?page=1&pageSize=2`, 'owner')
+      expect(paged.status).toBe(200)
+      expect(paged.body.data).toHaveLength(Math.min(2, expectedTotal))
+      expect(paged.headers.get('x-total-count')).toBe(String(expectedTotal))
+    }
+
+    // purchase-orders: PO rows are paginated, items stay nested per row.
+    const pos = await callWithHeaders('/api/purchase-orders?page=1&pageSize=2', 'owner')
+    expect(pos.status).toBe(200)
+    expect(pos.headers.get('x-total-count')).toBe('4')
+    for (const po of pos.body.data as Array<{ items: unknown[]; supplierName: string }>) {
+      expect(Array.isArray(po.items)).toBe(true)
+      expect(po.items.length).toBeGreaterThan(0)
+    }
   })
 
   // MJG-043 bucket math — the limiter is IN-MEMORY on this single booted

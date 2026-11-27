@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { NextResponse } from 'next/server'
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { ok, handle, parseBody, parseQuery, requireUser, findOrgRecord } from '@/lib/api-helpers'
@@ -44,9 +45,14 @@ function toPaymentDTO(row: PaymentRow): PaymentDTO {
 }
 
 // Empty-string query params (e.g. ?siteId=&status=) are treated as absent.
+// MJG-072 — optional page/pageSize pagination: page >= 1, pageSize 1..100
+// (default 25). WITHOUT these params the endpoint keeps its legacy behavior
+// (single array, take: 500, no X-Total-Count header).
 const querySchema = z.object({
   siteId: z.preprocess(v => (v === '' ? undefined : v), z.string().min(1).optional()),
   status: z.preprocess(v => (v === '' ? undefined : v), z.enum(PAYMENT_STATUS_VALUES).optional()),
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
 })
 
 const createSchema = z.object({
@@ -60,30 +66,47 @@ const createSchema = z.object({
   notes: z.string().optional(),
 })
 
-// GET /api/payments?siteId=&status= — ledger, newest first.
+// GET /api/payments?siteId=&status=[&page=&pageSize=] — ledger, newest first.
+// MJG-072: with page, the response carries an org-filtered X-Total-Count and
+// returns that slice (skip=(page-1)*pageSize, take=pageSize); the id
+// tiebreaker keeps slices deterministic when createdAt ties (same ms).
 export async function GET(req: Request) {
   return handle(async () => {
     const user = await requireUser()
-    const { siteId, status } = parseQuery(req, querySchema)
+    const { siteId, status, page, pageSize } = parseQuery(req, querySchema)
 
-    const payments = await db.payment.findMany({
-      where: {
-        organizationId: user.organizationId,
-        ...(siteId ? { siteId } : {}),
-        ...(status ? { status } : {}),
-      },
-      include: {
-        site: true,
-        milestone: true,
-        purchaseOrder: true,
-        recordedBy: true,
-        approvedBy: true,
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 500,
-    })
+    const where: Prisma.PaymentWhereInput = {
+      organizationId: user.organizationId,
+      ...(siteId ? { siteId } : {}),
+      ...(status ? { status } : {}),
+    }
+    // pageSize only applies when page is present; no params → legacy take: 500.
+    const paged = page !== undefined
+    const take = paged ? (pageSize ?? 25) : 500
 
-    return ok(payments.map(toPaymentDTO))
+    const [payments, total] = await Promise.all([
+      db.payment.findMany({
+        where,
+        include: {
+          site: true,
+          milestone: true,
+          purchaseOrder: true,
+          recordedBy: true,
+          approvedBy: true,
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: paged ? (page - 1) * take : undefined,
+        take,
+      }),
+      paged ? db.payment.count({ where }) : Promise.resolve(0),
+    ])
+
+    const rows = payments.map(toPaymentDTO)
+    if (!paged) return ok(rows)
+    return NextResponse.json(
+      { data: rows },
+      { headers: { 'X-Total-Count': String(total) } },
+    )
   })
 }
 

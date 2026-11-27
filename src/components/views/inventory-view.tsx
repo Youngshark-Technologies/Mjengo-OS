@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
 import {
   AlertTriangle,
@@ -78,10 +78,54 @@ interface MovementForm {
 
 const EMPTY_MOVEMENT: MovementForm = { type: 'IN', materialId: '', quantity: '', reason: '' }
 
+// MJG-072 — server pagination page size (kicks in on the first Next click).
+const LIST_PAGE_SIZE = 25
+
 function timeAgo(iso: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
   return formatDistanceToNow(date, { addSuffix: true })
+}
+
+// MJG-072 — minimal pager below the movements list. Prev/Next bounds are
+// disabled at the edges; while the fetch is param-less the total is unknown,
+// so the label falls back to the loaded record count and only Next is enabled.
+function ListPager({
+  page,
+  paged,
+  total,
+  itemCount,
+  onPrev,
+  onNext,
+}: {
+  page: number
+  paged: boolean
+  total: number | null
+  itemCount: number
+  onPrev: () => void
+  onNext: () => void
+}) {
+  const totalPages = total !== null ? Math.max(1, Math.ceil(total / LIST_PAGE_SIZE)) : null
+  return (
+    <div className="mt-3 flex items-center justify-between gap-3">
+      <p className="text-xs text-stone-500" aria-live="polite">
+        {paged && totalPages !== null ? `Page ${page} of ${totalPages}` : `${itemCount} records`}
+      </p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" disabled={!paged || page <= 1} onClick={onPrev}>
+          Previous
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={paged && totalPages !== null ? page >= totalPages : false}
+          onClick={onNext}
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 function quantityText(level: StockLevelDTO): string {
@@ -95,6 +139,11 @@ export function InventoryView() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [materialDialogOpen, setMaterialDialogOpen] = useState(false)
   const [form, setForm] = useState<MovementForm>(EMPTY_MOVEMENT)
+  // MJG-072 — the first movements fetch stays param-less (legacy behavior,
+  // server `limit` default 50). Pagination only starts once the user clicks
+  // Next; switching site resets back to the param-less view.
+  const [movementPage, setMovementPage] = useState(1)
+  const [movementPaged, setMovementPaged] = useState(false)
 
   const sitesQ = useQuery({
     queryKey: ['sites'],
@@ -117,10 +166,26 @@ export function InventoryView() {
   })
 
   const movementsQ = useQuery({
-    queryKey: ['movements', siteId],
-    queryFn: () => api.get<StockMovementDTO[]>(`/api/inventory/movements?siteId=${siteId}`),
+    queryKey: ['movements', siteId, movementPage, movementPaged],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (siteId !== '') params.set('siteId', siteId)
+      if (movementPaged) {
+        params.set('page', String(movementPage))
+        params.set('pageSize', String(LIST_PAGE_SIZE))
+      }
+      const qs = params.toString()
+      return api.list<StockMovementDTO>(`/api/inventory/movements${qs ? `?${qs}` : ''}`)
+    },
     enabled: siteId !== '',
+    placeholderData: keepPreviousData,
   })
+
+  const changeSite = (id: string) => {
+    setSelectedSiteId(id)
+    setMovementPage(1)
+    setMovementPaged(false)
+  }
 
   const recordMovement = useMutation({
     mutationFn: (body: {
@@ -164,7 +229,8 @@ export function InventoryView() {
   }
 
   const stock = inventoryQ.data ?? []
-  const movements = movementsQ.data ?? []
+  const movements = movementsQ.data?.items ?? []
+  const movementsTotal = movementsQ.data?.total ?? null
 
   // No sites at all → inventory cannot be tracked.
   if (!sitesQ.isLoading && !sitesQ.isError && sites.length === 0) {
@@ -195,7 +261,7 @@ export function InventoryView() {
       {/* Site selector + record movement */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="w-full sm:w-64">
-          <Select value={siteId || undefined} onValueChange={setSelectedSiteId}>
+          <Select value={siteId || undefined} onValueChange={changeSite}>
             <SelectTrigger className="h-11 w-full" aria-label="Select site">
               <SelectValue
                 placeholder={sitesQ.isLoading ? 'Loading sites…' : 'Select a site'}
@@ -385,37 +451,53 @@ export function InventoryView() {
                   No movements recorded for this site yet.
                 </p>
               ) : (
-                <ul className="divide-y divide-stone-100">
-                  {movements.map((m) => (
-                    <li key={m.id} className="flex items-start gap-2.5 py-3 first:pt-0 last:pb-0">
-                      <Badge
-                        variant="outline"
-                        className={cn('mt-0.5 shrink-0 border-transparent', MOVEMENT_BADGE[m.type])}
-                      >
-                        {m.type}
-                      </Badge>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-stone-900">
-                          {m.materialName}
-                          <span className="ml-1 tabular-nums text-stone-500">
-                            {m.type === 'IN' ? '+' : m.type === 'OUT' ? '-' : ''}
-                            {m.quantity}
-                          </span>
-                        </p>
-                        <p className="truncate text-xs text-stone-500">
-                          {m.reason !== '' ? m.reason : 'No reason given'}
-                        </p>
-                      </div>
-                      <time
-                        dateTime={m.createdAt}
-                        className="shrink-0 text-xs text-stone-400"
-                        title={new Date(m.createdAt).toLocaleString()}
-                      >
-                        {timeAgo(m.createdAt)}
-                      </time>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <ul className="divide-y divide-stone-100">
+                    {movements.map((m) => (
+                      <li key={m.id} className="flex items-start gap-2.5 py-3 first:pt-0 last:pb-0">
+                        <Badge
+                          variant="outline"
+                          className={cn('mt-0.5 shrink-0 border-transparent', MOVEMENT_BADGE[m.type])}
+                        >
+                          {m.type}
+                        </Badge>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-stone-900">
+                            {m.materialName}
+                            <span className="ml-1 tabular-nums text-stone-500">
+                              {m.type === 'IN' ? '+' : m.type === 'OUT' ? '-' : ''}
+                              {m.quantity}
+                            </span>
+                          </p>
+                          <p className="truncate text-xs text-stone-500">
+                            {m.reason !== '' ? m.reason : 'No reason given'}
+                          </p>
+                        </div>
+                        <time
+                          dateTime={m.createdAt}
+                          className="shrink-0 text-xs text-stone-400"
+                          title={new Date(m.createdAt).toLocaleString()}
+                        >
+                          {timeAgo(m.createdAt)}
+                        </time>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* MJG-072 — pager: param-less until the first Next click,
+                      then Page X of Y from the org-filtered X-Total-Count. */}
+                  <ListPager
+                    page={movementPage}
+                    paged={movementPaged}
+                    total={movementsTotal}
+                    itemCount={movements.length}
+                    onPrev={() => setMovementPage((p) => Math.max(1, p - 1))}
+                    onNext={() => {
+                      setMovementPage((p) => p + 1)
+                      setMovementPaged(true)
+                    }}
+                  />
+                </>
               )}
             </CardContent>
           </Card>

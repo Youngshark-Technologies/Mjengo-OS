@@ -5,7 +5,7 @@
 // supervisor and a timestamp. No AI language, no automatic approvals.
 
 import { useMemo, useState, type ReactNode } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ExternalLink,
   Loader2,
@@ -51,6 +51,9 @@ import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 const UNSET = '__unset__'
+
+// MJG-072 — server pagination page size (kicks in on the first Next click).
+const LIST_PAGE_SIZE = 25
 
 // The API returns photoUrl on evidence records; the shared DTO lags behind.
 type EvidenceRecord = EvidenceDTO & { photoUrl?: string | null }
@@ -158,16 +161,81 @@ function EmptyState({
   )
 }
 
+// MJG-072 — minimal pager below the list. Prev/Next bounds are disabled at
+// the edges; while the fetch is param-less the total is unknown, so the label
+// falls back to the loaded record count and only Next is enabled.
+function ListPager({
+  page,
+  paged,
+  total,
+  itemCount,
+  onPrev,
+  onNext,
+}: {
+  page: number
+  paged: boolean
+  total: number | null
+  itemCount: number
+  onPrev: () => void
+  onNext: () => void
+}) {
+  const totalPages = total !== null ? Math.max(1, Math.ceil(total / LIST_PAGE_SIZE)) : null
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-xs text-stone-500" aria-live="polite">
+        {paged && totalPages !== null ? `Page ${page} of ${totalPages}` : `${itemCount} records`}
+      </p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" disabled={!paged || page <= 1} onClick={onPrev}>
+          Previous
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={paged && totalPages !== null ? page >= totalPages : false}
+          onClick={onNext}
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 export function EvidenceView({ user }: { user: SessionUser }) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [tab, setTab] = useState<EvidenceStatus>('REPORTED')
   const [reportOpen, setReportOpen] = useState(false)
+  // MJG-072 — the first fetch stays param-less (legacy behavior: whole
+  // bounded ledger, client-side tab filtering, exact badge counts). Paged
+  // fetches pass the tab as the server-side status filter so a page always
+  // contains rows for the visible tab; note that while paged, the badge
+  // counts of the NON-active tabs reflect the loaded page (the active tab's
+  // badge uses the org-filtered total). A tab change resets to param-less.
+  const [page, setPage] = useState(1)
+  const [paged, setPaged] = useState(false)
 
   const evidenceQuery = useQuery({
-    queryKey: ['evidence'],
-    queryFn: () => api.get<EvidenceRecord[]>('/api/evidence'),
+    queryKey: ['evidence', tab, page, paged],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (paged) {
+        params.set('status', tab)
+        params.set('page', String(page))
+        params.set('pageSize', String(LIST_PAGE_SIZE))
+      }
+      const qs = params.toString()
+      return api.list<EvidenceRecord>(`/api/evidence${qs ? `?${qs}` : ''}`)
+    },
+    placeholderData: keepPreviousData,
   })
+
+  const changeTab = (v: string) => {
+    setTab(v as EvidenceStatus)
+    setPage(1)
+    setPaged(false)
+  }
 
   const verify = useMutation({
     mutationFn: ({ id, decision }: { id: string; decision: 'VERIFIED' | 'REJECTED' }) =>
@@ -188,18 +256,21 @@ export function EvidenceView({ user }: { user: SessionUser }) {
   })
 
   const counts = useMemo(() => {
-    const list = evidenceQuery.data ?? []
+    const list = evidenceQuery.data?.items ?? []
     return {
-      reported: list.filter((e) => e.status === 'REPORTED').length,
-      verified: list.filter((e) => e.status === 'VERIFIED').length,
-      rejected: list.filter((e) => e.status === 'REJECTED').length,
-    }
+      REPORTED: list.filter((e) => e.status === 'REPORTED').length,
+      VERIFIED: list.filter((e) => e.status === 'VERIFIED').length,
+      REJECTED: list.filter((e) => e.status === 'REJECTED').length,
+    } as Record<EvidenceStatus, number>
   }, [evidenceQuery.data])
 
-  const visible = useMemo(
-    () => (evidenceQuery.data ?? []).filter((e) => e.status === tab),
-    [evidenceQuery.data, tab],
-  )
+  const evidenceTotal = evidenceQuery.data?.total ?? null
+  // While paged the server already filtered by the tab's status; otherwise
+  // the legacy client-side filter applies.
+  const visible = useMemo(() => {
+    const items = evidenceQuery.data?.items ?? []
+    return paged ? items : items.filter((e) => e.status === tab)
+  }, [evidenceQuery.data, paged, tab])
 
   const canDecide = user.role === 'OWNER' || user.role === 'SUPERVISOR'
   const pendingId = verify.isPending ? (verify.variables?.id ?? null) : null
@@ -230,13 +301,19 @@ export function EvidenceView({ user }: { user: SessionUser }) {
 
       <Tabs
         value={tab}
-        onValueChange={(v) => setTab(v as EvidenceStatus)}
+        onValueChange={changeTab}
         className="gap-4"
       >
         <TabsList className="h-11 w-full sm:w-auto">
-          <TabsTrigger value="REPORTED">To verify ({counts.reported})</TabsTrigger>
-          <TabsTrigger value="VERIFIED">Verified ({counts.verified})</TabsTrigger>
-          <TabsTrigger value="REJECTED">Rejected ({counts.rejected})</TabsTrigger>
+          <TabsTrigger value="REPORTED">
+            To verify ({paged && evidenceTotal !== null && tab === 'REPORTED' ? evidenceTotal : counts.REPORTED})
+          </TabsTrigger>
+          <TabsTrigger value="VERIFIED">
+            Verified ({paged && evidenceTotal !== null && tab === 'VERIFIED' ? evidenceTotal : counts.VERIFIED})
+          </TabsTrigger>
+          <TabsTrigger value="REJECTED">
+            Rejected ({paged && evidenceTotal !== null && tab === 'REJECTED' ? evidenceTotal : counts.REJECTED})
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value={tab} className="space-y-4">
@@ -285,6 +362,20 @@ export function EvidenceView({ user }: { user: SessionUser }) {
               ))}
             </div>
           )}
+
+          {/* MJG-072 — pager: param-less until the first Next click, then
+              Page X of Y from the org-filtered X-Total-Count header. */}
+          <ListPager
+            page={page}
+            paged={paged}
+            total={evidenceTotal}
+            itemCount={visible.length}
+            onPrev={() => setPage((p) => Math.max(1, p - 1))}
+            onNext={() => {
+              setPage((p) => p + 1)
+              setPaged(true)
+            }}
+          />
         </TabsContent>
       </Tabs>
 

@@ -68,6 +68,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 
 const CONTROL = 'h-11'
 
+// MJG-072 — server pagination page size (kicks in on the first Next click).
+const LIST_PAGE_SIZE = 25
+
 type PayTab = 'ALL' | 'PENDING' | 'APPROVED' | 'PAID'
 
 const PAY_TABS: { value: PayTab; label: string }[] = [
@@ -131,17 +134,34 @@ export function PaymentsView({ user }: { user: SessionUser }) {
 
   const [tab, setTab] = useState<PayTab>('ALL')
   const [recordOpen, setRecordOpen] = useState(false)
+  // MJG-072 — the first fetch stays param-less (legacy behavior: the whole
+  // bounded ledger, no total header). Pagination only starts once the user
+  // clicks Next, and a filter/tab change resets back to the param-less view.
+  const [page, setPage] = useState(1)
+  const [paged, setPaged] = useState(false)
 
   const sites = useQuery({ queryKey: ['sites'], queryFn: () => api.get<SiteDTO[]>('/api/sites') })
 
   const payments = useQuery({
-    queryKey: ['payments', tab],
+    queryKey: ['payments', tab, page, paged],
     queryFn: () => {
-      const qs = tab === 'ALL' ? '' : `?status=${tab}`
-      return api.get<PaymentDTO[]>(`/api/payments${qs}`)
+      const params = new URLSearchParams()
+      if (tab !== 'ALL') params.set('status', tab)
+      if (paged) {
+        params.set('page', String(page))
+        params.set('pageSize', String(LIST_PAGE_SIZE))
+      }
+      const qs = params.toString()
+      return api.list<PaymentDTO>(`/api/payments${qs ? `?${qs}` : ''}`)
     },
     placeholderData: keepPreviousData,
   })
+
+  const changeTab = (v: string) => {
+    setTab(v as PayTab)
+    setPage(1)
+    setPaged(false)
+  }
 
   const approve = useMutation({
     mutationFn: (vars: { id: string; decision: 'APPROVED' | 'REJECTED' }) =>
@@ -170,7 +190,8 @@ export function PaymentsView({ user }: { user: SessionUser }) {
       toast({ variant: 'destructive', title: 'Could not mark payment as paid', description: e.message }),
   })
 
-  const paymentList = payments.data ?? []
+  const paymentList = payments.data?.items ?? []
+  const paymentsTotal = payments.data?.total ?? null
   const pendingValue = paymentList
     .filter((p) => p.status === 'PENDING')
     .reduce((sum, p) => sum + p.amount, 0)
@@ -180,7 +201,7 @@ export function PaymentsView({ user }: { user: SessionUser }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <Tabs value={tab} onValueChange={(v) => setTab(v as PayTab)} className="gap-4">
+      <Tabs value={tab} onValueChange={changeTab} className="gap-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <TabsList className="h-11 w-full rounded-lg bg-stone-100 p-1 lg:w-auto">
             {PAY_TABS.map((t) => (
@@ -383,6 +404,20 @@ export function PaymentsView({ user }: { user: SessionUser }) {
             </div>
           </>
         )}
+
+        {/* MJG-072 — pager: param-less until the first Next click, then
+            Page X of Y from the org-filtered X-Total-Count header. */}
+        <ListPager
+          page={page}
+          paged={paged}
+          total={paymentsTotal}
+          itemCount={paymentList.length}
+          onPrev={() => setPage((p) => Math.max(1, p - 1))}
+          onNext={() => {
+            setPage((p) => p + 1)
+            setPaged(true)
+          }}
+        />
       </Tabs>
 
       <p className="flex items-center gap-1.5 text-xs text-stone-500">
@@ -398,6 +433,47 @@ export function PaymentsView({ user }: { user: SessionUser }) {
           }}
         />
       )}
+    </div>
+  )
+}
+
+// MJG-072 — minimal pager below the list. Prev/Next bounds are disabled at
+// the edges; while the fetch is param-less the total is unknown, so the label
+// falls back to the loaded record count and only Next is enabled.
+function ListPager({
+  page,
+  paged,
+  total,
+  itemCount,
+  onPrev,
+  onNext,
+}: {
+  page: number
+  paged: boolean
+  total: number | null
+  itemCount: number
+  onPrev: () => void
+  onNext: () => void
+}) {
+  const totalPages = total !== null ? Math.max(1, Math.ceil(total / LIST_PAGE_SIZE)) : null
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-xs text-stone-500" aria-live="polite">
+        {paged && totalPages !== null ? `Page ${page} of ${totalPages}` : `${itemCount} records`}
+      </p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" disabled={!paged || page <= 1} onClick={onPrev}>
+          Previous
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={paged && totalPages !== null ? page >= totalPages : false}
+          onClick={onNext}
+        >
+          Next
+        </Button>
+      </div>
     </div>
   )
 }

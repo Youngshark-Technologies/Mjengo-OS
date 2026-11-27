@@ -543,3 +543,22 @@ Work Log:
 
 Stage Summary:
 - Publication proceeded on scrubbed lineage. Registry 69/70 DONE; OPEN = MJG-069 (P3 UX polish) only.
+
+---
+Task ID: OPEN-ISSUES-07 (features wave — full chat review)
+Agent: Staff Engineer + 3 parallel agents (Frontend-CTA, DevOps/Docs-SOP, Full-stack-Pagination)
+Task: Review the complete MjengoOS chat lineage, enumerate every feature ever discussed (docs/FEATURE_INVENTORY.md), and implement all pending engineering items: MJG-069, MJG-071, MJG-072.
+
+Work Log:
+- Chat-lineage sweep: every directive mapped to registry state; gaps = MJG-069 (hero CTA intent), MJG-071 (release SOP under PR-protected main — GH006 observed), MJG-072 (pagination deferred by MJG-053). MJG-073 (health enrichment) dropped on inspection — /api already DB-aware (503-degraded).
+- Agent A (MJG-069): single-source intent fix in src/app/page.tsx — openAuthIntentHash('#get-started') routes ALL marketing Get Started CTAs through the existing MJG-028/055 hashchange machinery (same-hash re-trigger handled via ''-then-target macrotask). Only page.tsx touched; marketing components untouched. lint+tsc green.
+- Agent B (MJG-071): DEPLOYMENT.md "Release SOP (main is PR-protected)" subsection; README branch-model + GH_TOKEN note (MJG-047); report §1/§9/§10/§11 publication record corrected (PR #415 / add6d05). Doc-vs-code verified against the generalized script CLI (head, base, title, bodyFile).
+- Agent C (MJG-072): six list GETs (payments, deliveries, evidence, assignments, inventory/movements, purchase-orders) gain zod-validated page/pageSize (1..100, default 25) + org-filtered X-Total-Count header; no-param mode byte-identical legacy; deterministic orderBy tiebreaker (+id desc). api-client.list() returns {items,total}; six views gain Prev/Next + count pager (first fetch stays param-less; paged only on Next; reset on filter change). Suite +6 cases.
+- Combined gates on the unified tree: lint PASS, tsc PASS, suite 49/49 pass / 358 assertions PASS (API TESTS PASSED).
+- Browser E2E (throwaway DB copy, production standalone build): hero Get Started → "Create your organization" REGISTER mode with 3 org-type radios (MJG-069 live); registered fresh org → Payments view pager live ("0 records", Previous disabled, Next present) (MJG-072 UI live). Teardown clean.
+- Registry: MJG-069/071/072 → DONE; docs/FEATURE_INVENTORY.md authored (master feature list per all chats: 7 SHIPPED domains + OPEN + USER ACTIONS).
+- Merges: fix/cta-intent, chore/release-sop, feat/list-pagination, chore/wave-7-registry (all plumbing into dev, HEAD-flip immune; committed trees verified per merge).
+
+Stage Summary:
+- Registry: 72 rows, 72 DONE, 0 OPEN (CI enablement external/dormant; Vercel/Render connection + PAT rotation = user actions) (CI enablement stays external/dormant; Vercel/Render connection + PAT rotation = user actions).
+- Next: release via the NEW SOP (dev push → release/open-issues-07 head → PR merge via scripts/github-publish-pr.ts → align main → bridge dev).

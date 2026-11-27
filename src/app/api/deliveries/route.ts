@@ -1,3 +1,4 @@
+import { NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { db } from '@/lib/db'
@@ -70,6 +71,9 @@ async function verifierNameMap(ids: (string | null)[], organizationId: string): 
 const listQuerySchema = z.object({
   siteId: z.string().min(1).optional(),
   status: z.enum(DELIVERY_STATUS_VALUES).optional(),
+  // MJG-072 — optional page/pageSize pagination (see GET below).
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
 })
 
 const deliveryItemSchema = z.object({
@@ -89,25 +93,41 @@ const createDeliverySchema = z.object({
 })
 
 // ─── GET /api/deliveries — list deliveries, optional siteId/status filters ────
-
+// MJG-072: with page, returns that slice and an org-filtered X-Total-Count
+// header; without page params the legacy behavior (array, take: 500, no
+// header) is unchanged. id tiebreaker keeps slices deterministic on ties.
 export async function GET(req: Request) {
   return handle(async () => {
     const user = await requireUser()
     const query = await parseQuery(req, listQuerySchema)
 
-    const deliveries = await db.delivery.findMany({
-      where: {
-        organizationId: user.organizationId,
-        ...(query.siteId ? { siteId: query.siteId } : {}),
-        ...(query.status ? { status: query.status } : {}),
-      },
-      include: deliveryInclude,
-      orderBy: { createdAt: 'desc' },
-      take: 500,
-    })
+    const where: Prisma.DeliveryWhereInput = {
+      organizationId: user.organizationId,
+      ...(query.siteId ? { siteId: query.siteId } : {}),
+      ...(query.status ? { status: query.status } : {}),
+    }
+    // pageSize only applies when page is present; no params → legacy take: 500.
+    const paged = query.page !== undefined
+    const take = paged ? (query.pageSize ?? 25) : 500
+
+    const [deliveries, total] = await Promise.all([
+      db.delivery.findMany({
+        where,
+        include: deliveryInclude,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: paged ? (query.page! - 1) * take : undefined,
+        take,
+      }),
+      paged ? db.delivery.count({ where }) : Promise.resolve(0),
+    ])
 
     const names = await verifierNameMap(deliveries.map(d => d.verifiedById), user.organizationId)
-    return ok(deliveries.map(d => toDeliveryDTO(d, (d.verifiedById && names.get(d.verifiedById)) || null)))
+    const rows = deliveries.map(d => toDeliveryDTO(d, (d.verifiedById && names.get(d.verifiedById)) || null))
+    if (!paged) return ok(rows)
+    return NextResponse.json(
+      { data: rows },
+      { headers: { 'X-Total-Count': String(total) } },
+    )
   })
 }
 

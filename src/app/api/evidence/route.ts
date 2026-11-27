@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { NextResponse } from 'next/server'
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { ok, handle, parseBody, parseQuery, requireUser, findOrgRecord } from '@/lib/api-helpers'
@@ -32,9 +33,12 @@ function toEvidenceDTO(row: EvidenceRow): EvidenceDTO {
 }
 
 // Empty-string query params (e.g. ?siteId=&status=) are treated as absent.
+// MJG-072 — optional page/pageSize pagination (see GET below).
 const querySchema = z.object({
   siteId: z.preprocess(v => (v === '' ? undefined : v), z.string().min(1).optional()),
   status: z.preprocess(v => (v === '' ? undefined : v), z.enum(EVIDENCE_STATUS_VALUES).optional()),
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
 })
 
 const createSchema = z.object({
@@ -48,24 +52,41 @@ const createSchema = z.object({
     .optional(),
 })
 
-// GET /api/evidence?siteId=&status= — evidence feed, newest first.
+// GET /api/evidence?siteId=&status=[&page=&pageSize=] — evidence feed, newest first.
+// MJG-072: with page, returns that slice and an org-filtered X-Total-Count
+// header; without page params the legacy behavior (array, take: 500, no
+// header) is unchanged. id tiebreaker keeps slices deterministic on ties.
 export async function GET(req: Request) {
   return handle(async () => {
     const user = await requireUser()
-    const { siteId, status } = parseQuery(req, querySchema)
+    const { siteId, status, page, pageSize } = parseQuery(req, querySchema)
 
-    const evidence = await db.evidenceReport.findMany({
-      where: {
-        organizationId: user.organizationId,
-        ...(siteId ? { siteId } : {}),
-        ...(status ? { status } : {}),
-      },
-      include: { site: true, milestone: true, reportedBy: true, verifiedBy: true },
-      orderBy: { createdAt: 'desc' },
-      take: 500,
-    })
+    const where: Prisma.EvidenceReportWhereInput = {
+      organizationId: user.organizationId,
+      ...(siteId ? { siteId } : {}),
+      ...(status ? { status } : {}),
+    }
+    // pageSize only applies when page is present; no params → legacy take: 500.
+    const paged = page !== undefined
+    const take = paged ? (pageSize ?? 25) : 500
 
-    return ok(evidence.map(toEvidenceDTO))
+    const [evidence, total] = await Promise.all([
+      db.evidenceReport.findMany({
+        where,
+        include: { site: true, milestone: true, reportedBy: true, verifiedBy: true },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: paged ? (page - 1) * take : undefined,
+        take,
+      }),
+      paged ? db.evidenceReport.count({ where }) : Promise.resolve(0),
+    ])
+
+    const rows = evidence.map(toEvidenceDTO)
+    if (!paged) return ok(rows)
+    return NextResponse.json(
+      { data: rows },
+      { headers: { 'X-Total-Count': String(total) } },
+    )
   })
 }
 

@@ -72,6 +72,10 @@ import { Textarea } from '@/components/ui/textarea'
 
 const CONTROL = 'h-11'
 
+// MJG-072 — server pagination page size for the purchase-orders list (kicks
+// in on the first Next click). The supplier directory is NOT paginated.
+const LIST_PAGE_SIZE = 25
+
 const PO_BADGE_CLASS: Record<POStatus, string> = {
   DRAFT: 'border-stone-300 bg-stone-100 text-stone-700',
   SENT: 'border-amber-300 bg-amber-100 text-amber-800',
@@ -89,6 +93,48 @@ function PoStatusBadge({ status }: { status: POStatus }) {
 
 function shortId(id: string) {
   return `#${id.slice(0, 8)}`
+}
+
+// MJG-072 — minimal pager below the purchase-orders list. Prev/Next bounds
+// are disabled at the edges; while the fetch is param-less the total is
+// unknown, so the label falls back to the loaded record count and only Next
+// is enabled.
+function ListPager({
+  page,
+  paged,
+  total,
+  itemCount,
+  onPrev,
+  onNext,
+}: {
+  page: number
+  paged: boolean
+  total: number | null
+  itemCount: number
+  onPrev: () => void
+  onNext: () => void
+}) {
+  const totalPages = total !== null ? Math.max(1, Math.ceil(total / LIST_PAGE_SIZE)) : null
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-xs text-stone-500" aria-live="polite">
+        {paged && totalPages !== null ? `Page ${page} of ${totalPages}` : `${itemCount} records`}
+      </p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" disabled={!paged || page <= 1} onClick={onPrev}>
+          Previous
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={paged && totalPages !== null ? page >= totalPages : false}
+          onClick={onNext}
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 function ListSkeleton({ rows = 5, className }: { rows?: number; className?: string }) {
@@ -151,6 +197,10 @@ function PurchaseOrdersTab() {
   const [siteFilter, setSiteFilter] = useState('ALL')
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [createOpen, setCreateOpen] = useState(false)
+  // MJG-072 — the first fetch stays param-less (legacy behavior). Pagination
+  // only starts once the user clicks Next; a filter change resets to page 1.
+  const [page, setPage] = useState(1)
+  const [paged, setPaged] = useState(false)
 
   const [form, setForm] = useState({ siteId: '', supplierId: '', expectedDate: '', notes: '' })
   const [items, setItems] = useState<PoItemDraft[]>([{ ...EMPTY_ITEM }])
@@ -166,16 +216,32 @@ function PurchaseOrdersTab() {
   })
 
   const orders = useQuery({
-    queryKey: ['purchase-orders', siteFilter, statusFilter],
+    queryKey: ['purchase-orders', siteFilter, statusFilter, page, paged],
     queryFn: () => {
       const params = new URLSearchParams()
       if (siteFilter !== 'ALL') params.set('siteId', siteFilter)
       if (statusFilter !== 'ALL') params.set('status', statusFilter)
+      if (paged) {
+        params.set('page', String(page))
+        params.set('pageSize', String(LIST_PAGE_SIZE))
+      }
       const qs = params.toString()
-      return api.get<PurchaseOrderDTO[]>(`/api/purchase-orders${qs ? `?${qs}` : ''}`)
+      return api.list<PurchaseOrderDTO>(`/api/purchase-orders${qs ? `?${qs}` : ''}`)
     },
     placeholderData: keepPreviousData,
   })
+
+  const changeSiteFilter = (v: string) => {
+    setSiteFilter(v)
+    setPage(1)
+    setPaged(false)
+  }
+
+  const changeStatusFilter = (v: string) => {
+    setStatusFilter(v)
+    setPage(1)
+    setPaged(false)
+  }
 
   const transition = useMutation({
     mutationFn: (vars: { id: string; status: POStatus }) =>
@@ -265,12 +331,13 @@ function PurchaseOrdersTab() {
     0,
   )
 
-  const orderList = orders.data ?? []
+  const orderList = orders.data?.items ?? []
+  const ordersTotal = orders.data?.total ?? null
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <Select value={siteFilter} onValueChange={setSiteFilter}>
+        <Select value={siteFilter} onValueChange={changeSiteFilter}>
           <SelectTrigger aria-label="Filter by site" className={cn('w-full bg-white sm:w-52', CONTROL)}>
             <SelectValue placeholder="All sites" />
           </SelectTrigger>
@@ -283,7 +350,7 @@ function PurchaseOrdersTab() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select value={statusFilter} onValueChange={changeStatusFilter}>
           <SelectTrigger aria-label="Filter by status" className={cn('w-full bg-white sm:w-44', CONTROL)}>
             <SelectValue placeholder="All statuses" />
           </SelectTrigger>
@@ -425,6 +492,20 @@ function PurchaseOrdersTab() {
           </div>
         </>
       )}
+
+      {/* MJG-072 — pager: param-less until the first Next click, then
+          Page X of Y from the org-filtered X-Total-Count header. */}
+      <ListPager
+        page={page}
+        paged={paged}
+        total={ordersTotal}
+        itemCount={orderList.length}
+        onPrev={() => setPage((p) => Math.max(1, p - 1))}
+        onNext={() => {
+          setPage((p) => p + 1)
+          setPaged(true)
+        }}
+      />
 
       {/* Create purchase order dialog */}
       <Dialog
